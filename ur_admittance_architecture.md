@@ -65,9 +65,9 @@ The controller implements the `ChainableControllerInterface` to integrate within
 
 ## 3. Control Architecture
 
-### 3.1 Data Flow Pipeline
+### 3.1 Data Flow Pipeline with Inputs/Outputs
 
-The controller processes data through the following sequential pipeline:
+The controller reads the current robot state and processes external force data through a sequential pipeline:
 
 ```
 ┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
@@ -77,7 +77,10 @@ The controller processes data through the following sequential pipeline:
 └───────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
    WrenchStamped         BaseWrench              CartesianVelocity         JointVelocities
                                                                            │
-                                                                           ▼
+                     ┌────────────────────────────────────┐    ▼
+                     │ Current Robot State (positions/velocities) │    
+                     └────────────────────────────────────┘    
+                                                                           
 ┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
 │    Robot      │     │   Joint       │     │  Trajectory   │     │    Path       │
 │    Motion     │◄────│  Trajectory   │◄────│  Generation   │◄────│  Planning    │
@@ -87,15 +90,52 @@ The controller processes data through the following sequential pipeline:
                       (positions/velocities)         Trajectory
 ```
 
-### 3.2 Data Types and Transformations
+### 3.2 Component Interfaces
 
-| Stage | Input | Output | Library/API |
-|-------|-------|--------|-------------|
-| Frame Transformation | `WrenchStamped` (tool) | `Wrench` (base) | TF2 |
-| Admittance Control | `Wrench` | `Twist` (Cartesian velocity) | Eigen |
-| Inverse Kinematics | `Twist` | `JointVelocities` | KDL |
-| Trajectory Gen | `JointVelocities` | `JointTrajectory` | realtime_tools |
-| Control | `JointTrajectory` | Joint commands | controller_interface |
+| Component | Inputs | Outputs | State Reading |
+|-----------|--------|---------|---------------|
+| F/T Sensor | N/A | `WrenchStamped` (forces and torques) | No |
+| Admittance Controller | `WrenchStamped`, Current joint positions/velocities | `JointTrajectory` | Yes - reads position and velocity interfaces |
+| Trajectory Controller | `JointTrajectory` | Position/velocity commands | Yes - reads position and velocity for feedback |
+
+### 3.3 Core Admittance Control Algorithm
+
+The controller implements admittance control based on the second-order dynamic system equation:
+
+```
+M * a + D * v + K * x = F_ext
+```
+
+Where:
+- M: Mass matrix (6×6, diagonal)
+- D: Damping matrix (6×6, diagonal)
+- K: Stiffness matrix (6×6, diagonal)
+- a: Cartesian acceleration 
+- v: Cartesian velocity
+- x: Position error
+- F_ext: External force/torque
+
+**Implementation (from the code):**
+
+```cpp
+// In calculateAdmittance():
+// Solve for acceleration from the admittance equation
+desired_acceleration_ = mass_matrix_.inverse() * 
+  (wrench_external_ - damping_matrix_ * desired_velocity_ - stiffness_matrix_ * pose_error_);
+
+// Integrate acceleration to get velocity
+desired_velocity_ += desired_acceleration_ * period.seconds();
+
+// Apply selective admittance control based on enabled axes
+for (size_t i = 0; i < 6; ++i) {
+  if (!params_.admittance_enabled_axes[i]) {
+    desired_velocity_(i) = 0.0;
+  }
+}
+
+// Store as Cartesian velocity command
+cart_vel_cmd_ = desired_velocity_;
+```
 
 ## 4. Implementation Details
 
@@ -132,34 +172,93 @@ The controller follows a standard ROS2 control lifecycle pattern:
 | **Execution** | Run control loop, process wrench data, generate trajectories |
 | **Deactivation** | Safely stop robot motion, release resources |
 
-### 4.2 Admittance Control Implementation
+### 4.2 Wrench Processing Pipeline
 
-The core algorithm implements a second-order dynamic system:
+The controller implements a sophisticated wrench processing pipeline:
 
-```
-M·a + D·v + K·x = F_ext
-```
+1. **Wrench Signal Reception**
+   ```cpp
+   // In wrenchCallback():
+   void AdmittanceController::wrenchCallback(const geometry_msgs::msg::WrenchStamped::SharedPtr msg)
+   ```
 
-Where:
-- M: Mass matrix (6×6, diagonal)
-- D: Damping matrix (6×6, diagonal)
-- K: Stiffness matrix (6×6, diagonal)
-- a: Cartesian acceleration
-- v: Cartesian velocity
-- x: Position error
-- F_ext: External force/torque
+2. **Signal Filtering**
+   ```cpp
+   // Apply exponential filter to reduce noise
+   msg->wrench.force.x = params_.filter_coefficient * msg->wrench.force.x + 
+     (1.0 - params_.filter_coefficient) * last_wrench->wrench.force.x;
+   // Similar filtering for all 6 components (fx, fy, fz, tx, ty, tz)
+   ```
 
-#### Implementation Steps:
+3. **Thread-Safe Storage**
+   ```cpp
+   // Store in real-time safe buffer
+   wrench_buffer_.writeFromNonRT(*msg);
+   ```
 
-1. **Acquire Force Data**: Read wrench data from sensor or simulation
-2. **Frame Transformation**: Convert from tool to base frame
-3. **Solve Admittance Equation**: `a = M⁻¹·(F_ext - D·v - K·x)`
-4. **Velocity Integration**: `v = v + a·dt`
-5. **Apply Limits**: Enforce velocity and acceleration limits
-6. **Inverse Kinematics**: Convert to joint velocities
-7. **Trajectory Generation**: Create smooth joint trajectories
+4. **Frame Transformation**
+   ```cpp
+   // Transform wrench from tool frame to base frame
+   geometry_msgs::msg::TransformStamped transform = tf_buffer_->lookupTransform(
+     base_frame_id_, tool_frame_id_, tf2::TimePointZero);
+   ```
 
-### 4.3 Critical Data Structures
+5. **Deadband Application**
+   ```cpp
+   // Apply deadband to filter out sensor noise
+   if (std::abs(wrench_external_(i)) < params_.wrench_deadband[i]) {
+     wrench_external_(i) = 0.0;
+   }
+   ```
+
+### 4.3 Trajectory Generation
+
+The controller generates joint trajectories from Cartesian velocities:
+
+1. **Read Current Robot State**
+   ```cpp
+   // Read current joint positions and velocities from interfaces
+   for (size_t i = 0; i < params_.joints.size(); ++i) {
+     current_positions[i] = state_interfaces_[position_interface_index].get_optional().value();
+   }
+   ```
+
+2. **Convert Cartesian to Joint Velocities**
+   ```cpp
+   // Use KDL Jacobian to convert Cartesian velocity to joint velocities
+   KDL::Twist kdl_cart_vel;
+   // ... populate kdl_cart_vel ...
+   
+   // Convert to joint velocities
+   kinematics_->convert(cart_vel_cmd_, joint_velocities_cmd_);
+   ```
+
+3. **Generate Trajectory Points**
+   ```cpp
+   // In sendTrajectory():
+   trajectory_msgs::msg::JointTrajectory trajectory;
+   trajectory.joint_names = params_.joints;
+   
+   // Create waypoints for trajectory
+   trajectory.points.resize(1);  // Single point trajectory
+   auto & point = trajectory.points[0];
+   
+   // Calculate target position using current position + velocity*duration
+   for (size_t i = 0; i < params_.joints.size(); ++i) {
+     point.positions[i] = current_positions[i] + 
+       velocity_commands[i] * params_.trajectory_duration;
+   }
+   ```
+
+4. **Send to Joint Trajectory Controller**
+   ```cpp
+   // Create action goal and send to trajectory controller
+   auto goal_msg = FollowJointTrajectory::Goal();
+   goal_msg.trajectory = trajectory;
+   action_client_->async_send_goal(goal_msg);
+   ```
+
+### 4.4 Critical Data Structures
 
 | Data Structure | Type | Purpose |
 |----------------|------|----------|
