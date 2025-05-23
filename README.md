@@ -1,33 +1,8 @@
 # UR Admittance Controller
 
-A ROS2 controller for Universal Robots that enables force-compliant behavior in response to external forces.
+A ROS2 controller for Universal Robots that converts force/torque measurements into compliant motion. Features adjustable parameters, gravity compensation, and real-time performance. For technical details, see the [architecture documentation](ur_admittance_architecture.md).
 
 [![Documentation](https://img.shields.io/badge/Documentation-Architecture-blue)](ur_admittance_architecture.md)
-
-## Overview
-
-This plugin enables the UR robot to react compliantly to external forces by converting force/torque measurements into smooth joint trajectories.
-
-## Key Features
-
-- **Force Compliance**: Responds to external forces with adjustable mass, damping, and stiffness
-- **Plugin Architecture**: Implements the ROS2 `ChainableControllerInterface` for direct integration
-- **Gravity Compensation**: Uses the UR robot's built-in compensation for accurate force sensing
-- **Real-time Performance**: Maintains deterministic control behavior for safety
-
-## Components
-
-### Core Controller
-
-The `ur_admittance_controller` plugin:
-- Reads wrench data from a force/torque sensor
-- Converts external forces to Cartesian velocities via admittance control
-- Generates and sends trajectories to the `scaled_joint_trajectory_controller`
-
-### Utility Tools
-
-- **wrench_signal_generator**: Simulates force/torque sensor signals for testing without hardware
-- **joint_motion_example**: Demonstrates trajectory generation and execution (beginner-friendly)
 
 ## Quick Start
 
@@ -103,32 +78,64 @@ For a comprehensive understanding of the controller's internal architecture, ple
 
 ## How It Works
 
-The admittance control follows a simple workflow:
-
-1. Read forces from F/T sensor (or simulated signals)
-2. Calculate motion using `M * a + D * v + S * x = F`
-3. Generate smooth trajectories with velocity/acceleration limits
-4. Send commands to the robot's joint trajectory controller
-
-### Complete Data Flow Pipeline
+The admittance controller follows this simple pipeline:
 
 ```
-[FT Sensor] → WrenchStamped → [Frame Transform] → Base Frame Wrench → 
-[Admittance Control] → Cartesian Velocity → [Inverse Kinematics] → 
-Joint Velocity → [Trajectory Generator] → JointTrajectory → 
-[Trajectory Controller] → Hardware Commands → [Robot]
+[FT Sensor] → [Admittance Control] → [Trajectory Generation] → [Robot]
 ```
 
-#### Data Types & Reference Frames
+Forces applied to the robot are converted to motion using the admittance control law:
+```
+M * a + D * v + S * x = F
+```
 
-- **Sensor Data**: `geometry_msgs::msg::WrenchStamped` in tool frame
-- **Transformed Wrench**: 6D vector in base frame
-- **Admittance Output**: Cartesian velocity vector (6D)
-- **Kinematics Result**: Joint velocities (6 DOF)
-- **Trajectory Data**: `trajectory_msgs::msg::JointTrajectory`
-- **Action Interface**: `control_msgs::action::FollowJointTrajectory`
+> **Technical Details**: For a comprehensive explanation of the pipeline, data types, and mathematical operations, see the [architecture document](ur_admittance_architecture.md#42-runtime-pipeline).
 
-> **Note**: For a more detailed explanation of each processing stage with code examples and mathematical operations, see the [architecture document](ur_admittance_architecture.md#42-runtime-pipeline).
+## Testing
+
+### Testing with External Forces
+
+Apply an external wrench to the robot's wrist link:
+
+```bash
+ros2 service call /gazebo/apply_body_wrench gazebo_msgs/srv/ApplyBodyWrench \
+  "{body_name: 'robot::wrist_3_link',
+    reference_frame: 'world',
+    reference_point: {x: 0.0, y: 0.0, z: 0.0},
+    wrench: {
+      force: {x: 0.0, y: 0.0, z: 40.0},
+      torque: {x: 0.0, y: 0.0, z: 0.0}
+    },
+    start_time: {sec: 0, nanosec: 0},
+    duration: {sec: 1, nanosec: 0}
+  }"
+```
+
+## Robot Details
+
+### UR5e Specifications
+
+- 6 DOF, 5kg payload capacity, 850 mm maximum reach
+- Sensing/actuation capabilities:
+  - Joint position feedback
+  - Joint velocity feedback
+  - No direct joint torque control (only estimates via motor current)
+  - 6-axis force/torque sensing at the TCP
+
+### Controller Selection
+
+We use the default `scaled_joint_trajectory_controller` for safety and reliability. For detailed information about UR robot controllers, see the [UR Controllers Reference](ur_admittance_architecture.md#626-trajectory-execution).
+
+## Dependencies
+
+### ROS2 Dependencies
+
+- **Core**: `rclcpp`, `rclcpp_lifecycle`, `rclcpp_action`
+- **Control**: `controller_interface`, `hardware_interface`, `realtime_tools`
+- **Messages**: `control_msgs`, `geometry_msgs`, `trajectory_msgs`, `std_srvs`
+- **Kinematics**: `kinematics_interface`, `kinematics_interface_kdl`, `kdl_parser`
+- **TF**: `tf2`, `tf2_ros`, `tf2_geometry_msgs`
+- **Other**: `pluginlib`, `Eigen3`
 
 ## Troubleshooting
 
