@@ -130,23 +130,29 @@ cart_vel_cmd_ = desired_velocity_;
 ### 3.3 Detailed Data Flow Pipeline
 
 ```
+                 ┌────────────────────────────────────┐                 
+                 │                                    │                 
+                 │  Current Robot State               │                 
+                 │  (Joint Positions/Velocities)      │                 
+                 │                                    │                 
+                 └────────────┬───────────────────────┘                 
+                              │                                          
+                              │ Reads                                    
+                              ▼                                          
 ┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
 │  F/T Sensor   │     │    Frame      │     │  Admittance   │     │    Inverse    │
 │     Data      │────►│ Transformation│────►│  Equations    │────►│  Kinematics   │
 │ (Tool Frame)  │     │ (to Base)     │     │  M·a+D·v+K·x=F│     │  (Jacobian)   │
 └───────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
-   WrenchStamped         BaseWrench              CartesianVelocity         JointVelocities
-                                                                           │
-                     ┌────────────────────────────────────┐    ▼
-                     │ Current Robot State (positions/velocities) │    
-                     └────────────────────────────────────┘    
-                                                                           
+   WrenchStamped         BaseWrench           CartesianVelocity        JointVelocities
+                                                                             │
+                                                                             ▼
 ┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
 │    Robot      │     │   Joint       │     │  Trajectory   │     │    Path       │
-│    Motion     │◄────│  Trajectory   │◄────│  Generation   │◄────│  Planning    │
+│    Motion     │◄────│  Trajectory   │◄────│  Generation   │◄────│  Planning     │
 │  (Positions)  │     │  Controller   │     │               │     │               │
 └───────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
-  Position Commands      JointTrajectory         TimeParameterized         WaypointPath
+  Position Commands      JointTrajectory         TimeParameterized        WaypointPath
                       (positions/velocities)         Trajectory
 ```
 
@@ -185,7 +191,53 @@ The controller follows a standard ROS2 control lifecycle pattern:
 | **Execution** | Run control loop, process wrench data, generate trajectories |
 | **Deactivation** | Safely stop robot motion, release resources |
 
-### 4.2 Wrench Processing Pipeline
+### 4.2 Robot State Acquisition and Admittance Control
+
+#### 4.2.1 Reading Robot State
+
+The controller dynamically reads the robot's current state at each control cycle - it does **not** assume a static robot pose:
+
+```cpp
+// In update_and_write_commands():
+// Acquire current joint positions and velocities from hardware interfaces
+for (size_t i = 0; i < params_.joints.size(); ++i) {
+  const auto position_interface_index = i;
+  const auto velocity_interface_index = i + params_.joints.size();
+  
+  // Read current position from robot hardware interface
+  joint_positions_[i] = state_interfaces_[position_interface_index].get_optional().value();
+  // Read current velocity from robot hardware interface
+  joint_velocities_[i] = state_interfaces_[velocity_interface_index].get_optional().value();
+}
+```
+
+This design allows the controller to:
+1. Start from **any robot position** without requiring a specific initial pose
+2. Adapt to changing robot configurations in real-time
+3. Compensate for external disturbances by always using fresh state data
+
+#### 4.2.2 Cartesian-Joint Space Mapping
+
+Unlike some implementations that work directly in joint space, this controller operates in Cartesian (task) space, offering these advantages:
+
+- **Intuitive Force Response**: Forces in Cartesian space directly correspond to physical interactions
+- **Simpler Parameter Tuning**: Mass, damping, and stiffness have clearer physical meaning
+- **Tool-Centric Control**: Enables compliant behavior relative to the end-effector frame
+
+The Cartesian-to-joint space transformation occurs through these steps:
+
+```cpp
+// 1. Calculate current end-effector pose from joint positions
+kinematics_->calculate_fk(joint_positions_, current_pose_);
+
+// 2. Calculate Jacobian at current configuration
+kinematics_->calculate_jacobian(joint_positions_, jacobian_);
+
+// 3. Convert Cartesian velocity to joint velocities using the Jacobian
+joint_velocities_cmd_ = jacobian_.transpose() * cart_vel_cmd_;
+```
+
+### 4.3 Wrench Processing Pipeline
 
 The controller implements a sophisticated wrench processing pipeline:
 
@@ -224,7 +276,7 @@ The controller implements a sophisticated wrench processing pipeline:
    }
    ```
 
-### 4.3 Trajectory Generation
+### 4.4 Trajectory Generation
 
 The controller generates joint trajectories from Cartesian velocities:
 
