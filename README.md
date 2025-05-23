@@ -45,16 +45,24 @@ source install/setup.bash
 
 ### Simulation
 
-1. **Start the Gazebo simulation:**
+The recommended approach is to use the existing UR simulation environment and load our controller separately:
+
+1. **Start the Gazebo simulation with the UR robot:**
 
 ```bash
 ros2 launch ur_simulation_gz ur_sim_control.launch.py
 ```
 
-2. **Launch the admittance controller:**
+2. **Load the admittance controller:**
 
 ```bash
-ros2 launch ur_admittance_controller ur_admittance_controller.launch.py use_sim:=true
+ros2 launch ur_admittance_controller load_controller.launch.py
+```
+
+Or load it directly with the controller manager:
+
+```bash
+ros2 run controller_manager spawner ur_admittance_controller
 ```
 
 3. **Run the simulated force/torque sensor:**
@@ -63,12 +71,11 @@ ros2 launch ur_admittance_controller ur_admittance_controller.launch.py use_sim:
 ros2 run ur_admittance_controller wrench_signal_generator
 ```
 
-
 4. **Apply an external wrench for testing:**
 
 ```bash
 ros2 service call /apply_link_wrench gazebo_msgs/srv/ApplyLinkWrench \
-  "{link_name: 'robot::wrist_3_link',
+  "{link_name: 'wrist_3_link',
     reference_frame: 'world',
     reference_point: {x: 0.0, y: 0.0, z: 0.0},
     wrench: {
@@ -86,13 +93,19 @@ ros2 service call /apply_link_wrench gazebo_msgs/srv/ApplyLinkWrench \
    - Ensure the robot is powered on and in Remote Control mode
    - Verify network connection with the robot (ping robot IP)
 
-2. **Launch the admittance controller with the robot IP:**
+2. **Start the UR robot driver:**
 
 ```bash
-ros2 launch ur_admittance_controller ur_admittance_controller.launch.py use_sim:=false robot_ip:=192.168.1.100
+ros2 launch ur_robot_driver ur_control.launch.py robot_ip:=192.168.1.100
 ```
 
-3. **Verify force-torque sensor readings:**
+3. **Load the admittance controller:**
+
+```bash
+ros2 launch ur_admittance_controller load_controller.launch.py
+```
+
+4. **Verify force-torque sensor readings:**
 
 ```bash
 ros2 topic echo /wrench

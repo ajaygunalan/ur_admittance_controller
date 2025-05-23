@@ -43,7 +43,7 @@
 #include "kdl/chainjnttojacsolver.hpp"
 
 #include "ur_admittance_controller/visibility_control.h"
-#include "ur_admittance_controller_parameters.hpp"
+#include "ur_admittance_controller/ur_admittance_controller_parameters.hpp"
 
 namespace ur_admittance_controller
 {

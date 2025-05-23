@@ -97,6 +97,12 @@ def generate_launch_description():
             "use_sim:=",
             use_sim,
             " ",
+            "ur_type:=",
+            "ur5e",
+            " ",
+            "sim_gazebo:=",
+            "true",
+            " ",
         ]
     )
     robot_description = {"robot_description": robot_description_content}
