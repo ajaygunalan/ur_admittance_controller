@@ -1,8 +1,21 @@
-# UR Admittance Controller: Architecture Documentation
+# UR Admittance Controller - Software Architecture Document
 
 ## 1. Overview
 
-The UR Admittance Controller is a ROS2 controller that implements cartesian admittance control for Universal Robots manipulators. It enables compliant motion in response to external forces, transforming force/torque measurements into robot motion.
+### 1.1 Purpose and Scope
+The UR Admittance Controller is a ROS2 controller that implements cartesian admittance control for Universal Robots manipulators. It enables compliant motion in response to external forces, transforming force/torque measurements into smooth robot motion commands.
+
+This document describes the software architecture, component design, data flow, and interfaces of the UR Admittance Controller system.
+
+### 1.2 Key Features
+- Real-time admittance control implementation
+- Force/torque sensor integration with filtering
+- Smooth trajectory generation with safety limits
+- Chainable controller architecture (ROS2 control framework)
+- Configurable compliance parameters (mass, damping, stiffness)
+- Robust error handling and retry mechanisms
+
+### 1.3 High-Level Architecture
 
 ```
 ┌───────────────┐    ┌───────────────────────┐    ┌────────────────────┐    ┌───────────┐
@@ -24,17 +37,7 @@ The UR Admittance Controller is a ROS2 controller that implements cartesian admi
 | `wrench_signal_generator` | ROS2 Node | Simulates F/T sensor data with gravity compensation |
 | `scaled_joint_trajectory_controller` | ROS2 Controller | Executes joint trajectories sent by admittance controller |
 
-### 2.2 Key Dependencies
-
-| Dependency | Type | Purpose |
-|------------|------|--------|
-| `controller_interface` | ROS2 Package | Provides controller base classes and interfaces |
-| `hardware_interface` | ROS2 Package | Access to robot state and command interfaces |
-| `kinematics_interface` | ROS2 Package | Forward/inverse kinematics calculations |
-| `tf2` | ROS2 Package | Frame transformations for wrench data |
-| `realtime_tools` | ROS2 Package | Real-time safe data structures |
-
-### 2.3 Integration with ROS2 Control
+### 2.2 Controller Hierarchy
 
 The controller implements the `ChainableControllerInterface` to integrate within the ROS2 control framework:
 
@@ -63,11 +66,68 @@ The controller implements the `ChainableControllerInterface` to integrate within
       └───────────────┘
 ```
 
+### 2.3 Key Dependencies
+
+| Dependency | Type | Purpose |
+|------------|------|---------|
+| `controller_interface` | ROS2 Package | Provides controller base classes and interfaces |
+| `hardware_interface` | ROS2 Package | Access to robot state and command interfaces |
+| `kinematics_interface` | ROS2 Package | Forward/inverse kinematics calculations |
+| `tf2` | ROS2 Package | Frame transformations for wrench data |
+| `realtime_tools` | ROS2 Package | Real-time safe data structures |
+| `Eigen` | Library | Linear algebra operations |
+| `KDL` | Library | Kinematics and dynamics calculations |
+
 ## 3. Control Architecture
 
-### 3.1 Data Flow Pipeline with Inputs/Outputs
+### 3.1 Component Interfaces
 
-The controller reads the current robot state and processes external force data through a sequential pipeline:
+| Component | Inputs | Outputs | State Reading |
+|-----------|--------|---------|---------------|
+| F/T Sensor | N/A | `WrenchStamped` (forces and torques) | No |
+| Admittance Controller | `WrenchStamped`, Current joint positions/velocities | `JointTrajectory` | Yes - reads position and velocity interfaces |
+| Trajectory Controller | `JointTrajectory` | Position/velocity commands | Yes - reads position and velocity for feedback |
+
+### 3.2 Core Admittance Control Algorithm
+
+The controller implements admittance control based on the second-order dynamic system equation:
+
+```
+M * a + D * v + K * x = F_ext
+```
+
+Where:
+- M: Mass matrix (6×6, diagonal)
+- D: Damping matrix (6×6, diagonal)
+- K: Stiffness matrix (6×6, diagonal)
+- a: Cartesian acceleration 
+- v: Cartesian velocity
+- x: Position error
+- F_ext: External force/torque
+
+**Implementation:**
+
+```cpp
+// In calculateAdmittance():
+// Solve for acceleration from the admittance equation
+desired_acceleration_ = mass_matrix_.inverse() * 
+  (wrench_external_ - damping_matrix_ * desired_velocity_ - stiffness_matrix_ * pose_error_);
+
+// Integrate acceleration to get velocity
+desired_velocity_ += desired_acceleration_ * period.seconds();
+
+// Apply selective admittance control based on enabled axes
+for (size_t i = 0; i < 6; ++i) {
+  if (!params_.admittance_enabled_axes[i]) {
+    desired_velocity_(i) = 0.0;
+  }
+}
+
+// Store as Cartesian velocity command
+cart_vel_cmd_ = desired_velocity_;
+```
+
+### 3.3 Detailed Data Flow Pipeline
 
 ```
 ┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
@@ -90,56 +150,9 @@ The controller reads the current robot state and processes external force data t
                       (positions/velocities)         Trajectory
 ```
 
-### 3.2 Component Interfaces
-
-| Component | Inputs | Outputs | State Reading |
-|-----------|--------|---------|---------------|
-| F/T Sensor | N/A | `WrenchStamped` (forces and torques) | No |
-| Admittance Controller | `WrenchStamped`, Current joint positions/velocities | `JointTrajectory` | Yes - reads position and velocity interfaces |
-| Trajectory Controller | `JointTrajectory` | Position/velocity commands | Yes - reads position and velocity for feedback |
-
-### 3.3 Core Admittance Control Algorithm
-
-The controller implements admittance control based on the second-order dynamic system equation:
-
-```
-M * a + D * v + K * x = F_ext
-```
-
-Where:
-- M: Mass matrix (6×6, diagonal)
-- D: Damping matrix (6×6, diagonal)
-- K: Stiffness matrix (6×6, diagonal)
-- a: Cartesian acceleration 
-- v: Cartesian velocity
-- x: Position error
-- F_ext: External force/torque
-
-**Implementation (from the code):**
-
-```cpp
-// In calculateAdmittance():
-// Solve for acceleration from the admittance equation
-desired_acceleration_ = mass_matrix_.inverse() * 
-  (wrench_external_ - damping_matrix_ * desired_velocity_ - stiffness_matrix_ * pose_error_);
-
-// Integrate acceleration to get velocity
-desired_velocity_ += desired_acceleration_ * period.seconds();
-
-// Apply selective admittance control based on enabled axes
-for (size_t i = 0; i < 6; ++i) {
-  if (!params_.admittance_enabled_axes[i]) {
-    desired_velocity_(i) = 0.0;
-  }
-}
-
-// Store as Cartesian velocity command
-cart_vel_cmd_ = desired_velocity_;
-```
-
 ## 4. Implementation Details
 
-### 4.1 Initialization Phase
+### 4.1 Lifecycle Management
 
 The controller follows a standard ROS2 control lifecycle pattern:
 
@@ -269,6 +282,32 @@ The controller generates joint trajectories from Cartesian velocities:
 | `joint_velocities_cmd_` | `Eigen::VectorXd` | Target joint velocities |
 | `desired_velocity_` | `Eigen::Matrix<double, 6, 1>` | Cartesian velocity command |
 
+### 4.5 ROS2 Interfaces
+
+#### Subscribers
+```cpp
+// Wrench input from F/T sensor
+rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_subscriber_;
+```
+
+#### Publishers
+```cpp
+// Cartesian velocity output for monitoring
+rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cart_vel_pub_;
+```
+
+#### Action Clients
+```cpp
+// Joint trajectory execution
+rclcpp_action::Client<FollowJointTrajectory>::SharedPtr action_client_;
+```
+
+#### Services
+```cpp
+// Zero the F/T sensor
+rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr zero_ft_sensor_service_;
+```
+
 ## 5. Configuration Parameters
 
 ### 5.1 Admittance Parameters
@@ -297,7 +336,38 @@ The controller generates joint trajectories from Cartesian velocities:
 | Trajectory Execution Failure | Retry with new trajectory |
 | Kinematics Error | Use fallback mode (Cartesian control) |
 
-## 6. Conclusion
+## 6. Real-Time Considerations
+
+### 6.1 Real-Time Constraints
+- Designed for real-time control loops (typically 1kHz)
+- Bounded execution time guarantees
+- Minimal dynamic allocation in control paths
+
+### 6.2 Memory Management
+- Pre-allocated matrices and buffers
+- Real-time safe communication patterns
+- State data protection mechanisms
+
+### 6.3 Thread Safety
+- Non-blocking communication patterns
+- Real-time safe parameter access
+- Protected critical sections
+
+## 7. Extensibility
+
+### 7.1 Customization Points
+- Configurable admittance parameters
+- Replaceable kinematics plugins
+- Custom trajectory generation
+- Filter coefficient tuning
+
+### 7.2 Future Enhancements
+- Adaptive admittance parameters
+- Multi-sensor fusion
+- Enhanced safety monitoring
+- Dynamic reconfiguration
+
+## 8. Conclusion
 
 The UR Admittance Controller provides a complete implementation of cartesian admittance control for Universal Robots manipulators. Its modular design follows ROS2 control best practices, with clear separation of concerns between:
 
