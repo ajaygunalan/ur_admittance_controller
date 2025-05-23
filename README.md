@@ -1,10 +1,49 @@
 # UR Admittance Controller
-ROS2 controller implementing cartesian (task-space) admittance control for Universal Robots. 
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Documentation](https://img.shields.io/badge/Documentation-Architecture-blue)](ur_admittance_architecture.md)
 
-## Quick Start
+ROS2 controller implementing cartesian (task-space) admittance control for Universal Robots, enabling compliant reaction to external forces/torques.
 
-### Simulation Usage
+## Overview
+
+This controller converts force/torque measurements into robot motion using the admittance control paradigm. The controller:
+- Receives wrench data from the F/T sensor or simulation
+- Transforms forces/torques into appropriate reference frames
+- Generates smooth trajectories with velocity/acceleration limits
+- Sends commands to the robot's joint trajectory controller
+
+## Installation
+
+### Dependencies
+
+#### Runtime Dependencies
+- **ROS2 Control**: `controller_interface`, `hardware_interface`, `realtime_tools`
+- **Messages**: `control_msgs`, `geometry_msgs`, `trajectory_msgs`, `std_srvs`
+- **Kinematics**: `kinematics_interface`, `kinematics_interface_kdl`, `kdl_parser`
+
+#### Simulation Dependencies
+- **UR Simulation**: `ur_simulation_gz` - Universal Robots Gazebo simulation package
+  - Install: `git clone https://github.com/UniversalRobots/Universal_Robots_ROS2_Gazebo_Simulation.git`
+
+### Building
+
+```bash
+# Clone the repository into your workspace
+cd ~/ros2_ws/src
+git clone https://github.com/yourusername/ur_admittance_controller.git
+
+# Build the package
+cd ~/ros2_ws
+colcon build --packages-select ur_admittance_controller
+
+# Source the workspace
+source install/setup.bash
+```
+
+## Usage
+
+### Simulation
 
 1. **Start the Gazebo simulation:**
 
@@ -18,22 +57,22 @@ ros2 launch ur_simulation_gz ur_sim_control.launch.py
 ros2 launch ur_admittance_controller ur_admittance_controller.launch.py use_sim:=true
 ```
 
-3. **Run the simulated force/torque sensor (optional):**
+3. **Run the simulated force/torque sensor:**
 
 ```bash
 ros2 run ur_admittance_controller wrench_signal_generator
 ```
 
-The wrench signal generator accurately simulates a UR5e force/torque sensor with:
-- Tool frame to base frame transformations (like real UR sensors)
-- Gravity compensation based on configured tool mass
-- `zero_ftsensor` service (equivalent to "Calibrate FT Sensor" on the teach pendant)
+   *The wrench signal generator simulates a UR5e force/torque sensor with:*
+   - Tool to base frame transformations (matching real UR sensors)
+   - Gravity compensation for configured tool mass
+   - `zero_ftsensor` service (equivalent to "Calibrate FT Sensor")
 
-4. Apply an external wrench to the robot's wrist link:
+4. **Apply an external wrench for testing:**
 
 ```bash
-ros2 service call /gazebo/apply_body_wrench gazebo_msgs/srv/ApplyBodyWrench \
-  "{body_name: 'robot::wrist_3_link',
+ros2 service call /apply_link_wrench gazebo_msgs/srv/ApplyLinkWrench \
+  "{link_name: 'robot::wrist_3_link',
     reference_frame: 'world',
     reference_point: {x: 0.0, y: 0.0, z: 0.0},
     wrench: {
@@ -44,6 +83,7 @@ ros2 service call /gazebo/apply_body_wrench gazebo_msgs/srv/ApplyBodyWrench \
     duration: {sec: 1, nanosec: 0}
   }"
 ```
+
 ### Real Hardware Usage
 
 1. **Verify connection to the UR robot:**
@@ -62,41 +102,33 @@ ros2 launch ur_admittance_controller ur_admittance_controller.launch.py use_sim:
 ros2 topic echo /wrench
 ```
 
-### Configuration
+## Configuration
 
-Key parameters in `config/ur_controllers.yaml`:
+### Key Parameters
 
-- **Admittance**: `mass`, `damping_ratio`, `stiffness` control force response
-- **Motion**: `trajectory_duration`, `velocity_scale_factor` adjust trajectory shape
-- **Tools**: The simulated tool has configurable `tool_mass` and center of mass offset
+Parameters can be set in `config/ur_controllers.yaml`:
 
-### Parameter Tuning
+| Parameter Group | Parameters | Description |
+|-----------------|------------|-------------|
+| **Admittance** | `mass`, `damping_ratio`, `stiffness` | Control force response sensitivity |
+| **Motion** | `trajectory_duration`, `velocity_scale_factor` | Adjust trajectory shape |
+| **Tool** | `tool_mass`, `tool_center_of_mass` | Configure tool properties |
 
-Adjust parameters dynamically:
+### Runtime Parameter Tuning
 
 ```bash
 # Make the robot more compliant
 ros2 param set /ur_admittance_controller mass "[5.0, 5.0, 5.0, 5.0, 5.0, 5.0]"
 
-# Zero the simulated force/torque sensor
+# Zero the force/torque sensor
 ros2 service call /zero_ftsensor std_srvs/srv/Trigger
 ```
 
-## Documentation
+## Implementation Details
 
-### Architecture & Technical Details
+### Working Principle
 
-For a comprehensive understanding of the controller's internal architecture, please refer to the [**UR Admittance Architecture**](ur_admittance_architecture.md) document, which covers:
-
-- Detailed system component descriptions
-- Complete execution pipeline
-- Frame transformations and mathematical operations
-- Controller parameters and configuration options
-- Implementation details and error handling strategies
-
-## How It Works
-
-The admittance controller follows this simple pipeline:
+The admittance controller follows this pipeline:
 
 ```
 [FT Sensor] → [Admittance Control] → [Trajectory Generation] → [Robot]
@@ -107,45 +139,36 @@ Forces applied to the robot are converted to motion using the admittance control
 M * a + D * v + S * x = F
 ```
 
-> **Technical Details**: For a comprehensive explanation of the pipeline, data types, and mathematical operations, see the [architecture document](ur_admittance_architecture.md#42-runtime-pipeline).
+Where:
+- M: Mass matrix (6x6)
+- D: Damping matrix (6x6)
+- S: Stiffness matrix (6x6)
+- a: Acceleration
+- v: Velocity
+- x: Position error
+- F: External force/torque
 
-## Testing
+### Robot Compatibility
 
-### Testing with External Forces
+**UR5e Specifications:**
+- 6 DOF manipulator with 5kg payload capacity and 850mm reach
+- Integrated force/torque sensing at the TCP
+- Position and velocity feedback on all joints
 
+**Controller Chain:**
+The admittance controller sends commands to the `scaled_joint_trajectory_controller` for safety and reliability.
 
+## Documentation
 
-## Robot Details
+- [Architecture Document](ur_admittance_architecture.md): Detailed technical information about the controller implementation
+- [UR Controllers Reference](ur_controllers.md): Information about Universal Robots controller framework
 
-### UR5e Specifications
+## License
 
-- 6 DOF, 5kg payload capacity, 850 mm maximum reach
-- Sensing/actuation capabilities:
-  - Joint position feedback
-  - Joint velocity feedback
-  - No direct joint torque control (only estimates via motor current)
-  - 6-axis force/torque sensing at the TCP
+Apache License 2.0
 
-### Controller Selection
+## Acknowledgements
 
-We use the default `scaled_joint_trajectory_controller` for safety and reliability. For detailed information about UR robot controllers, see the [UR Controllers Reference](ur_admittance_architecture.md#626-trajectory-execution).
+- Universal Robots for the ROS2 driver framework
+- ROS-Controls community for the ros2_control framework
 
-## Dependencies
-
-### ROS2 Dependencies
-
-- **Core**: `rclcpp`, `rclcpp_lifecycle`, `rclcpp_action`
-- **Control**: `controller_interface`, `hardware_interface`, `realtime_tools`
-- **Messages**: `control_msgs`, `geometry_msgs`, `trajectory_msgs`, `std_srvs`
-- **Kinematics**: `kinematics_interface`, `kinematics_interface_kdl`, `kdl_parser`
-- **TF**: `tf2`, `tf2_ros`, `tf2_geometry_msgs`
-- **Other**: `pluginlib`, `Eigen3`
-
-## Troubleshooting
-
-### Common Issues
-
-- **Trajectory Aborts**: Increase `position_tolerance` or `trajectory_duration` 
-- **Jerky Motion**: Reduce `velocity_scale_factor` or increase `mass` values
-- **No Force Response**: Verify wrench topic is being published and check TF frames
-- **Simulation Issues**: Ensure Gazebo is running with proper UR5e model loaded
