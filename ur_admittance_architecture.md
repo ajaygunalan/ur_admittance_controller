@@ -10,8 +10,8 @@ The UR Admittance Controller is a ROS2 controller that implements cartesian admi
 │ Sensor        ├───►│  Admittance Control   ├───►│ Joint Trajectory   ├───►│   Robot   │
 │ (Real/Sim)    │    │  Controller           │    │ Controller         │    │           │
 └───────────────┘    └───────────────────────┘    └────────────────────┘    └───────────┘
-      Wrench                Cartesian                Joint Commands             Motion
-                            Velocity
+     WrenchMsg             CartesianVelocity          JointTrajectory          Position
+  (force/torque)           (twist command)         (positions/velocities)      Commands
 ```
 
 ## 2. System Architecture
@@ -75,13 +75,16 @@ The controller processes data through the following sequential pipeline:
 │     Data      │────►│ Transformation│────►│  Equations    │────►│  Kinematics   │
 │ (Tool Frame)  │     │ (to Base)     │     │  M·a+D·v+K·x=F│     │  (Jacobian)   │
 └───────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
+   WrenchStamped         BaseWrench              CartesianVelocity         JointVelocities
                                                                            │
                                                                            ▼
 ┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
-│    Robot      │     │   Joint       │     │  Trajectory   │     │    Joint      │
-│   Motion      │◄────│  Trajectory   │◄────│  Generation   │◄────│  Velocities   │
-│  Execution    │     │  Controller   │     │               │     │               │
+│    Robot      │     │   Joint       │     │  Trajectory   │     │    Path       │
+│    Motion     │◄────│  Trajectory   │◄────│  Generation   │◄────│  Planning    │
+│  (Positions)  │     │  Controller   │     │               │     │               │
 └───────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
+  Position Commands      JointTrajectory         TimeParameterized         WaypointPath
+                      (positions/velocities)         Trajectory
 ```
 
 ### 3.2 Data Types and Transformations
