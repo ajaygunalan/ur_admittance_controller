@@ -1,8 +1,6 @@
 # UR Admittance Controller
+ROS2 controller implementing cartesian (task-space) admittance control for Universal Robots. 
 
-A ROS2 controller for Universal Robots that converts force/torque measurements into compliant motion. Features adjustable parameters, gravity compensation, and real-time performance. For technical details, see the [architecture documentation](ur_admittance_architecture.md).
-
-[![Documentation](https://img.shields.io/badge/Documentation-Architecture-blue)](ur_admittance_architecture.md)
 
 ## Quick Start
 
@@ -20,12 +18,32 @@ ros2 launch ur_simulation_gz ur_sim_control.launch.py
 ros2 launch ur_admittance_controller ur_admittance_controller.launch.py use_sim:=true
 ```
 
-3. **Generate test forces (optional):**
+3. **Run the simulated force/torque sensor (optional):**
 
 ```bash
 ros2 run ur_admittance_controller wrench_signal_generator
 ```
 
+The wrench signal generator accurately simulates a UR5e force/torque sensor with:
+- Tool frame to base frame transformations (like real UR sensors)
+- Gravity compensation based on configured tool mass
+- `zero_ftsensor` service (equivalent to "Calibrate FT Sensor" on the teach pendant)
+
+4. Apply an external wrench to the robot's wrist link:
+
+```bash
+ros2 service call /gazebo/apply_body_wrench gazebo_msgs/srv/ApplyBodyWrench \
+  "{body_name: 'robot::wrist_3_link',
+    reference_frame: 'world',
+    reference_point: {x: 0.0, y: 0.0, z: 0.0},
+    wrench: {
+      force: {x: 0.0, y: 0.0, z: 40.0},
+      torque: {x: 0.0, y: 0.0, z: 0.0}
+    },
+    start_time: {sec: 0, nanosec: 0},
+    duration: {sec: 1, nanosec: 0}
+  }"
+```
 ### Real Hardware Usage
 
 1. **Verify connection to the UR robot:**
@@ -95,21 +113,7 @@ M * a + D * v + S * x = F
 
 ### Testing with External Forces
 
-Apply an external wrench to the robot's wrist link:
 
-```bash
-ros2 service call /gazebo/apply_body_wrench gazebo_msgs/srv/ApplyBodyWrench \
-  "{body_name: 'robot::wrist_3_link',
-    reference_frame: 'world',
-    reference_point: {x: 0.0, y: 0.0, z: 0.0},
-    wrench: {
-      force: {x: 0.0, y: 0.0, z: 40.0},
-      torque: {x: 0.0, y: 0.0, z: 0.0}
-    },
-    start_time: {sec: 0, nanosec: 0},
-    duration: {sec: 1, nanosec: 0}
-  }"
-```
 
 ## Robot Details
 

@@ -4,7 +4,28 @@
 
 The UR Admittance Controller is a ROS2 controller plugin that enables force-compliant motion control for Universal Robots manipulators. It follows the admittance control paradigm, where external forces drive robot motion according to a second-order mechanical system model.
 
-![Architecture Overview](https://raw.githubusercontent.com/ros-controls/roadmap/master/design_drafts/components_architecture.png)
+```
+                                                    ROS2 Control Framework
+                                                  ┌───────────────────────┐
+                                                  │  Controller Manager   │
+                                                  └───────────┬───────────┘
+                                                              │
+                                       ┌──────────────────────┴─────────────────────┐
+                                       │                                              │
+                              ┌────────▼───────┐                          ┌──────────▼─────────┐
+                              │ Controllers     │                          │ Hardware Interface  │
+┌──────────────────┐   msg   │ ┌──────────────┐│   cmd   ┌─────────────┐ │ ┌─────────────────┐│
+│  External Input  │────────►│ │ ur_admittance││────────►│  Chainable  │ │ │ Hardware Access ││
+│  (F/T Sensor)    │         │ │ controller   ││         │ Controllers │ │ │ Abstraction     ││
+└──────────────────┘         │ └──────────────┘│         └─────────────┘ │ └─────────────────┘│
+                              └────────────────┘                          └────────────────────┘
+                                                                                     │
+                                                                                     ▼
+                                                                          ┌────────────────────┐
+                                                                          │ Physical Hardware  │
+                                                                          │ or Simulation     │
+                                                                          └────────────────────┘
+```
 
 ## 2. System Components
 
