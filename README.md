@@ -2,6 +2,8 @@
 
 A ROS2 controller for Universal Robots that enables force-compliant behavior in response to external forces.
 
+[![Documentation](https://img.shields.io/badge/Documentation-Architecture-blue)](ur_admittance_architecture.md)
+
 ## Overview
 
 This plugin enables the UR robot to react compliantly to external forces by converting force/torque measurements into smooth joint trajectories.
@@ -87,6 +89,18 @@ ros2 param set /ur_admittance_controller mass "[5.0, 5.0, 5.0, 5.0, 5.0, 5.0]"
 ros2 service call /zero_ftsensor std_srvs/srv/Trigger
 ```
 
+## Documentation
+
+### Architecture & Technical Details
+
+For a comprehensive understanding of the controller's internal architecture, please refer to the [**UR Admittance Architecture**](ur_admittance_architecture.md) document, which covers:
+
+- Detailed system component descriptions
+- Complete execution pipeline
+- Frame transformations and mathematical operations
+- Controller parameters and configuration options
+- Implementation details and error handling strategies
+
 ## How It Works
 
 The admittance control follows a simple workflow:
@@ -95,6 +109,26 @@ The admittance control follows a simple workflow:
 2. Calculate motion using `M * a + D * v + S * x = F`
 3. Generate smooth trajectories with velocity/acceleration limits
 4. Send commands to the robot's joint trajectory controller
+
+### Complete Data Flow Pipeline
+
+```
+[FT Sensor] → WrenchStamped → [Frame Transform] → Base Frame Wrench → 
+[Admittance Control] → Cartesian Velocity → [Inverse Kinematics] → 
+Joint Velocity → [Trajectory Generator] → JointTrajectory → 
+[Trajectory Controller] → Hardware Commands → [Robot]
+```
+
+#### Data Types & Reference Frames
+
+- **Sensor Data**: `geometry_msgs::msg::WrenchStamped` in tool frame
+- **Transformed Wrench**: 6D vector in base frame
+- **Admittance Output**: Cartesian velocity vector (6D)
+- **Kinematics Result**: Joint velocities (6 DOF)
+- **Trajectory Data**: `trajectory_msgs::msg::JointTrajectory`
+- **Action Interface**: `control_msgs::action::FollowJointTrajectory`
+
+> **Note**: For a more detailed explanation of each processing stage with code examples and mathematical operations, see the [architecture document](ur_admittance_architecture.md#42-runtime-pipeline).
 
 ## Troubleshooting
 

@@ -179,7 +179,7 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
       return controller_interface::CallbackReturn::ERROR;
     }
     
-    joint_positions_(i) = state_interfaces_[position_interface_index].get_value();
+    joint_positions_(i) = state_interfaces_[position_interface_index].get_optional().value();
     joint_velocities_(i) = 0.0;
     joint_velocities_cmd_(i) = 0.0;
   }
@@ -298,13 +298,13 @@ controller_interface::return_type AdmittanceController::update_and_write_command
   // Get current positions from state interfaces
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     size_t position_interface_index = i;
-    joint_positions_(i) = state_interfaces_[position_interface_index].get_value();
+    joint_positions_(i) = state_interfaces_[position_interface_index].get_optional().value();
   }
   
   // Get current velocities from state interfaces
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     size_t velocity_interface_index = params_.joints.size() + i;
-    joint_velocities_(i) = state_interfaces_[velocity_interface_index].get_value();
+    joint_velocities_(i) = state_interfaces_[velocity_interface_index].get_optional().value();
   }
   
   // Check if we need to retry a trajectory
@@ -403,7 +403,7 @@ void AdmittanceController::calculateAdmittance(const rclcpp::Duration & period)
           return interface.get_name() == position_interface_name;
         }));
     
-    current_positions[i] = state_interfaces_[position_interface_index].get_value();
+    current_positions[i] = state_interfaces_[position_interface_index].get_optional().value();
     
     const auto velocity_interface_name = params_.joints[i] + "/velocity";
     const auto velocity_interface_index = std::distance(
@@ -414,7 +414,7 @@ void AdmittanceController::calculateAdmittance(const rclcpp::Duration & period)
           return interface.get_name() == velocity_interface_name;
         }));
     
-    current_velocities[i] = state_interfaces_[velocity_interface_index].get_value();
+    current_velocities[i] = state_interfaces_[velocity_interface_index].get_optional().value();
   }
   
   // Create KDL data structures
@@ -624,7 +624,7 @@ void AdmittanceController::sendTrajectory()
           return interface.get_name() == position_interface_name;
         }));
     
-    current_positions[i] = state_interfaces_[position_interface_index].get_value();
+    current_positions[i] = state_interfaces_[position_interface_index].get_optional().value();
     
     // For now, use a small fixed velocity for testing
     velocity_commands[i] = 0.1;  // rad/s
@@ -677,8 +677,8 @@ void AdmittanceController::sendTrajectory()
       }
     };
   send_goal_options.feedback_callback =
-    [this](const GoalHandleFJT::SharedPtr & goal_handle,
-           const std::shared_ptr<const FollowJointTrajectory::Feedback> & feedback) {
+    [this](const GoalHandleFJT::SharedPtr & /*goal_handle*/,
+           const std::shared_ptr<const FollowJointTrajectory::Feedback> & /*feedback*/) {
       // Not used currently
     };
   send_goal_options.result_callback =
