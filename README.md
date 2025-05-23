@@ -63,10 +63,6 @@ ros2 launch ur_admittance_controller ur_admittance_controller.launch.py use_sim:
 ros2 run ur_admittance_controller wrench_signal_generator
 ```
 
-   *The wrench signal generator simulates a UR5e force/torque sensor with:*
-   - Tool to base frame transformations (matching real UR sensors)
-   - Gravity compensation for configured tool mass
-   - `zero_ftsensor` service (equivalent to "Calibrate FT Sensor")
 
 4. **Apply an external wrench for testing:**
 
@@ -148,27 +144,24 @@ Where:
 - x: Position error
 - F: External force/torque
 
-### Robot Compatibility
+see [Architecture Document](ur_admittance_architecture.md) for more details about the controller implementation
 
-**UR5e Specifications:**
-- 6 DOF manipulator with 5kg payload capacity and 850mm reach
-- Integrated force/torque sensing at the TCP
-- Position and velocity feedback on all joints
+### UR5e Specifications
 
-**Controller Chain:**
-The admittance controller sends commands to the `scaled_joint_trajectory_controller` for safety and reliability.
+- 6 DOF, 5kg payload capacity, 850 mm maximum reach
+- Sensing/actuation capabilities:
+  - Joint position feedback
+  - Joint velocity feedback
+  - No direct joint torque control (only estimates via motor current)
+  - 6-axis force/torque sensing at the TCP
 
-## Documentation
+### Controller Selection
 
-- [Architecture Document](ur_admittance_architecture.md): Detailed technical information about the controller implementation
-- [UR Controllers Reference](ur_controllers.md): Information about Universal Robots controller framework
+We use the default `scaled_joint_trajectory_controller` for safety and reliability. For detailed information about UR robot controllers and why we stciked with `default` controller, see the [UR Controllers Reference](docs/ur_controllers.md).
 
-## License
 
-Apache License 2.0
 
-## Acknowledgements
 
-- Universal Robots for the ROS2 driver framework
-- ROS-Controls community for the ros2_control framework
+
+
 

@@ -1,279 +1,193 @@
-# UR Admittance Controller: Architecture & Execution Pipeline
+# UR Admittance Controller: Architecture Documentation
 
-## 1. System Overview
+## 1. Overview
 
-The UR Admittance Controller is a ROS2 controller plugin that enables force-compliant motion control for Universal Robots manipulators. It follows the admittance control paradigm, where external forces drive robot motion according to a second-order mechanical system model.
+The UR Admittance Controller is a ROS2 controller that implements cartesian admittance control for Universal Robots manipulators. It enables compliant motion in response to external forces, transforming force/torque measurements into robot motion.
 
 ```
-                                                    ROS2 Control Framework
-                                                  ┌───────────────────────┐
-                                                  │  Controller Manager   │
-                                                  └───────────┬───────────┘
-                                                              │
-                                       ┌──────────────────────┴─────────────────────┐
-                                       │                                              │
-                              ┌────────▼───────┐                          ┌──────────▼─────────┐
-                              │ Controllers     │                          │ Hardware Interface  │
-┌──────────────────┐   msg   │ ┌──────────────┐│   cmd   ┌─────────────┐ │ ┌─────────────────┐│
-│  External Input  │────────►│ │ ur_admittance││────────►│  Chainable  │ │ │ Hardware Access ││
-│  (F/T Sensor)    │         │ │ controller   ││         │ Controllers │ │ │ Abstraction     ││
-└──────────────────┘         │ └──────────────┘│         └─────────────┘ │ └─────────────────┘│
-                              └────────────────┘                          └────────────────────┘
-                                                                                     │
-                                                                                     ▼
-                                                                          ┌────────────────────┐
-                                                                          │ Physical Hardware  │
-                                                                          │ or Simulation     │
-                                                                          └────────────────────┘
+┌───────────────┐    ┌───────────────────────┐    ┌────────────────────┐    ┌───────────┐
+│ Force/Torque  │    │                       │    │                    │    │           │
+│ Sensor        ├───►│  Admittance Control   ├───►│ Joint Trajectory   ├───►│   Robot   │
+│ (Real/Sim)    │    │  Controller           │    │ Controller         │    │           │
+└───────────────┘    └───────────────────────┘    └────────────────────┘    └───────────┘
+      Wrench                Cartesian                Joint Commands             Motion
+                            Velocity
 ```
 
-## 2. System Components
+## 2. System Architecture
 
-| Component | Type | Purpose |
-|-----------|------|---------|
-| `ur_admittance_controller` | ROS2 Controller Plugin | Main admittance control implementation |
-| `wrench_signal_generator` | ROS2 Node | Simulates F/T sensor data for testing |
-| `joint_motion_example` | ROS2 Node | Demonstrates trajectory execution |
-| `scaled_joint_trajectory_controller` | ROS2 Controller Plugin | Downstream controller that executes joint trajectories |
+### 2.1 Components
+
+| Component | Type | Description |
+|-----------|------|-------------|
+| `ur_admittance_controller` | ROS2 Controller Plugin | Core controller implementing the admittance control algorithm |
+| `wrench_signal_generator` | ROS2 Node | Simulates F/T sensor data with gravity compensation |
+| `scaled_joint_trajectory_controller` | ROS2 Controller | Executes joint trajectories sent by admittance controller |
+
+### 2.2 Key Dependencies
+
+| Dependency | Type | Purpose |
+|------------|------|--------|
+| `controller_interface` | ROS2 Package | Provides controller base classes and interfaces |
+| `hardware_interface` | ROS2 Package | Access to robot state and command interfaces |
+| `kinematics_interface` | ROS2 Package | Forward/inverse kinematics calculations |
+| `tf2` | ROS2 Package | Frame transformations for wrench data |
+| `realtime_tools` | ROS2 Package | Real-time safe data structures |
+
+### 2.3 Integration with ROS2 Control
+
+The controller implements the `ChainableControllerInterface` to integrate within the ROS2 control framework:
+
+```
+┌───────────────────────────────┐
+│     ros2_control Framework     │
+│  ┌──────────────────────────┐  │
+│  │    Controller Manager    │  │
+│  └──────────┬──────────────┘  │
+│             │                 │
+│  ┌──────────▼──────────────┐  │
+│  │ ur_admittance_controller │  │
+│  └──────────┬──────────────┘  │
+│             │                 │
+│  ┌──────────▼──────────────┐  │
+│  │joint_trajectory_controller│  │
+│  └──────────┬──────────────┘  │
+│             │                 │
+│  ┌──────────▼──────────────┐  │
+│  │   Hardware Interface     │  │
+│  └──────────┬──────────────┘  │
+└─────────────┼────────────────┘
+              │
+      ┌───────▼───────┐
+      │  UR5e Robot   │
+      └───────────────┘
+```
 
 ## 3. Control Architecture
 
-### 3.1 Controller Plugin Integration
+### 3.1 Data Flow Pipeline
 
-The admittance controller implements the `controller_interface::ChainableControllerInterface` to integrate with the ROS2 Control framework:
-
-```
-                                  ┌─────────────────────────┐
-┌──────────────────┐  WrenchMsg  │                         │  JointTrajectory  ┌───────────────────────────┐
-│ F/T Sensor or    │───────────▶│ ur_admittance_controller │───────────────▶  │scaled_joint_trajectory_ctrl│───▶ Robot
-│ Signal Generator │             │                         │                   │                           │
-└──────────────────┘             └─────────────────────────┘                   └───────────────────────────┘
-```
-
-### 3.2 Data Flow Pipeline
+The controller processes data through the following sequential pipeline:
 
 ```
-[FT Sensor] → WrenchStamped → [Frame Transform] → Base Frame Wrench → 
-[Admittance Control] → Cartesian Velocity → [Inverse Kinematics] → 
-Joint Velocity → [Trajectory Generator] → JointTrajectory → 
-[Trajectory Controller] → Hardware Commands → [Robot]
+┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
+│  F/T Sensor   │     │    Frame      │     │  Admittance   │     │    Inverse    │
+│     Data      │────►│ Transformation│────►│  Equations    │────►│  Kinematics   │
+│ (Tool Frame)  │     │ (to Base)     │     │  M·a+D·v+K·x=F│     │  (Jacobian)   │
+└───────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
+                                                                           │
+                                                                           ▼
+┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
+│    Robot      │     │   Joint       │     │  Trajectory   │     │    Joint      │
+│   Motion      │◄────│  Trajectory   │◄────│  Generation   │◄────│  Velocities   │
+│  Execution    │     │  Controller   │     │               │     │               │
+└───────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
 ```
 
-## 4. Execution Pipeline
+### 3.2 Data Types and Transformations
+
+| Stage | Input | Output | Library/API |
+|-------|-------|--------|-------------|
+| Frame Transformation | `WrenchStamped` (tool) | `Wrench` (base) | TF2 |
+| Admittance Control | `Wrench` | `Twist` (Cartesian velocity) | Eigen |
+| Inverse Kinematics | `Twist` | `JointVelocities` | KDL |
+| Trajectory Gen | `JointVelocities` | `JointTrajectory` | realtime_tools |
+| Control | `JointTrajectory` | Joint commands | controller_interface |
+
+## 4. Implementation Details
 
 ### 4.1 Initialization Phase
 
-| Step | Component | Process | Output |
-|------|-----------|---------|--------|
-| 1 | Launch System | Parse parameters, load URDF, configure controllers | Loaded controller manager |
-| 2 | Controller Manager | Load plugins via pluginlib, initialize controllers | Configured controller chain |
-| 3 | Admittance Controller | Configure interfaces, TF, kinematics | Initialized controller |
+The controller follows a standard ROS2 control lifecycle pattern:
 
-**Key Code:**
-```cpp
-// In on_configure():
-// 1. Load parameters
-param_listener_ = std::make_shared<ur_admittance_controller::ParamListener>(get_node());
-// 2. Set up TF
-tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_node()->get_clock());
-// 3. Initialize kinematics
-loadKinematics();
+```
+┌────────────────────┐
+│                      │
+│     Unconfigured     │
+│                      │
+└─────────┬──────────┘
+              │  on_configure()
+              ▼
+┌────────────────────┐
+│                      │
+│       Inactive       │
+│                      │
+└─────────┬──────────┘
+              │  on_activate()
+              ▼
+┌────────────────────┐
+│                      │
+│        Active        │
+│                      │
+└────────────────────┘
 ```
 
-### 4.2 Runtime Pipeline
+| Lifecycle Phase | Key Operations |
+|-----------------|----------------|
+| **Configuration** | Load parameters, set up TF buffer, initialize kinematics |
+| **Activation** | Allocate memory, set up subscribers, connect interfaces |
+| **Execution** | Run control loop, process wrench data, generate trajectories |
+| **Deactivation** | Safely stop robot motion, release resources |
 
-#### 4.2.1 Sensor Data Acquisition
+### 4.2 Admittance Control Implementation
 
-| Aspect | Specification |
-|--------|---------------|
-| **Source** | F/T sensor (real) or `wrench_signal_generator` (simulation) |
-| **Topic** | `/wrench` |
-| **Message Type** | `geometry_msgs::msg::WrenchStamped` |
-| **Frame** | Tool frame (e.g., `tool0`) |
-| **Update Rate** | ~125-500 Hz (hardware dependent) |
-| **Data Format** | 6D vector (3D force, 3D torque) |
-| **Units** | Force [N], Torque [Nm] |
+The core algorithm implements a second-order dynamic system:
 
-**Key Code:**
-```cpp
-// In wrenchCallback():
-wrench_buffer_.writeFromNonRT(std::move(*msg));
+```
+M·a + D·v + K·x = F_ext
 ```
 
-#### 4.2.2 Reference Frame Transformation
+Where:
+- M: Mass matrix (6×6, diagonal)
+- D: Damping matrix (6×6, diagonal)
+- K: Stiffness matrix (6×6, diagonal)
+- a: Cartesian acceleration
+- v: Cartesian velocity
+- x: Position error
+- F_ext: External force/torque
 
-| Aspect | Specification |
-|--------|---------------|
-| **Process** | Transform wrench from tool frame to base frame |
-| **Library** | TF2 |
-| **Input Frame** | Tool frame (`tool0`) |
-| **Output Frame** | Base frame (`base_link`) |
-| **Mathematical Operation** | Force-Torque transformation |
+#### Implementation Steps:
 
-**Mathematical Operations:**
-```
-force_base = R * force_tool
-torque_base = R * torque_tool + p × (R * force_tool)
-```
-where:
-- R = Rotation matrix from tool to base
-- p = Position vector from base to tool
-- × = Cross product
+1. **Acquire Force Data**: Read wrench data from sensor or simulation
+2. **Frame Transformation**: Convert from tool to base frame
+3. **Solve Admittance Equation**: `a = M⁻¹·(F_ext - D·v - K·x)`
+4. **Velocity Integration**: `v = v + a·dt`
+5. **Apply Limits**: Enforce velocity and acceleration limits
+6. **Inverse Kinematics**: Convert to joint velocities
+7. **Trajectory Generation**: Create smooth joint trajectories
 
-**Key Code:**
-```cpp
-// In transformWrench():
-geometry_msgs::msg::TransformStamped transform = tf_buffer_->lookupTransform(
-  base_frame_id_, tool_frame_id_, tf2::TimePointZero);
-```
+### 4.3 Critical Data Structures
 
-#### 4.2.3 Admittance Control Calculation
+| Data Structure | Type | Purpose |
+|----------------|------|----------|
+| `wrench_buffer_` | `realtime_tools::RealtimeBuffer<WrenchStamped>` | Thread-safe wrench data storage |
+| `mass_matrix_` | `Eigen::Matrix<double, 6, 6>` | Inertial parameters |
+| `damping_matrix_` | `Eigen::Matrix<double, 6, 6>` | Damping coefficients |
+| `joint_positions_` | `Eigen::VectorXd` | Current joint positions |
+| `joint_velocities_cmd_` | `Eigen::VectorXd` | Target joint velocities |
+| `desired_velocity_` | `Eigen::Matrix<double, 6, 1>` | Cartesian velocity command |
 
-| Aspect | Specification |
-|--------|---------------|
-| **Process** | Convert external forces to motion via admittance law |
-| **Update Rate** | Controller frequency (~100-500 Hz) |
-| **Input** | 6D wrench in base frame |
-| **Output** | 6D Cartesian velocity |
-| **Parameters** | Mass matrix (M), Damping matrix (D), Stiffness matrix (K) |
-| **Algorithm** | Second-order mechanical system solver |
+## 5. Configuration Parameters
 
-**Admittance Equation:**
-```
-M * a + D * v + K * x = F_ext
-```
+### 5.1 Admittance Parameters
 
-**Calculation Steps:**
-1. Read external wrench (F_ext)
-2. Calculate desired acceleration: a = M⁻¹ * (F_ext - D*v - K*x)
-3. Integrate to get velocity: v = v + a * dt
-4. Apply deadband filter to remove noise
+| Parameter | Type | Description | Effect |
+|-----------|------|-------------|--------|
+| `mass` | Vector(6) | Virtual mass matrix diagonals | Higher values increase inertia |
+| `damping_ratio` | Vector(6) | Damping ratio for each DOF | Higher values increase stability |
+| `stiffness` | Vector(6) | Virtual spring stiffness | Higher values increase position-holding |
+| `deadband` | Vector(6) | Minimum force threshold | Filters sensor noise |
 
-**Key Code:**
-```cpp
-// In calculateAdmittance():
-desired_acceleration_ = mass_matrix_.inverse() * 
-  (wrench_external_ - damping_matrix_ * desired_velocity_ - 
-   stiffness_matrix_ * pose_error_);
-   
-// Integration
-desired_velocity_ += desired_acceleration_ * period.seconds();
-```
-
-#### 4.2.4 Inverse Kinematics
-
-| Aspect | Specification |
-|--------|---------------|
-| **Process** | Convert Cartesian velocity to joint velocity |
-| **Library** | KDL (Kinematics and Dynamics Library) |
-| **Input** | 6D Cartesian velocity |
-| **Output** | 6D joint velocity (one per joint) |
-| **Algorithm** | Jacobian pseudo-inverse |
-
-**Mathematical Operation:**
-```
-q̇ = J⁻¹(q) * v
-```
-where:
-- q̇ = Joint velocity vector
-- J⁻¹ = Pseudo-inverse of the Jacobian matrix
-- v = Cartesian velocity vector
-
-**Key Code:**
-```cpp
-// In update_and_write_commands():
-kinematics_->convert(cart_vel_cmd_, joint_velocities_cmd_);
-```
-
-#### 4.2.5 Trajectory Generation
-
-| Aspect | Specification |
-|--------|---------------|
-| **Process** | Create smooth joint trajectory from velocities |
-| **Input** | Joint velocities |
-| **Output** | Joint trajectory |
-| **Message Type** | `trajectory_msgs::msg::JointTrajectory` |
-| **Parameters** | Time horizon, position/velocity limits |
-
-**Trajectory Generation Steps:**
-1. Start from current joint positions
-2. Forward integrate velocities: q_future = q_current + q̇ * dt
-3. Create waypoints with timestamps
-4. Apply velocity and acceleration limits
-5. Package into trajectory message
-
-**Key Code:**
-```cpp
-// In sendTrajectory():
-trajectory_msgs::msg::JointTrajectory trajectory;
-trajectory.joint_names = params_.joints;
-
-// Add points at different time steps
-for (size_t i = 0; i < num_points; ++i) {
-  trajectory_msgs::msg::JointTrajectoryPoint point;
-  // Calculate positions and velocities for each point
-  trajectory.points.push_back(point);
-}
-```
-
-#### 4.2.6 Trajectory Execution
-
-| Aspect | Specification |
-|--------|---------------|
-| **Process** | Send trajectory to joint trajectory controller |
-| **Interface** | ROS2 Action |
-| **Action Type** | `control_msgs::action::FollowJointTrajectory` |
-| **Client** | `ur_admittance_controller` |
-| **Server** | `scaled_joint_trajectory_controller` |
-
-**Key Code:**
-```cpp
-// In sendTrajectory():
-auto goal_msg = FollowJointTrajectory::Goal();
-goal_msg.trajectory = trajectory;
-goal_future_ = action_client_->async_send_goal(goal_msg);
-```
-
-#### 4.2.7 Hardware Command Execution
-
-| Aspect | Specification |
-|--------|---------------|
-| **Process** | Convert trajectory into hardware commands |
-| **Component** | `scaled_joint_trajectory_controller` |
-| **Hardware Interface** | Position or velocity command interfaces |
-| **Target** | UR hardware (real) or Gazebo (simulation) |
-
-## 5. Controller Parameters
+### 5.2 Motion Parameters
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
-| `joints` | string[] | Joint names to control | `["shoulder_pan_joint", ...]` |
-| `mass_matrix` | double[36] | 6x6 mass matrix for admittance | Identity |
-| `damping_matrix` | double[36] | 6x6 damping matrix | Diagonal matrix |
-| `stiffness_matrix` | double[36] | 6x6 stiffness matrix | Zero matrix |
-| `wrench_deadband` | double[6] | Minimum wrench to respond to | `[0.1, 0.1, 0.1, 0.1, 0.1, 0.1]` |
-| `controller_name` | string | Name of trajectory controller | `scaled_joint_trajectory_controller` |
+| `trajectory_duration` | double | Duration of generated trajectories | 0.5s |
+| `velocity_scale_factor` | double | Safety scaling for velocities | 0.8 |
+| `position_limits` | Array | Joint position min/max values | Robot-specific |
+| `velocity_limits` | Array | Joint velocity min/max values | Robot-specific |
 
-## 6. Implementation Details
-
-### 6.1 Controller State Machine
-
-The controller follows the ROS2 Controller lifecycle:
-
-```
-      on_configure()
-Unconfigured ──────────────► Configured
-      │                        │
-      │                        │ on_activate()
-      │                        ▼
-      │                      Active
-      │                        │
-      │                        │ on_deactivate()
-      │                        ▼
-      └───────────────── Inactive
-```
-
-### 6.2 Error Handling
+### 5.3 Error Handling
 
 | Error Condition | Handling Strategy |
 |-----------------|-------------------|
@@ -281,26 +195,14 @@ Unconfigured ──────────────► Configured
 | Trajectory Execution Failure | Retry with new trajectory |
 | Kinematics Error | Use fallback mode (Cartesian control) |
 
-## 7. Testing & Validation
+## 6. Conclusion
 
-### 7.1 Simulation Testing
+The UR Admittance Controller provides a complete implementation of cartesian admittance control for Universal Robots manipulators. Its modular design follows ROS2 control best practices, with clear separation of concerns between:
 
-Use the `wrench_signal_generator` to publish simulated force/torque data:
+- Force/torque sensing and processing
+- Reference frame transformations
+- Admittance control calculations
+- Inverse kinematics and motion planning
+- Trajectory generation and execution
 
-```bash
-ros2 run ur_admittance_controller wrench_signal_generator
-```
-
-### 7.2 Hardware Testing
-
-For real robot testing, ensure proper configuration of the F/T sensor:
-
-```bash
-ros2 launch ur_admittance_controller ur_admittance_controller.launch.py use_sim:=false robot_ip:=<ROBOT_IP>
-```
-
-## 8. References
-
-1. [ROS2 Control Framework](https://control.ros.org/)
-2. [Admittance Control Theory](https://doi.org/10.1109/ROBOT.2000.844146)
-3. [Universal Robots ROS2 Driver](https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver)
+The controller's compliance behavior can be finely tuned through the mass, damping, and stiffness parameters, making it suitable for various interaction tasks such as assembly, polishing, or human-robot collaboration.
