@@ -187,6 +187,7 @@ tool0 frame → Transform → Filter → Admittance → Kinematics → Joint Lim
 - **<1ms Latency**: Interface-level chaining, no message overhead  
 - **Memory Safe**: Pre-allocated vectors, no dynamic allocation
 - **Transform Caching**: Non-blocking TF lookups for RT safety
+- **Real-Time Publishing**: Lock-free publishers using `realtime_tools`
 
 For detailed technical information, see [Architecture Document](ur_admittance_architecture.md).
 
@@ -198,6 +199,7 @@ For detailed technical information, see [Architecture Document](ur_admittance_ar
 - ✅ **Drift Prevention**: Auto-reset when stationary (<1mm/s)
 - ✅ **Exception Recovery**: Safe fallbacks on any error
 - ✅ **Real-Time Safe**: No blocking operations in control loop
+- ✅ **Lock-Free Publishing**: Non-blocking data output
 
 ## 🔍 Troubleshooting
 
@@ -282,6 +284,7 @@ ros2 topic pub /ft_sensor_readings geometry_msgs/WrenchStamped \
 | **CPU Usage** | <3% (single core) |
 | **Force Sensitivity** | ±0.1N |
 | **Position Accuracy** | ±0.1 mm |
+| **Real-Time Safety** | Lock-free publishers |
 
 ## 🤔 FAQ
 
@@ -296,6 +299,9 @@ A: Yes, with proper velocity limits and application-specific tuning. Always foll
 
 **Q: Can I combine with position control?**  
 A: Yes! Set non-zero stiffness parameters for impedance control (position + force regulation).
+
+**Q: Is this truly real-time safe?**  
+A: Yes! Uses `realtime_tools::RealtimePublisher` for lock-free publishing, pre-allocated memory, and non-blocking operations throughout.
 
 ## 📚 Further Reading
 
