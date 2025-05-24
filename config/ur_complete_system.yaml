@@ -96,14 +96,14 @@ force_mode_controller:
 # F/T Sensor Broadcaster
 force_torque_sensor_broadcaster:
   ros__parameters:
-    sensor_name: "tcp_fts_sensor"
+    sensor_name: "wrist_ft_sensor"
     state_interface_names:
-      - "tcp_fts_sensor/force.x"
-      - "tcp_fts_sensor/force.y"
-      - "tcp_fts_sensor/force.z"
-      - "tcp_fts_sensor/torque.x"
-      - "tcp_fts_sensor/torque.y"
-      - "tcp_fts_sensor/torque.z"
+      - "wrist_ft_sensor/force.x"
+      - "wrist_ft_sensor/force.y"
+      - "wrist_ft_sensor/force.z"
+      - "wrist_ft_sensor/torque.x"
+      - "wrist_ft_sensor/torque.y"
+      - "wrist_ft_sensor/torque.z"
     frame_id: "tool0"
     topic_name: "ft_sensor_readings"
 
@@ -122,7 +122,7 @@ ur_admittance_controller:
       - position
       - velocity
 
-    ft_sensor_name: "tcp_fts_sensor"
+    ft_sensor_name: "wrist_ft_sensor"  # Updated to match URDF
 
     # Add namespace for better organization
     admittance:

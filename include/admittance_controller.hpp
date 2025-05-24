@@ -38,11 +38,11 @@
 #include <Eigen/Dense>
 
 // Message includes
-#include "geometry_msgs/geometry_msgs/msg/twist.hpp"
-#include "geometry_msgs/geometry_msgs/msg/wrench_stamped.hpp"
-#include "std_msgs/std_msgs/msg/float64_multi_array.hpp"
-#include "std_msgs/std_msgs/msg/string.hpp"
-#include "trajectory_msgs/trajectory_msgs/msg/joint_trajectory.hpp"
+#include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/wrench_stamped.hpp"
+#include "std_msgs/msg/float64_multi_array.hpp"
+#include "std_msgs/msg/string.hpp"
+#include "trajectory_msgs/msg/joint_trajectory.hpp"
 
 // Generated parameter includes
 #include <ur_admittance_controller/ur_admittance_controller_parameters.hpp>

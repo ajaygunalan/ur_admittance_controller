@@ -64,7 +64,7 @@ def generate_launch_description():
     config_file = PathJoinSubstitution([
         FindPackageShare("ur_admittance_controller"),
         "config",
-        "admittance_config.yaml"
+        "ur_complete_system.yaml"  # Using consolidated system config
     ])
 
     # Load Admittance Controller (inactive)

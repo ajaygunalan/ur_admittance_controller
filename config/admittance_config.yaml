@@ -12,7 +12,7 @@ ur_admittance_controller:
   # F/T sensor configuration
   ft_sensor_name:
     type: string
-    default_value: "tcp_fts_sensor"
+    default_value: "wrist_ft_sensor"
     description: "Name of the F/T sensor hardware interface"
 
   # Add admittance namespace for better organization

@@ -60,7 +60,7 @@ def generate_launch_description():
     config_file = PathJoinSubstitution([
         FindPackageShare("ur_admittance_controller"),
         "config",
-        "ft_sensor_config.yaml"
+        "ur_complete_system.yaml"  # Consolidated configuration
     ])
 
     # Force/Torque Sensor Broadcaster

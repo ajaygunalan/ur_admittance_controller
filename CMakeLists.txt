@@ -24,13 +24,18 @@ find_package(realtime_tools REQUIRED)
 # Message and communication packages
 find_package(geometry_msgs REQUIRED)
 find_package(control_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 
 # Kinematics and math packages
 find_package(kinematics_interface REQUIRED)
 find_package(kdl_parser REQUIRED)
+find_package(urdf REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(tf2_eigen REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 
