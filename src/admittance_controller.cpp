@@ -199,7 +199,7 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
   // When activating, set desired pose to current pose to avoid initial jumps
   try {
     auto tf = tf_buffer_->lookupTransform(params_.base_link, params_.tip_link, 
-                                         tf2::TimePointZero, tf2::durationFromSec(0.1));
+                                         tf2::TimePointZero, tf2::durationFromSec(TRANSFORM_TIMEOUT));
     desired_pose_ = tf2::transformToEigen(tf);
     current_pose_ = desired_pose_;
   } catch (const tf2::TransformException & ex) {
@@ -293,7 +293,7 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     
     // Check cache validity (100ms timeout)
     if (!ft_transform_cache_.valid || 
-        (now - ft_transform_cache_.last_update).seconds() > 0.1) {
+        (now - ft_transform_cache_.last_update).seconds() > TRANSFORM_TIMEOUT) {
       try {
         // Use zero timeout for real-time safety (non-blocking) but with consistent timestamp
         ft_transform_cache_.transform = tf_buffer_->lookupTransform(
@@ -324,7 +324,7 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     
     // Update current_pose_ for impedance control
     if (!ee_transform_cache_.valid || 
-        (now - ee_transform_cache_.last_update).seconds() > 0.1) {
+        (now - ee_transform_cache_.last_update).seconds() > TRANSFORM_TIMEOUT) {
       try {
         ee_transform_cache_.transform = tf_buffer_->lookupTransform(
           params_.base_link, params_.tip_link, 
@@ -407,9 +407,10 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       desired_vel_.setZero();
       cart_twist_.setZero();
       
-      // Reset to actual positions
-      for (size_t i = 0; i < params_.joints.size(); ++i) {
-        joint_positions_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
+      // Reset to actual positions using C++17 range-based for loop
+      size_t i = 0;
+      for (const auto& index : pos_state_indices_) {
+        joint_positions_[i++] = state_interfaces_[index].get_optional().value();
       }
       
       // Update desired pose to current pose to prevent drift
@@ -432,7 +433,7 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     
     // Use pre-allocated joint_deltas_ vector for real-time safety
     
-    if (kinematics_ && kinematics_->convert_cartesian_deltas_to_joint_deltas(
+    if (kinematics_ && (*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
           current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) {
       
       // Apply joint deltas and limits with proper ordering
@@ -478,7 +479,7 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       }
       
       // Set small future time from start
-      point.time_from_start = rclcpp::Duration::from_seconds(0.1);
+      point.time_from_start = rclcpp::Duration::from_seconds(TRANSFORM_TIMEOUT);
       
       // Add point and publish trajectory
       traj_msg.points.push_back(point);
@@ -514,7 +515,7 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       point.velocities.resize(params_.joints.size(), 0.0);
       
       // Set small future time from start
-      point.time_from_start = rclcpp::Duration::from_seconds(0.1);
+      point.time_from_start = rclcpp::Duration::from_seconds(TRANSFORM_TIMEOUT);
       
       // Add point and publish trajectory
       traj_msg.points.push_back(point);
@@ -552,13 +553,14 @@ void AdmittanceController::cacheInterfaceIndices()
   }
   
   // Cache F/T interface indices
-  ft_indices_.resize(6, -1);
+  ft_indices_.resize(DOF, -1);
   if (!params_.ft_sensor_name.empty()) {
-    static const char* axes[] = {"force.x", "force.y", "force.z", "torque.x", "torque.y", "torque.z"};
-    for (size_t i = 0; i < 6; ++i) {
+    static constexpr std::array<const char*, DOF> axes = {"force.x", "force.y", "force.z", "torque.x", "torque.y", "torque.z"};
+    
+    for (size_t i = 0; i < axes.size(); ++i) {
       const auto name = params_.ft_sensor_name + "/" + axes[i];
       auto it = std::find_if(state_interfaces_.cbegin(), state_interfaces_.cend(),
-        [name](const auto & iface) { return iface.get_name() == name; });
+        [&name](const auto & iface) { return iface.get_name() == name; });
       if (it != state_interfaces_.cend()) {
         ft_indices_[i] = std::distance(state_interfaces_.cbegin(), it);
       }
@@ -589,7 +591,7 @@ bool AdmittanceController::loadKinematics()
     auto plugin_instance = kinematics_loader_->createUniqueInstance(params_.kinematics_plugin_name);
     kinematics_ = std::move(plugin_instance);
     
-    if (!kinematics_) {
+    if (!kinematics_.has_value()) {
       RCLCPP_ERROR(get_node()->get_logger(), "Failed to create kinematics instance");
       return false;
     }

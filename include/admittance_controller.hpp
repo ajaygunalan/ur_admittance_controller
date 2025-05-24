@@ -2,10 +2,12 @@
 #define UR_ADMITTANCE_CONTROLLER__ADMITTANCE_CONTROLLER_HPP_
 
 // Standard library includes
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,6 +50,11 @@
 
 namespace ur_admittance_controller
 {
+
+// Constants for improved code clarity and maintainability
+static constexpr size_t DOF = 6;
+static constexpr double DEFAULT_FILTER_COEFF = 0.95;
+static constexpr double TRANSFORM_TIMEOUT = 0.1;  // seconds
 
 // Clean Eigen typedefs for better readability
 using Matrix6d = Eigen::Matrix<double, 6, 6>;
@@ -107,7 +114,7 @@ protected:
 
   // Kinematics
   std::shared_ptr<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>> kinematics_loader_;
-  pluginlib::UniquePtr<kinematics_interface::KinematicsInterface> kinematics_;
+  std::optional<pluginlib::UniquePtr<kinematics_interface::KinematicsInterface>> kinematics_;
 
   // Joint state
   std::vector<double> joint_positions_;
@@ -152,24 +159,31 @@ private:
 
   // Transform caches
   struct TransformCache {
-    geometry_msgs::msg::TransformStamped transform;
-    Matrix6d adjoint;
-    rclcpp::Time last_update;
+    geometry_msgs::msg::TransformStamped transform{};
+    Matrix6d adjoint = Matrix6d::Zero();
+    rclcpp::Time last_update{};
     bool valid{false};
+    
+    // C++17 feature: Reset method with default member initializer
+    void reset() noexcept {
+      transform = geometry_msgs::msg::TransformStamped(); // Properly initialize with constructor
+      adjoint = Matrix6d::Zero();
+      valid = false;
+    }
   };
   
-  TransformCache ft_transform_cache_;
-  TransformCache ee_transform_cache_;
+  TransformCache ft_transform_cache_{};
+  TransformCache ee_transform_cache_{};
 
   // Helper methods
   void cacheInterfaceIndices();
   void publishCartesianVelocity();
-  bool loadKinematics();
-  bool waitForTransforms();
-  Vector6d computePoseError();  // Compute pose error for impedance control
+  [[nodiscard]] bool loadKinematics();
+  [[nodiscard]] bool waitForTransforms();
+  [[nodiscard]] Vector6d computePoseError();  // Compute pose error for impedance control
   
   // Joint limits utilities  
-  bool loadJointLimitsFromURDF(
+  [[nodiscard]] bool loadJointLimitsFromURDF(
     const std::shared_ptr<rclcpp_lifecycle::LifecycleNode> & node,
     const std::vector<std::string> & joint_names,
     std::vector<JointLimits> & limits);
