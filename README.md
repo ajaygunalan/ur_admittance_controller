@@ -1,7 +1,7 @@
 # UR Admittance Controller
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![ROS2](https://img.shields.io/badge/ROS2-Humble%2C%20Iron%2C%20Jazzy%2C%20Rolling-blue)](https://docs.ros.org/en/rolling/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![ROS2](https://img.shields.io/badge/ROS2-Jazzy-blue)](https://docs.ros.org/en/rolling/)
 
 ## Package Purpose
 
