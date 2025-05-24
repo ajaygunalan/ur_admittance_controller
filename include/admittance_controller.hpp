@@ -26,6 +26,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
+#include "realtime_tools/realtime_publisher.hpp"  // For real-time safe publishers
 
 // TF2 includes
 #include "tf2_geometry_msgs/tf2_geometry_msgs/tf2_geometry_msgs.hpp"
@@ -149,9 +150,24 @@ protected:
   std::vector<size_t> pos_state_indices_;
   std::vector<long> ft_indices_;
 
-  // Communication
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cart_vel_pub_;
-  rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
+  /**
+   * @brief Real-time safe Cartesian velocity publisher
+   * 
+   * QoS: Best effort, depth=1, volatile durability
+   * Threading: Lock-free, non-blocking publish from RT thread
+   * Topic: ~/cartesian_velocity_command
+   */
+  std::unique_ptr<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>> rt_cart_vel_pub_;
+  
+  /**
+   * @brief Real-time safe joint trajectory publisher  
+   * 
+   * QoS: Best effort, depth=1, volatile durability
+   * Threading: Lock-free, non-blocking publish from RT thread
+   * Topic: /scaled_joint_trajectory_controller/joint_trajectory
+   * Purpose: Provides joint commands to ScaledJointTrajectoryController
+   */
+  std::unique_ptr<realtime_tools::RealtimePublisher<trajectory_msgs::msg::JointTrajectory>> rt_trajectory_pub_;
 
 private:
   // Real-time safe logger

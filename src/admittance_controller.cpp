@@ -117,6 +117,14 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
     return controller_interface::CallbackReturn::ERROR;
   }
   
+  // Validate filter coefficient
+  if (params_.admittance.filter_coefficient < 0.0 || params_.admittance.filter_coefficient > 1.0) {
+    RCLCPP_ERROR(get_node()->get_logger(), 
+      "Invalid filter_coefficient = %f. Must be in [0.0, 1.0]", 
+      params_.admittance.filter_coefficient);
+    return controller_interface::CallbackReturn::ERROR;
+  }
+  
   if (!loadKinematics()) {
     RCLCPP_ERROR(get_node()->get_logger(), "Failed to load kinematics");
     return controller_interface::CallbackReturn::ERROR;
@@ -156,13 +164,20 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
     }
   }
   
-  // RT-safe publisher for monitoring
-  cart_vel_pub_ = get_node()->create_publisher<geometry_msgs::msg::Twist>(
+  // Create standard publishers first
+  auto cart_vel_pub = get_node()->create_publisher<geometry_msgs::msg::Twist>(
     "~/cartesian_velocity_command", rclcpp::SystemDefaultsQoS());
   
-  // Publisher for trajectory messages to scaled_joint_trajectory_controller
-  trajectory_pub_ = get_node()->create_publisher<trajectory_msgs::msg::JointTrajectory>(
-    "/scaled_joint_trajectory_controller/joint_trajectory", rclcpp::QoS(1).best_effort().durability_volatile());
+  auto trajectory_pub = get_node()->create_publisher<trajectory_msgs::msg::JointTrajectory>(
+    "/scaled_joint_trajectory_controller/joint_trajectory", 
+    rclcpp::QoS(1).best_effort().durability_volatile());
+    
+  // Initialize real-time safe publishers with the standard publishers
+  rt_cart_vel_pub_ = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>>(
+    cart_vel_pub);
+  
+  rt_trajectory_pub_ = std::make_unique<realtime_tools::RealtimePublisher<trajectory_msgs::msg::JointTrajectory>>(
+    trajectory_pub);
   
   // Initialize all vectors with proper sizes for real-time safety
   joint_positions_.resize(params_.joints.size());
@@ -253,27 +268,52 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     // Parameter hot-reload for live tuning
     if (params_.dynamic_parameters) {
       auto new_params = param_listener_->get_params();
-      if (params_.admittance.mass != new_params.admittance.mass || 
-          params_.admittance.stiffness != new_params.admittance.stiffness || 
-          params_.admittance.damping_ratio != new_params.admittance.damping_ratio) {
-        
+      
+      // Check which parameters have changed
+      bool mass_changed = (params_.admittance.mass != new_params.admittance.mass);
+      bool stiffness_changed = (params_.admittance.stiffness != new_params.admittance.stiffness);
+      bool damping_changed = (params_.admittance.damping_ratio != new_params.admittance.damping_ratio);
+      
+      // Only update matrices if control parameters changed
+      if (mass_changed || stiffness_changed || damping_changed) {
+        // Always update params first
         params_ = new_params;
-        for (size_t i = 0; i < 6; ++i) {
-          mass_(i, i) = params_.admittance.mass[i];
-          stiffness_(i, i) = params_.admittance.stiffness[i];
-          
-          if (params_.admittance.stiffness[i] > 0.0) {
-            damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
-              std::sqrt(params_.admittance.mass[i] * params_.admittance.stiffness[i]);
-          } else {
-            damping_(i, i) = params_.admittance.damping_ratio[i];
+        
+        // Update mass matrix if mass changed
+        if (mass_changed) {
+          for (size_t i = 0; i < 6; ++i) {
+            mass_(i, i) = params_.admittance.mass[i];
           }
+          // Pre-compute mass inverse only when mass changes
+          mass_inverse_ = mass_.inverse();
+          RCLCPP_INFO(get_node()->get_logger(), "Mass parameters updated");
         }
         
-        // Pre-compute mass inverse after updating mass matrix
-        mass_inverse_ = mass_.inverse();
-        RCLCPP_INFO(get_node()->get_logger(), "Updated admittance parameters");
+        // Update stiffness matrix if stiffness changed
+        if (stiffness_changed) {
+          for (size_t i = 0; i < 6; ++i) {
+            stiffness_(i, i) = params_.admittance.stiffness[i];
+          }
+          RCLCPP_INFO(get_node()->get_logger(), "Stiffness parameters updated");
+        }
+        
+        // Update damping matrix if stiffness or damping ratio changed
+        // (since damping depends on both stiffness and damping ratio)
+        if (stiffness_changed || damping_changed) {
+          for (size_t i = 0; i < 6; ++i) {
+            if (params_.admittance.stiffness[i] > 0.0) {
+              // Impedance mode damping formula: D = 2ζ√(MK)
+              damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
+                std::sqrt(params_.admittance.mass[i] * params_.admittance.stiffness[i]);
+            } else {
+              // Pure admittance mode: direct damping coefficient
+              damping_(i, i) = params_.admittance.damping_ratio[i];
+            }
+          }
+          RCLCPP_INFO(get_node()->get_logger(), "Damping parameters updated");
+        }
       } else {
+        // Update other non-control parameters without matrix recalculation
         params_ = new_params;
       }
     }
@@ -483,7 +523,10 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       
       // Add point and publish trajectory
       traj_msg.points.push_back(point);
-      trajectory_pub_->publish(traj_msg);
+      if (rt_trajectory_pub_->trylock()) {
+        rt_trajectory_pub_->msg_ = traj_msg;
+        rt_trajectory_pub_->unlockAndPublish();
+      }
       
     } else {
       if (rclcpp::ok()) {
@@ -519,7 +562,10 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       
       // Add point and publish trajectory
       traj_msg.points.push_back(point);
-      trajectory_pub_->publish(traj_msg);
+      if (rt_trajectory_pub_->trylock()) {
+        rt_trajectory_pub_->msg_ = traj_msg;
+        rt_trajectory_pub_->unlockAndPublish();
+      }
     }
     
     // Publish monitoring data (RT-safe)
@@ -570,14 +616,19 @@ void AdmittanceController::cacheInterfaceIndices()
 
 void AdmittanceController::publishCartesianVelocity()
 {
-  geometry_msgs::msg::Twist msg;
-  msg.linear.x = cart_twist_(0);
-  msg.linear.y = cart_twist_(1);
-  msg.linear.z = cart_twist_(2);
-  msg.angular.x = cart_twist_(3);
-  msg.angular.y = cart_twist_(4);
-  msg.angular.z = cart_twist_(5);
-  cart_vel_pub_->publish(msg);
+  // Use realtime publisher with trylock pattern to ensure RT safety
+  if (rt_cart_vel_pub_->trylock()) {
+    // Access message via msg_ member
+    auto& msg = rt_cart_vel_pub_->msg_;
+    msg.linear.x = cart_twist_(0);
+    msg.linear.y = cart_twist_(1);
+    msg.linear.z = cart_twist_(2);
+    msg.angular.x = cart_twist_(3);
+    msg.angular.y = cart_twist_(4);
+    msg.angular.z = cart_twist_(5);
+    // Unlock and publish in a non-blocking way
+    rt_cart_vel_pub_->unlockAndPublish();
+  }
 }
 
 bool AdmittanceController::loadKinematics()
