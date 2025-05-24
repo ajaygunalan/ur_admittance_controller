@@ -116,7 +116,6 @@ install(
 # Install Python scripts as executables
 install(
   PROGRAMS 
-    scripts/controller_status.py
     scripts/system_status.py
   DESTINATION lib/${PROJECT_NAME}
 )

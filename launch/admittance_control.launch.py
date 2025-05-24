@@ -110,7 +110,7 @@ def generate_launch_description():
         actions=[
             Node(
                 package="ur_admittance_controller",
-                executable="controller_status.py",
+                executable="system_status.py",  # ✅ Updated to use consolidated status script
                 name="admittance_status",
                 output="screen",
                 parameters=[{
