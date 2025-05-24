@@ -124,14 +124,20 @@ ur_admittance_controller:
 
     ft_sensor_name: "tcp_fts_sensor"
 
-    # Pure admittance parameters
-    mass: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
-    stiffness: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    damping_ratio: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
-
-    admittance_enabled_axes: [true, true, true, true, true, true]
-    min_motion_threshold: 1.5
-    filter_coefficient: 0.15
+    # Add namespace for better organization
+    admittance:
+      # Pure admittance parameters
+      mass: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
+      stiffness: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      damping_ratio: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
+      enabled_axes: [true, true, true, true, true, true]
+      min_motion_threshold: 1.5
+      filter_coefficient: 0.15
+      drift_reset_threshold: 0.001  # 1mm/s threshold for position drift prevention
+    
+    # Add Cartesian velocity safety limits
+    max_linear_velocity: 0.5  # m/s
+    max_angular_velocity: 1.0  # rad/s
     dynamic_parameters: true
 
     world_frame: "world"

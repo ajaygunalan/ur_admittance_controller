@@ -302,9 +302,76 @@ This controller integrates with ROS2 Control framework as a **chainable controll
 
 **Why Controller Chaining**: We use direct interface chaining with `scaled_joint_trajectory_controller` instead of action clients to achieve industrial-grade performance. For detailed technical comparison, see the [UR Controllers Reference](ur_controllers.md).
 
+## 🚀 Launch Sequence for Your System
 
+After starting the UR Gazebo simulation:
+```bash
+ros2 launch ur_simulation_gz ur_sim_control.launch.py
+```
 
+You have three options:
 
+### Add to Existing Simulation
+```bash
+ros2 launch ur_admittance_controller ur_admittance_system.launch.py add_to_existing:=true
+```
 
+### Launch as Complete System
+```bash
+ros2 launch ur_admittance_controller ur_admittance_system.launch.py
+```
 
+### Using with Real Hardware
+```bash
+ros2 launch ur_admittance_controller ur_admittance_system.launch.py use_sim:=false
+```
+
+## 🔍 Monitoring & Testing
+
+After launching the system, you can monitor, test, and tune the controller in real-time.
+
+### System Monitoring
+
+Open a new terminal to monitor the complete system status:
+
+```bash
+# Terminal 2 - Watch system status
+ros2 run ur_admittance_controller system_status.py
+```
+
+The status script will continuously check:
+- Controller status and health
+- Force/torque sensor data flow
+- Admittance velocity output
+- Trajectory command generation
+- System integration status
+
+### Testing Admittance Response
+
+You can simulate external forces to test the controller response:
+
+```bash
+# Terminal 3 - Apply test force (10N in X direction)
+ros2 topic pub /ft_sensor_readings geometry_msgs/WrenchStamped \
+  "{wrench: {force: {x: 10.0, y: 0.0, z: 0.0}}}" --once
+```
+
+The robot should respond by moving in the positive X direction with compliant motion.
+
+### Live Parameter Tuning
+
+You can adjust controller behavior in real-time without restarting:
+
+```bash
+# Decrease mass for more responsive motion
+ros2 param set /ur_admittance_controller admittance.mass.0 5.0
+
+# Adjust damping for stability
+ros2 param set /ur_admittance_controller admittance.damping_ratio.0 0.7
+```
+
+Common parameters to tune:
+- `admittance.mass`: Lower values = more responsive (default: 8.0)
+- `admittance.damping_ratio`: Higher values = more damped motion (default: 0.8)
+- `admittance.min_motion_threshold`: Minimum force to trigger motion (default: 1.5N)
 

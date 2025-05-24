@@ -15,37 +15,55 @@ ur_admittance_controller:
     default_value: "tcp_fts_sensor"
     description: "Name of the F/T sensor hardware interface"
 
-  # Pure admittance control parameters
-  mass:
-    type: double_array
-    default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
-    description: "Virtual inertia for each DOF [Fx,Fy,Fz,Tx,Ty,Tz] kg, kg*m²"
+  # Add admittance namespace for better organization
+  admittance:
+    # Pure admittance control parameters
+    mass:
+      type: double_array
+      default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
+      description: "Virtual inertia for each DOF [Fx,Fy,Fz,Tx,Ty,Tz] kg, kg*m²"
 
-  stiffness:
-    type: double_array
-    default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    description: "Position stiffness for each DOF (pure admittance = zeros)"
+    stiffness:
+      type: double_array
+      default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      description: "Position stiffness for each DOF (pure admittance = zeros)"
 
-  damping_ratio:
-    type: double_array
-    default_value: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
-    description: "Damping ratio for stable motion"
+    damping_ratio:
+      type: double_array
+      default_value: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
+      description: "Damping ratio for stable motion"
 
-  # Control behavior
-  admittance_enabled_axes:
-    type: bool_array
-    default_value: [true, true, true, true, true, true]
-    description: "Enable/disable admittance for each DOF"
+    # Control behavior
+    enabled_axes:
+      type: bool_array
+      default_value: [true, true, true, true, true, true]
+      description: "Enable/disable admittance for each DOF"
 
-  min_motion_threshold:
+    min_motion_threshold:
+      type: double
+      default_value: 1.5
+      description: "Minimum force/torque to trigger motion (Newtons/Nm)"
+
+    filter_coefficient:
+      type: double
+      default_value: 0.15
+      description: "Wrench low-pass filter coefficient"
+
+    drift_reset_threshold:
+      type: double
+      default_value: 0.001
+      description: "Threshold for position drift prevention (m/s)"
+
+  # Add Cartesian velocity safety limits
+  max_linear_velocity:
     type: double
-    default_value: 1.5
-    description: "Minimum force/torque to trigger motion (Newtons/Nm)"
+    default_value: 0.5
+    description: "Maximum linear velocity in Cartesian space (m/s)"
 
-  filter_coefficient:
+  max_angular_velocity:
     type: double
-    default_value: 0.15
-    description: "Wrench low-pass filter coefficient"
+    default_value: 1.0
+    description: "Maximum angular velocity in Cartesian space (rad/s)"
 
   dynamic_parameters:
     type: bool

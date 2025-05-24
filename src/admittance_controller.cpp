@@ -97,14 +97,14 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   
   // Build admittance matrices
   for (size_t i = 0; i < 6; ++i) {
-    mass_(i, i) = params_.mass[i];
-    stiffness_(i, i) = params_.stiffness[i];
+    mass_(i, i) = params_.admittance.mass[i];
+    stiffness_(i, i) = params_.admittance.stiffness[i];
     
-    if (params_.stiffness[i] > 0.0) {
-      damping_(i, i) = 2.0 * params_.damping_ratio[i] * 
-        std::sqrt(params_.mass[i] * params_.stiffness[i]);
+    if (params_.admittance.stiffness[i] > 0.0) {
+      damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
+        std::sqrt(params_.admittance.mass[i] * params_.admittance.stiffness[i]);
     } else {
-      damping_(i, i) = params_.damping_ratio[i];
+      damping_(i, i) = params_.admittance.damping_ratio[i];
     }
   }
   
@@ -131,7 +131,7 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   
   // RT-safe publisher for monitoring
   cart_vel_pub_ = get_node()->create_publisher<geometry_msgs::msg::Twist>(
-    "~/cartesian_velocity", rclcpp::SystemDefaultsQoS());
+    "~/cartesian_velocity_command", rclcpp::SystemDefaultsQoS());
   
   // Publisher for trajectory messages to scaled_joint_trajectory_controller
   trajectory_pub_ = get_node()->create_publisher<trajectory_msgs::msg::JointTrajectory>(
@@ -226,20 +226,20 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     // Parameter hot-reload for live tuning
     if (params_.dynamic_parameters) {
       auto new_params = param_listener_->get_params();
-      if (params_.mass != new_params.mass || 
-          params_.stiffness != new_params.stiffness || 
-          params_.damping_ratio != new_params.damping_ratio) {
+      if (params_.admittance.mass != new_params.admittance.mass || 
+          params_.admittance.stiffness != new_params.admittance.stiffness || 
+          params_.admittance.damping_ratio != new_params.admittance.damping_ratio) {
         
         params_ = new_params;
         for (size_t i = 0; i < 6; ++i) {
-          mass_(i, i) = params_.mass[i];
-          stiffness_(i, i) = params_.stiffness[i];
+          mass_(i, i) = params_.admittance.mass[i];
+          stiffness_(i, i) = params_.admittance.stiffness[i];
           
-          if (params_.stiffness[i] > 0.0) {
-            damping_(i, i) = 2.0 * params_.damping_ratio[i] * 
-              std::sqrt(params_.mass[i] * params_.stiffness[i]);
+          if (params_.admittance.stiffness[i] > 0.0) {
+            damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
+              std::sqrt(params_.admittance.mass[i] * params_.admittance.stiffness[i]);
           } else {
-            damping_(i, i) = params_.damping_ratio[i];
+            damping_(i, i) = params_.admittance.damping_ratio[i];
           }
         }
         
@@ -309,13 +309,13 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     }
     
     // Apply unified filtering
-    wrench_filtered_ = params_.filter_coefficient * wrench_ + 
-      (1.0 - params_.filter_coefficient) * wrench_filtered_;
+    wrench_filtered_ = params_.admittance.filter_coefficient * wrench_ + 
+      (1.0 - params_.admittance.filter_coefficient) * wrench_filtered_;
     
     // Deadband check
     bool motion_above_threshold = false;
     for (size_t i = 0; i < 6; ++i) {
-      if (std::abs(wrench_filtered_(i)) > params_.min_motion_threshold) {
+      if (std::abs(wrench_filtered_(i)) > params_.admittance.min_motion_threshold) {
         motion_above_threshold = true;
         break;
       }
@@ -340,15 +340,31 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     
     // Apply axis enables
     for (size_t i = 0; i < 6; ++i) {
-      if (!params_.admittance_enabled_axes[i]) {
+      if (!params_.admittance.enabled_axes[i]) {
         desired_vel_(i) = 0.0;
       }
     }
+    
+    // Apply Cartesian velocity safety limits
+    // Separate linear and angular components
+    double linear_velocity_magnitude = desired_vel_.head<3>().norm();
+    double angular_velocity_magnitude = desired_vel_.tail<3>().norm();
+    
+    // Clamp linear velocity if needed
+    if (linear_velocity_magnitude > params_.max_linear_velocity && linear_velocity_magnitude > 0) {
+      desired_vel_.head<3>() *= (params_.max_linear_velocity / linear_velocity_magnitude);
+    }
+    
+    // Clamp angular velocity if needed
+    if (angular_velocity_magnitude > params_.max_angular_velocity && angular_velocity_magnitude > 0) {
+      desired_vel_.tail<3>() *= (params_.max_angular_velocity / angular_velocity_magnitude);
+    }
+    
     cart_twist_ = desired_vel_;
     
     // DRIFT PREVENTION: Reset positions when nearly stationary to prevent accumulation of numerical errors
-    const double DRIFT_RESET_THRESHOLD = 0.001;  // 1mm/s threshold
-    if (cart_twist_.norm() < DRIFT_RESET_THRESHOLD) {
+    // Use configurable threshold from parameters (default 0.001 = 1mm/s threshold)
+    if (cart_twist_.norm() < params_.admittance.drift_reset_threshold) {
       // Reset integration when robot is nearly stationary
       desired_vel_.setZero();
       cart_twist_.setZero();

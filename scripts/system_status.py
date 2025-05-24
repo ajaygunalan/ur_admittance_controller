@@ -14,6 +14,7 @@ from controller_manager_msgs.srv import ListControllers
 from geometry_msgs.msg import Twist, WrenchStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
+from trajectory_msgs.msg import JointTrajectory
 import time
 from collections import defaultdict
 
@@ -82,6 +83,12 @@ class SystemStatusChecker(Node):
             lambda msg: self.data_callback('admittance_velocity', msg), 10
         )
         
+        # Trajectory commands monitoring
+        self.subscribers['trajectory_commands'] = self.create_subscription(
+            JointTrajectory, '/scaled_joint_trajectory_controller/joint_trajectory',
+            lambda msg: self.data_callback('trajectory_commands', msg), 10
+        )
+        
         # Speed scaling (for real robot)
         if not self.use_sim:
             self.subscribers['speed_scaling'] = self.create_subscription(
@@ -123,10 +130,28 @@ class SystemStatusChecker(Node):
         elif topic_name == 'robot_mode':
             self.last_values['robot_mode'] = msg.data
 
+    def check_controller_spawning(self):
+        """Check if controllers are being spawned"""
+        # Check for spawner processes
+        import subprocess
+        result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+        if 'spawner' in result.stdout:
+            self.get_logger().info("⏳ Controller spawner active - wait for completion")
+            return True
+        return False
+
     def check_system_status(self):
         """Comprehensive system status check"""
         
-        self.get_logger().info("🔍 SYSTEM STATUS CHECK - {}".format(self.get_current_time()))
+        self.get_logger().info("\n\n==============================================")
+        self.get_logger().info("🔍 SYSTEM STATUS CHECK - " + time.strftime("%H:%M:%S"))
+        
+        # Check if controllers are still being spawned
+        spawning = self.check_controller_spawning()
+        if spawning:
+            self.get_logger().info("⏳ System initialization in progress...")
+            return
+        
         self.get_logger().info("=" * 80)
         
         # 1. Check Controller Manager availability
