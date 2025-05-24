@@ -63,12 +63,19 @@ controller_interface::CallbackReturn AdmittanceController::on_init()
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_node()->get_clock());
     tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
     
-    // Initialize matrices and state using clean Eigen types
-    mass_ = damping_ = stiffness_ = Matrix6d::Zero();
+    // Initialize control matrices
+    mass_ = Matrix6d::Identity();
+    mass_inverse_ = mass_.inverse();  // Pre-compute inverse for performance
+    damping_ = Matrix6d::Identity();
+    stiffness_ = Matrix6d::Zero();
     wrench_ = wrench_filtered_ = Vector6d::Zero();
     pose_error_ = velocity_error_ = Vector6d::Zero();
     desired_accel_ = desired_vel_ = Vector6d::Zero();
     cart_twist_ = Vector6d::Zero();
+    
+    // Initialize pose tracking for impedance control
+    desired_pose_ = Eigen::Isometry3d::Identity();
+    current_pose_ = Eigen::Isometry3d::Identity();
     
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "Exception in on_init: %s", e.what());
@@ -124,11 +131,20 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   
   // RT-safe publisher for monitoring
   cart_vel_pub_ = get_node()->create_publisher<geometry_msgs::msg::Twist>(
-    "~/cartesian_velocity_command",
-    rclcpp::QoS(1).best_effort().durability_volatile());
+    "~/cartesian_velocity", rclcpp::SystemDefaultsQoS());
   
+  // Publisher for trajectory messages to scaled_joint_trajectory_controller
+  trajectory_pub_ = get_node()->create_publisher<trajectory_msgs::msg::JointTrajectory>(
+    "/scaled_joint_trajectory_controller/joint_trajectory", rclcpp::QoS(1).best_effort().durability_volatile());
+  
+  // Initialize all vectors with proper sizes for real-time safety
   joint_positions_.resize(params_.joints.size());
   joint_position_references_.resize(params_.joints.size());
+  
+  // Pre-allocate vectors to avoid dynamic memory allocation in the control loop
+  current_pos_.resize(params_.joints.size());
+  joint_deltas_.resize(params_.joints.size());
+  cart_displacement_deltas_.resize(6);
   
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -148,6 +164,20 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
   desired_vel_.setZero();
   cart_twist_.setZero();
   wrench_.setZero();
+  
+  // Initialize pose tracking with current robot pose
+  desired_pose_ = Eigen::Isometry3d::Identity();
+  current_pose_ = Eigen::Isometry3d::Identity();
+  
+  // When activating, set desired pose to current pose to avoid initial jumps
+  try {
+    auto tf = tf_buffer_->lookupTransform(params_.base_link, params_.tip_link, 
+                                         tf2::TimePointZero, tf2::durationFromSec(0.1));
+    desired_pose_ = tf2::transformToEigen(tf);
+    current_pose_ = desired_pose_;
+  } catch (const tf2::TransformException & ex) {
+    RCLCPP_WARN(get_node()->get_logger(), "Failed to get initial pose: %s", ex.what());
+  }
   wrench_filtered_.setZero();
   
   // Cache interface indices for RT performance
@@ -179,7 +209,7 @@ controller_interface::CallbackReturn AdmittanceController::on_deactivate(
 }
 
 controller_interface::return_type AdmittanceController::update_reference_from_subscribers(
-    const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
+    const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
   // Update parameters if dynamic
   if (params_.dynamic_parameters) {
@@ -212,6 +242,9 @@ controller_interface::return_type AdmittanceController::update_and_write_command
             damping_(i, i) = params_.damping_ratio[i];
           }
         }
+        
+        // Pre-compute mass inverse after updating mass matrix
+        mass_inverse_ = mass_.inverse();
         RCLCPP_INFO(get_node()->get_logger(), "Updated admittance parameters");
       } else {
         params_ = new_params;
@@ -228,18 +261,51 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       }
     }
     
-    // Transform wrench from base to tool frame
+    // Transform wrench from base to tool frame with RT-safe approach
     try {
-      auto tf = tf_buffer_->lookupTransform(params_.ft_frame, params_.base_link, tf2::TimePointZero, tf2::durationFromSec(0.1));
-      Eigen::Matrix3d R = tf2::transformToEigen(tf).rotation();
+      // Get consistent timestamps for sensor data and transforms
+      auto now = get_node()->get_clock()->now();
+      
+      // Use zero timeout for real-time safety (non-blocking) but with consistent timestamp
+      auto tf = tf_buffer_->lookupTransform(params_.ft_frame, params_.base_link, 
+                                           tf2_ros::fromMsg(now), tf2::durationFromSec(0.0));
+      // Cache successful transform for future use
+      cached_ft_transform_ = tf;
+      
+      // Update current_pose_ for impedance control
+      try {
+        auto pose_tf = tf_buffer_->lookupTransform(params_.base_link, params_.tip_link, 
+                                                  tf2_ros::fromMsg(now), tf2::durationFromSec(0.0));
+        current_pose_ = tf2::transformToEigen(pose_tf);
+      } catch (const tf2::TransformException &) {
+        // Continue with previous pose if transform fails
+      }
+      
+      // Apply transform
+      Eigen::Matrix3d R = tf2::transformToEigen(cached_ft_transform_).rotation();
       Matrix6d Ad = Matrix6d::Zero();
       Ad.block<3, 3>(0, 0) = R;
       Ad.block<3, 3>(3, 3) = R;
       wrench_ = Ad.transpose() * raw_wrench;
     } catch (const tf2::TransformException & ex) {
-      RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-        "TF transform failed: %s. Using untransformed wrench.", ex.what());
-      wrench_ = raw_wrench;
+      // Non-blocking approach: use cached transform instead of waiting
+      if (cached_ft_transform_.header.frame_id.empty()) {
+        // No cached transform available yet
+        RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
+          "TF transform failed and no cached transform available. Using untransformed wrench.");
+        wrench_ = raw_wrench;
+      } else {
+        // Use cached transform - critical for real-time performance
+        Eigen::Matrix3d R = tf2::transformToEigen(cached_ft_transform_).rotation();
+        Matrix6d Ad = Matrix6d::Zero();
+        Ad.block<3, 3>(0, 0) = R;
+        Ad.block<3, 3>(3, 3) = R;
+        wrench_ = Ad.transpose() * raw_wrench;
+        
+        // Only log occasionally to avoid console spam
+        RCLCPP_DEBUG_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 5000,
+          "Using cached transform for real-time safety");
+      }
     }
     
     // Apply unified filtering
@@ -263,9 +329,12 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       return controller_interface::return_type::OK;
     }
     
-    // Compute admittance: M*a + D*v + K*e = F_ext
-    // NOTE: pose_error_ remains zero for PURE ADMITTANCE CONTROL
-    desired_accel_ = mass_.inverse() * 
+    // Compute pose error for impedance control
+    pose_error_ = computePoseError();
+    
+    // Compute admittance with impedance: M*a + D*v + K*e = F_ext
+    // Use pre-computed mass inverse for performance
+    desired_accel_ = mass_inverse_ * 
       (wrench_filtered_ - damping_ * desired_vel_ - stiffness_ * pose_error_);
     desired_vel_ += desired_accel_ * period.seconds();
     
@@ -277,46 +346,89 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     }
     cart_twist_ = desired_vel_;
     
+    // DRIFT PREVENTION: Reset positions when nearly stationary to prevent accumulation of numerical errors
+    const double DRIFT_RESET_THRESHOLD = 0.001;  // 1mm/s threshold
+    if (cart_twist_.norm() < DRIFT_RESET_THRESHOLD) {
+      // Reset integration when robot is nearly stationary
+      desired_vel_.setZero();
+      cart_twist_.setZero();
+      
+      // Reset to actual positions
+      for (size_t i = 0; i < params_.joints.size(); ++i) {
+        joint_positions_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
+      }
+      
+      // Update desired pose to current pose to prevent drift
+      desired_pose_ = current_pose_;
+      
+      RCLCPP_DEBUG(get_node()->get_logger(), "Drift correction applied - resetting to actual position");
+    }
+    
     // Convert to joint space using real kinematics
-    std::vector<double> current_pos(params_.joints.size());
+    // Use pre-allocated vector for real-time safety
     for (size_t i = 0; i < params_.joints.size(); ++i) {
-      current_pos[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
+      current_pos_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
     }
     
     // CRITICAL FIX: Convert velocity to displacement deltas by multiplying by Δt
-    std::vector<double> cart_displacement_deltas(6);
+    // Use pre-allocated vector for real-time safety
     for (size_t i = 0; i < 6; ++i) {
-      cart_displacement_deltas[i] = cart_twist_(i) * period.seconds();
+      cart_displacement_deltas_[i] = cart_twist_(i) * period.seconds();
     }
     
-    std::vector<double> joint_deltas;
+    // Use pre-allocated joint_deltas_ vector for real-time safety
     
     if (kinematics_ && kinematics_->convert_cartesian_deltas_to_joint_deltas(
-          current_pos, cart_displacement_deltas, params_.tip_link, joint_deltas)) {
+          current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) {
       
-      // Apply joint deltas and limits
-      for (size_t i = 0; i < params_.joints.size() && i < joint_deltas.size(); ++i) {
-        joint_positions_[i] = current_pos[i] + joint_deltas[i];
+      // Apply joint deltas and limits with proper ordering
+      for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
+        // Start with base position + delta
+        joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
         
-        // CRITICAL: Clamp to real UR joint limits
+        // FIRST: Apply velocity limits
+        double velocity = joint_deltas_[i] / period.seconds();
+        if (std::abs(velocity) > joint_limits_[i].max_velocity) {
+          // Scale down the delta to respect velocity limit
+          double scale = joint_limits_[i].max_velocity / std::abs(velocity);
+          joint_positions_[i] = current_pos_[i] + joint_deltas_[i] * scale;
+        }
+        
+        // THEN: Apply position limits (always last!)
         joint_positions_[i] = std::clamp(
           joint_positions_[i], 
           joint_limits_[i].min_position, 
           joint_limits_[i].max_position);
-        
-        // Also check velocity limits (delta/dt gives velocity)
-        double velocity = joint_deltas[i] / period.seconds();
-        if (std::abs(velocity) > joint_limits_[i].max_velocity) {
-          // Scale down the delta to respect velocity limit
-          double scale = joint_limits_[i].max_velocity / std::abs(velocity);
-          joint_positions_[i] = current_pos[i] + joint_deltas[i] * scale;
-        }
       }
       
       // Write to REFERENCE interfaces (for chaining with ScaledJTC)
       for (size_t i = 0; i < params_.joints.size(); ++i) {
         joint_position_references_[i] = joint_positions_[i];  // ScaledJTC reads these
       }
+      
+      // Send trajectory message to scaled_joint_trajectory_controller
+      trajectory_msgs::msg::JointTrajectory traj_msg;
+      traj_msg.joint_names = params_.joints;
+      trajectory_msgs::msg::JointTrajectoryPoint point;
+      
+      // Set positions from calculated joint positions
+      point.positions.resize(params_.joints.size());
+      for (size_t i = 0; i < params_.joints.size(); ++i) {
+        point.positions[i] = joint_positions_[i];
+      }
+      
+      // Add velocities from joint deltas
+      point.velocities.resize(params_.joints.size(), 0.0);
+      for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
+        point.velocities[i] = joint_deltas_[i] / period.seconds();
+      }
+      
+      // Set small future time from start
+      point.time_from_start = rclcpp::Duration::from_seconds(0.1);
+      
+      // Add point and publish trajectory
+      traj_msg.points.push_back(point);
+      trajectory_pub_->publish(traj_msg);
       
     } else {
       RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
@@ -328,8 +440,29 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       
       // Maintain current position references
       for (size_t i = 0; i < params_.joints.size(); ++i) {
-        joint_position_references_[i] = current_pos[i];
+        joint_position_references_[i] = current_pos_[i];
       }
+      
+      // Send trajectory message with current positions (no motion)
+      trajectory_msgs::msg::JointTrajectory traj_msg;
+      traj_msg.joint_names = params_.joints;
+      trajectory_msgs::msg::JointTrajectoryPoint point;
+      
+      // Set positions from current joint positions
+      point.positions.resize(params_.joints.size());
+      for (size_t i = 0; i < params_.joints.size(); ++i) {
+        point.positions[i] = current_pos_[i];
+      }
+      
+      // Zero velocities
+      point.velocities.resize(params_.joints.size(), 0.0);
+      
+      // Set small future time from start
+      point.time_from_start = rclcpp::Duration::from_seconds(0.1);
+      
+      // Add point and publish trajectory
+      traj_msg.points.push_back(point);
+      trajectory_pub_->publish(traj_msg);
     }
     
     // Publish monitoring data (RT-safe)
@@ -413,17 +546,32 @@ bool AdmittanceController::loadKinematics()
   }
 }
 
+Vector6d AdmittanceController::computePoseError()
+{
+  Vector6d error = Vector6d::Zero();
+  
+  // Position error (translation difference)
+  error.head<3>() = desired_pose_.translation() - current_pose_.translation();
+  
+  // Orientation error (using angle-axis representation)
+  Eigen::Matrix3d R_error = desired_pose_.rotation() * current_pose_.rotation().transpose();
+  Eigen::AngleAxisd aa(R_error);
+  error.tail<3>() = aa.angle() * aa.axis();
+  
+  return error;
+}
+
 bool AdmittanceController::waitForTransforms()
 {
   const auto timeout = rclcpp::Duration::from_seconds(5.0);
   std::string error;
   
   return tf_buffer_->canTransform(params_.world_frame, params_.base_link, 
-                                  rclcpp::Time(0), timeout, &error) &&
+                                   rclcpp::Time(0), timeout, &error) &&
          tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
-                                  rclcpp::Time(0), timeout, &error) &&
+                                   rclcpp::Time(0), timeout, &error) &&
          tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
-                                  rclcpp::Time(0), timeout, &error);
+                                   rclcpp::Time(0), timeout, &error);
 }
 
 bool AdmittanceController::loadJointLimitsFromURDF(

@@ -42,6 +42,7 @@
 #include "geometry_msgs/geometry_msgs/msg/wrench_stamped.hpp"
 #include "std_msgs/std_msgs/msg/float64_multi_array.hpp"
 #include "std_msgs/std_msgs/msg/string.hpp"
+#include "trajectory_msgs/trajectory_msgs/msg/joint_trajectory.hpp"
 
 // Generated parameter includes
 #include <ur_admittance_controller/ur_admittance_controller_parameters.hpp>
@@ -95,7 +96,7 @@ protected:
   std::vector<hardware_interface::CommandInterface> on_export_reference_interfaces() override;
 
   // Chainable override required for setting chained mode
-  bool on_set_chained_mode(bool chained_mode) override { return true; }
+  bool on_set_chained_mode(bool /*chained_mode*/) override { return true; }
 
   // Parameters
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
@@ -104,6 +105,7 @@ protected:
   // TF
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
+  geometry_msgs::msg::TransformStamped cached_ft_transform_;  // Cached transform for real-time safety
 
   // Kinematics
   std::shared_ptr<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>> kinematics_loader_;
@@ -112,10 +114,16 @@ protected:
   // Joint state
   std::vector<double> joint_positions_;
   std::vector<double> joint_position_references_;  // CHAINABLE: References for downstream
+  
+  // Pre-allocated vectors for real-time safety
+  std::vector<double> current_pos_;
+  std::vector<double> joint_deltas_;
+  std::vector<double> cart_displacement_deltas_;
   std::vector<JointLimits> joint_limits_;
 
   // Admittance control matrices (using clean typedefs)
   Matrix6d mass_;
+  Matrix6d mass_inverse_;  // Pre-computed inverse for performance
   Matrix6d damping_;
   Matrix6d stiffness_;
 
@@ -127,6 +135,10 @@ protected:
   Vector6d desired_accel_;
   Vector6d desired_vel_;
   Vector6d cart_twist_;
+  
+  // Pose tracking for impedance control
+  Eigen::Isometry3d desired_pose_;
+  Eigen::Isometry3d current_pose_;
 
   // Interface caching for RT performance (CRITICAL)
   std::vector<size_t> pos_state_indices_;
@@ -134,6 +146,7 @@ protected:
 
   // Communication
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cart_vel_pub_;
+  rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
 
 private:
   // Helper methods
@@ -141,6 +154,7 @@ private:
   void publishCartesianVelocity();
   bool loadKinematics();
   bool waitForTransforms();
+  Vector6d computePoseError();  // Compute pose error for impedance control
   
   // Joint limits utilities  
   bool loadJointLimitsFromURDF(
