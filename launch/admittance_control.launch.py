@@ -104,18 +104,18 @@ def generate_launch_description():
         condition=IfCondition(start_active)
     )
 
-    # Status information
+    # Status information - Fixed parameters
     status_info = TimerAction(
         period=4.0,
         actions=[
             Node(
                 package="ur_admittance_controller",
-                executable="system_status.py",  # ✅ Updated to use consolidated status script
+                executable="system_status.py",
                 name="admittance_status",
                 output="screen",
                 parameters=[{
-                    "controller_name": controller_name,
-                    "expected_state": "active" if start_active else "inactive"
+                    "focus_controller": controller_name,  # Fixed: using correct parameter
+                    "check_period": 20.0  # Less frequent since just startup check
                 }]
             )
         ]

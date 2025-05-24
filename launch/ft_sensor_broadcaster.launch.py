@@ -31,7 +31,7 @@ def generate_launch_description():
     declared_arguments.append(
         DeclareLaunchArgument(
             "sensor_name",
-            default_value="tcp_fts_sensor",
+            default_value="wrist_ft_sensor",  # FIXED: matches URDF
             description="Name of the F/T sensor"
         )
     )

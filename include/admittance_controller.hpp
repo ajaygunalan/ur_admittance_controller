@@ -1,5 +1,5 @@
-#ifndef ADMITTANCE_CONTROLLER_HPP_
-#define ADMITTANCE_CONTROLLER_HPP_
+#ifndef UR_ADMITTANCE_CONTROLLER__ADMITTANCE_CONTROLLER_HPP_
+#define UR_ADMITTANCE_CONTROLLER__ADMITTANCE_CONTROLLER_HPP_
 
 // Standard library includes
 #include <chrono>
@@ -41,7 +41,6 @@
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/wrench_stamped.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
-#include "std_msgs/msg/string.hpp"
 #include "trajectory_msgs/msg/joint_trajectory.hpp"
 
 // Generated parameter includes
@@ -165,4 +164,4 @@ private:
 
 }  // namespace ur_admittance_controller
 
-#endif  // ADMITTANCE_CONTROLLER_HPP_
+#endif  // UR_ADMITTANCE_CONTROLLER__ADMITTANCE_CONTROLLER_HPP_
