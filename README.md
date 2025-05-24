@@ -52,7 +52,10 @@ source install/setup.bash
 
 **1. Start the Gazebo simulation with the UR robot:**
 ```bash
-ros2 launch ur_simulation_gz ur_sim_control.launch.py
+# Step 1: Launch robot WITH F/T sensor
+ros2 launch ur_simulation_gz ur_sim_control.launch.py \
+  description_package:=ur_admittance_controller \
+  description_file:=ur5e_admittance_sim.urdf.xacro
 ```
 
 **2. Launch admittance control system:**
