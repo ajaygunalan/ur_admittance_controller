@@ -4,7 +4,8 @@ namespace ur_admittance_controller
 {
 
 AdmittanceController::AdmittanceController()
-: controller_interface::ChainableControllerInterface()
+: controller_interface::ChainableControllerInterface(),
+  rt_logger_(rclcpp::get_logger("admittance_controller").get_child("realtime"))
 {
 }
 
@@ -89,6 +90,32 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
   params_ = param_listener_->get_params();
+  
+  // Validate mass parameters
+  for (size_t i = 0; i < 6; ++i) {
+    if (params_.admittance.mass[i] <= 0.0) {
+      RCLCPP_ERROR(get_node()->get_logger(), 
+        "Invalid mass[%zu] = %f. Must be positive.", i, params_.admittance.mass[i]);
+      return controller_interface::CallbackReturn::ERROR;
+    }
+  }
+
+  // Validate damping ratios
+  for (size_t i = 0; i < 6; ++i) {
+    if (params_.admittance.damping_ratio[i] < 0.0) {
+      RCLCPP_ERROR(get_node()->get_logger(), 
+        "Invalid damping_ratio[%zu] = %f. Must be non-negative.", 
+        i, params_.admittance.damping_ratio[i]);
+      return controller_interface::CallbackReturn::ERROR;
+    }
+  }
+
+  // Validate velocity limits
+  if (params_.max_linear_velocity <= 0.0 || params_.max_angular_velocity <= 0.0) {
+    RCLCPP_ERROR(get_node()->get_logger(), 
+      "Invalid velocity limits. Must be positive.");
+    return controller_interface::CallbackReturn::ERROR;
+  }
   
   if (!loadKinematics()) {
     RCLCPP_ERROR(get_node()->get_logger(), "Failed to load kinematics");
@@ -261,51 +288,62 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       }
     }
     
-    // Transform wrench from base to tool frame with RT-safe approach
-    try {
-      // Get consistent timestamps for sensor data and transforms
-      auto now = get_node()->get_clock()->now();
-      
-      // Use zero timeout for real-time safety (non-blocking) but with consistent timestamp
-      auto tf = tf_buffer_->lookupTransform(params_.ft_frame, params_.base_link, 
-                                           tf2_ros::fromMsg(now), tf2::durationFromSec(0.0));
-      // Cache successful transform for future use
-      cached_ft_transform_ = tf;
-      
-      // Update current_pose_ for impedance control
+    // Transform wrench from base to tool frame with RT-safe approach using cache
+    auto now = get_node()->get_clock()->now();
+    
+    // Check cache validity (100ms timeout)
+    if (!ft_transform_cache_.valid || 
+        (now - ft_transform_cache_.last_update).seconds() > 0.1) {
       try {
-        auto pose_tf = tf_buffer_->lookupTransform(params_.base_link, params_.tip_link, 
-                                                  tf2_ros::fromMsg(now), tf2::durationFromSec(0.0));
-        current_pose_ = tf2::transformToEigen(pose_tf);
+        // Use zero timeout for real-time safety (non-blocking) but with consistent timestamp
+        ft_transform_cache_.transform = tf_buffer_->lookupTransform(
+          params_.ft_frame, params_.base_link, 
+          tf2_ros::fromMsg(now), tf2::durationFromSec(0.0));
+          
+        // Compute adjoint matrix once and cache it
+        Eigen::Matrix3d R = tf2::transformToEigen(ft_transform_cache_.transform).rotation();
+        ft_transform_cache_.adjoint = Matrix6d::Zero();
+        ft_transform_cache_.adjoint.block<3, 3>(0, 0) = R;
+        ft_transform_cache_.adjoint.block<3, 3>(3, 3) = R;
+        ft_transform_cache_.valid = true;
+        ft_transform_cache_.last_update = now;
+      } catch (const tf2::TransformException & ex) {
+        // Use existing cache if available
+        if (!ft_transform_cache_.valid) {
+          // No valid cache yet
+          if (rclcpp::ok()) {
+            RCLCPP_WARN_SKIPFIRST_THROTTLE(rt_logger_, *get_node()->get_clock(), 1000,
+              "Transform from %s to %s not available: %s", 
+              params_.ft_frame.c_str(), params_.base_link.c_str(), ex.what());
+          }
+          wrench_ = raw_wrench;  // Use untransformed wrench
+          return controller_interface::return_type::OK;
+        }
+      }
+    }
+    
+    // Update current_pose_ for impedance control
+    if (!ee_transform_cache_.valid || 
+        (now - ee_transform_cache_.last_update).seconds() > 0.1) {
+      try {
+        ee_transform_cache_.transform = tf_buffer_->lookupTransform(
+          params_.base_link, params_.tip_link, 
+          tf2_ros::fromMsg(now), tf2::durationFromSec(0.0));
+        current_pose_ = tf2::transformToEigen(ee_transform_cache_.transform);
+        ee_transform_cache_.valid = true;
+        ee_transform_cache_.last_update = now;
       } catch (const tf2::TransformException &) {
         // Continue with previous pose if transform fails
       }
-      
-      // Apply transform
-      Eigen::Matrix3d R = tf2::transformToEigen(cached_ft_transform_).rotation();
-      Matrix6d Ad = Matrix6d::Zero();
-      Ad.block<3, 3>(0, 0) = R;
-      Ad.block<3, 3>(3, 3) = R;
-      wrench_ = Ad.transpose() * raw_wrench;
-    } catch (const tf2::TransformException & ex) {
-      // Non-blocking approach: use cached transform instead of waiting
-      if (cached_ft_transform_.header.frame_id.empty()) {
-        // No cached transform available yet
-        RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-          "TF transform failed and no cached transform available. Using untransformed wrench.");
-        wrench_ = raw_wrench;
-      } else {
-        // Use cached transform - critical for real-time performance
-        Eigen::Matrix3d R = tf2::transformToEigen(cached_ft_transform_).rotation();
-        Matrix6d Ad = Matrix6d::Zero();
-        Ad.block<3, 3>(0, 0) = R;
-        Ad.block<3, 3>(3, 3) = R;
-        wrench_ = Ad.transpose() * raw_wrench;
-        
-        // Only log occasionally to avoid console spam
-        RCLCPP_DEBUG_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 5000,
-          "Using cached transform for real-time safety");
-      }
+    }
+    
+    // Apply transform using cached adjoint
+    wrench_ = ft_transform_cache_.adjoint.transpose() * raw_wrench;
+    
+    // Log occasionally when using a cached transform
+    if ((now - ft_transform_cache_.last_update).seconds() > 0.5) {
+      RCLCPP_DEBUG_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 5000,
+        "Using cached transform for real-time safety");
     }
     
     // Apply unified filtering
@@ -447,8 +485,10 @@ controller_interface::return_type AdmittanceController::update_and_write_command
       trajectory_pub_->publish(traj_msg);
       
     } else {
-      RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-        "Kinematics conversion failed - zeroing motion");
+      if (rclcpp::ok()) {
+        RCLCPP_WARN_SKIPFIRST_THROTTLE(rt_logger_, *get_node()->get_clock(), 1000,
+          "Kinematics conversion failed - zeroing motion");
+      }
       
       // ERROR HANDLING: Zero motion on kinematics failure
       cart_twist_.setZero();
@@ -485,8 +525,10 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     publishCartesianVelocity();
     
   } catch (const std::exception & e) {
-    RCLCPP_ERROR_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
-      "Exception in update: %s", e.what());
+    if (rclcpp::ok()) {
+      RCLCPP_ERROR_SKIPFIRST_THROTTLE(rt_logger_, *get_node()->get_clock(), 1000,
+        "Exception in update: %s", e.what());
+    }
     
     // SAFE FALLBACK: Zero all motion on any exception
     cart_twist_.setZero();

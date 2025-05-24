@@ -21,49 +21,112 @@ ur_admittance_controller:
     mass:
       type: double_array
       default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
-      description: "Virtual inertia for each DOF [Fx,Fy,Fz,Tx,Ty,Tz] kg, kg*m²"
+      description: |
+        Virtual inertia matrix diagonal elements [X,Y,Z,Rx,Ry,Rz]
+        Units: [kg, kg, kg, kg⋅m², kg⋅m², kg⋅m²]
+        Range: (0.1, 100.0] for translations, (0.01, 10.0] for rotations
+        Higher values = slower response, more stable
+        Lower values = faster response, less stable
+      # Comments describing valid ranges instead of validation block
+      # Translations: 0.1 to 100.0, Rotations: 0.01 to 10.0
 
     stiffness:
       type: double_array
       default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-      description: "Position stiffness for each DOF (pure admittance = zeros)"
+      description: |
+        Position stiffness matrix diagonal elements [X,Y,Z,Rx,Ry,Rz]
+        Units: [N/m, N/m, N/m, Nm/rad, Nm/rad, Nm/rad]
+        Range: [0.0, 2000.0] for translations, [0.0, 200.0] for rotations
+        Zero values = pure admittance control (force-to-motion)
+        Positive values = impedance control (position+force regulation)
+      # Valid range: [0.0, 2000.0] for translations, [0.0, 200.0] for rotations
 
     damping_ratio:
       type: double_array
       default_value: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
-      description: "Damping ratio for stable motion"
+      description: |
+        Damping ratio coefficients [X,Y,Z,Rx,Ry,Rz]
+        Units: [dimensionless]
+        Range: [0.1, 2.0] (typical)
+        Values < 1.0: Underdamped (some oscillation, faster response)
+        Values = 1.0: Critically damped (no oscillation, optimal response)
+        Values > 1.0: Overdamped (no oscillation, slower response)
+        Used to compute D matrix based on M and K: D = 2ζ√(MK) if K>0
+      # Valid range: 0.0 to 10.0 for all axes
 
     # Control behavior
     enabled_axes:
       type: bool_array
       default_value: [true, true, true, true, true, true]
-      description: "Enable/disable admittance for each DOF"
+      description: |
+        Enable/disable admittance control for each axis [X,Y,Z,Rx,Ry,Rz]
+        When disabled, the controller will maintain position in that axis
+        Common configurations:
+        - [true, true, true, false, false, false]: XYZ translation only
+        - [false, false, true, false, false, false]: Z-axis (vertical) compliance only
+        - [true, true, false, false, false, true]: Horizontal plane + rotation around Z
 
     min_motion_threshold:
       type: double
       default_value: 1.5
-      description: "Minimum force/torque to trigger motion (Newtons/Nm)"
+      description: |
+        Minimum force/torque magnitude to trigger motion (deadband)
+        Units: Newtons (for forces) / Nm (for torques)
+        Range: [0.1, 10.0] (typical)
+        Smaller values: More sensitive to forces/torques (may detect noise)
+        Larger values: Less sensitive (requires more deliberate force)
+        Used to filter out sensor noise and unintentional contacts
+      # Valid range: 0.01 to 20.0
 
     filter_coefficient:
       type: double
       default_value: 0.15
-      description: "Wrench low-pass filter coefficient"
+      description: |
+        Low-pass filter coefficient for wrench signals
+        Units: [dimensionless]
+        Range: [0.01, 0.9] (typical)
+        Formula: filtered = (1-coeff)*previous + coeff*current
+        Smaller values: More filtering, smoother motion, more lag
+        Larger values: Less filtering, more responsive, may amplify noise
+      # Valid range: 0.0 to 1.0
 
     drift_reset_threshold:
       type: double
       default_value: 0.001
-      description: "Threshold for position drift prevention (m/s)"
+      description: |
+        Velocity threshold for position drift prevention
+        Units: meters/second
+        Range: [0.0001, 0.01] (typical)
+        When Cartesian velocity falls below this threshold, the controller
+        will automatically update reference position to prevent drift.
+        Smaller values: More accurate positioning, may detect noise
+        Larger values: Less sensitive, more motion required to reset
+      # Valid range: 0.0 to 0.1
 
-  # Add Cartesian velocity safety limits
+  # Cartesian velocity safety limits
   max_linear_velocity:
     type: double
     default_value: 0.5
-    description: "Maximum linear velocity in Cartesian space (m/s)"
+    description: |
+      Maximum linear velocity in Cartesian space
+      Units: meters/second
+      Range: [0.1, 1.0] (typical, robot-dependent)
+      Critical safety parameter that limits the maximum translational
+      velocity regardless of external forces. Should be set based on
+      workspace constraints and safety requirements.
+    # Valid range: 0.01 to 2.0
 
   max_angular_velocity:
     type: double
     default_value: 1.0
-    description: "Maximum angular velocity in Cartesian space (rad/s)"
+    description: |
+      Maximum angular velocity in Cartesian space
+      Units: radians/second
+      Range: [0.2, 2.0] (typical, robot-dependent)
+      Critical safety parameter that limits the maximum rotational
+      velocity regardless of external torques. Should be set based on
+      workspace constraints and safety requirements.
+    # Valid range: 0.01 to 3.14 rad/s
 
   dynamic_parameters:
     type: bool

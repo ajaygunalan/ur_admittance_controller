@@ -104,7 +104,6 @@ protected:
   // TF
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
-  geometry_msgs::msg::TransformStamped cached_ft_transform_;  // Cached transform for real-time safety
 
   // Kinematics
   std::shared_ptr<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>> kinematics_loader_;
@@ -148,6 +147,20 @@ protected:
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
 
 private:
+  // Real-time safe logger
+  rclcpp::Logger rt_logger_;
+
+  // Transform caches
+  struct TransformCache {
+    geometry_msgs::msg::TransformStamped transform;
+    Matrix6d adjoint;
+    rclcpp::Time last_update;
+    bool valid{false};
+  };
+  
+  TransformCache ft_transform_cache_;
+  TransformCache ee_transform_cache_;
+
   // Helper methods
   void cacheInterfaceIndices();
   void publishCartesianVelocity();
