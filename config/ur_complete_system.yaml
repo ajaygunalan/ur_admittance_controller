@@ -1,0 +1,148 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 500  # Hz
+
+    # Standard UR controllers
+    scaled_joint_trajectory_controller:
+      type: ur_controllers/ScaledJointTrajectoryController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    io_and_status_controller:
+      type: ur_controllers/GPIOController
+
+    speed_scaling_state_broadcaster:
+      type: ur_controllers/SpeedScalingStateBroadcaster
+
+    force_mode_controller:
+      type: ur_controllers/ForceModeController
+
+    # Admittance system controllers
+    force_torque_sensor_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+
+    ur_admittance_controller:
+      type: ur_admittance_controller/AdmittanceController
+
+# Standard UR joint trajectory controller
+scaled_joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
+
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+
+    constraints:
+      stopped_velocity_tolerance: 0.2
+      goal_time: 0.0
+      shoulder_pan_joint: { trajectory: 0.2, goal: 0.1 }
+      shoulder_lift_joint: { trajectory: 0.2, goal: 0.1 }
+      elbow_joint: { trajectory: 0.2, goal: 0.1 }
+      wrist_1_joint: { trajectory: 0.2, goal: 0.1 }
+      wrist_2_joint: { trajectory: 0.2, goal: 0.1 }
+      wrist_3_joint: { trajectory: 0.2, goal: 0.1 }
+
+# Joint state broadcaster
+joint_state_broadcaster:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+    interfaces:
+      - position
+      - velocity
+      - effort
+
+# Standard UR I/O controller
+io_and_status_controller:
+  ros__parameters:
+    tf_prefix: ""
+
+# Speed scaling broadcaster
+speed_scaling_state_broadcaster:
+  ros__parameters:
+    state_publish_rate: 100.0
+
+# Force mode controller
+force_mode_controller:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+
+# F/T Sensor Broadcaster
+force_torque_sensor_broadcaster:
+  ros__parameters:
+    sensor_name: "tcp_fts_sensor"
+    state_interface_names:
+      - "tcp_fts_sensor/force.x"
+      - "tcp_fts_sensor/force.y"
+      - "tcp_fts_sensor/force.z"
+      - "tcp_fts_sensor/torque.x"
+      - "tcp_fts_sensor/torque.y"
+      - "tcp_fts_sensor/torque.z"
+    frame_id: "tool0"
+    topic_name: "ft_sensor_readings"
+
+# Admittance Controller
+ur_admittance_controller:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+
+    state_interfaces:
+      - position
+      - velocity
+
+    ft_sensor_name: "tcp_fts_sensor"
+
+    # Pure admittance parameters
+    mass: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
+    stiffness: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    damping_ratio: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
+
+    admittance_enabled_axes: [true, true, true, true, true, true]
+    min_motion_threshold: 1.5
+    filter_coefficient: 0.15
+    dynamic_parameters: true
+
+    world_frame: "world"
+    base_link: "base_link"
+    tip_link: "tool0"
+    ft_frame: "tool0"
+
+    joint_limits:
+      position_min: [-6.283, -6.283, -3.142, -6.283, -6.283, -6.283]
+      position_max: [6.283, 6.283, 3.142, 6.283, 6.283, 6.283]
+      velocity_max: [3.14, 3.14, 3.14, 6.28, 6.28, 6.28]
+
+    kinematics_plugin_package: "ur_kinematics"
+    kinematics_plugin_name: "ur_kinematics/URKinematicsPlugin"

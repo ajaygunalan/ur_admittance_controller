@@ -1,0 +1,101 @@
+ur_admittance_controller:
+  joints:
+    type: string_array
+    default_value: ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
+    description: "List of joint names"
+
+  state_interfaces:
+    type: string_array
+    default_value: ["position", "velocity"]
+    description: "State interface types to claim from hardware"
+
+  # F/T sensor configuration
+  ft_sensor_name:
+    type: string
+    default_value: "tcp_fts_sensor"
+    description: "Name of the F/T sensor hardware interface"
+
+  # Pure admittance control parameters
+  mass:
+    type: double_array
+    default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
+    description: "Virtual inertia for each DOF [Fx,Fy,Fz,Tx,Ty,Tz] kg, kg*m²"
+
+  stiffness:
+    type: double_array
+    default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    description: "Position stiffness for each DOF (pure admittance = zeros)"
+
+  damping_ratio:
+    type: double_array
+    default_value: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
+    description: "Damping ratio for stable motion"
+
+  # Control behavior
+  admittance_enabled_axes:
+    type: bool_array
+    default_value: [true, true, true, true, true, true]
+    description: "Enable/disable admittance for each DOF"
+
+  min_motion_threshold:
+    type: double
+    default_value: 1.5
+    description: "Minimum force/torque to trigger motion (Newtons/Nm)"
+
+  filter_coefficient:
+    type: double
+    default_value: 0.15
+    description: "Wrench low-pass filter coefficient"
+
+  dynamic_parameters:
+    type: bool
+    default_value: true
+    description: "Enable live parameter tuning"
+
+  # Frame configuration
+  world_frame:
+    type: string
+    default_value: "world"
+    description: "World reference frame"
+
+  base_link:
+    type: string
+    default_value: "base_link"
+    description: "Robot base link frame"
+
+  tip_link:
+    type: string
+    default_value: "tool0"
+    description: "Robot end-effector frame"
+
+  ft_frame:
+    type: string
+    default_value: "tool0"
+    description: "F/T sensor frame"
+
+  # Joint limits
+  joint_limits_position_min:
+    type: double_array
+    default_value: [-6.283, -6.283, -3.142, -6.283, -6.283, -6.283]
+    description: "Minimum joint position limits (radians)"
+    
+  joint_limits_position_max:
+    type: double_array
+    default_value: [6.283, 6.283, 3.142, 6.283, 6.283, 6.283]
+    description: "Maximum joint position limits (radians)"
+    
+  joint_limits_velocity_max:
+    type: double_array
+    default_value: [3.14, 3.14, 3.14, 6.28, 6.28, 6.28]
+    description: "Maximum joint velocity limits (rad/s)"
+
+  # Kinematics plugin
+  kinematics_plugin_package:
+    type: string
+    default_value: "ur_kinematics"
+    description: "Package containing the kinematics plugin"
+
+  kinematics_plugin_name:
+    type: string
+    default_value: "ur_kinematics/URKinematicsPlugin"
+    description: "Name of the kinematics plugin to use"

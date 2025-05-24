@@ -1,0 +1,160 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- 
+    UR5e with Force/Torque Sensor for Gazebo Simulation
+    This wrapper extends the stock UR description with a simulated F/T sensor
+    that provides the same interfaces as the real UR5e hardware.
+    
+    Frame Convention: Forces measured at TCP (tool0) but expressed in base_link frame
+    Update Rate: 500Hz to match real UR5e hardware
+  -->
+
+  <xacro:macro name="ur5e_with_ft_sensor" params="
+    name:=ur 
+    tf_prefix:=
+    parent:=world
+    joint_limits_parameters_file:=$(find ur_description)/config/ur5e/joint_limits.yaml
+    kinematics_parameters_file:=$(find ur_description)/config/ur5e/default_kinematics.yaml  
+    physical_parameters_file:=$(find ur_description)/config/ur5e/physical_parameters.yaml
+    visual_parameters_file:=$(find ur_description)/config/ur5e/visual_parameters.yaml
+    transmission_hw_interface:=
+    safety_limits:=false
+    safety_pos_margin:=0.15
+    safety_k_position:=20
+    initial_positions:=${dict(shoulder_pan_joint=0.0,shoulder_lift_joint=-1.57,elbow_joint=0.0,wrist_1_joint=-1.57,wrist_2_joint=0.0,wrist_3_joint=0.0)}
+    ">
+
+    <!-- Include the standard UR5e robot description -->
+    <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+    
+    <!-- Create the UR5e robot with standard configuration -->
+    <xacro:ur_robot
+      name="${name}"
+      tf_prefix="${tf_prefix}"
+      parent="${parent}"
+      joint_limits_parameters_file="${joint_limits_parameters_file}"
+      kinematics_parameters_file="${kinematics_parameters_file}"
+      physical_parameters_file="${physical_parameters_file}"
+      visual_parameters_file="${visual_parameters_file}"
+      transmission_hw_interface="${transmission_hw_interface}"
+      safety_limits="${safety_limits}"
+      safety_pos_margin="${safety_pos_margin}"
+      safety_k_position="${safety_k_position}"
+      >
+      <origin xyz="0 0 0" rpy="0 0 0" />
+    </xacro:ur_robot>
+
+    <!-- Add Gazebo Force/Torque Sensor -->
+    <!-- Sensor is placed on the fixed joint between wrist_3_link and tool0 (TCP) -->
+    <gazebo reference="wrist_3_link-tool0_fixed_joint">
+      <sensor name="wrist_ft_sensor" type="force_torque">
+        <!-- 500 Hz to match real UR e-series update rate -->
+        <update_rate>500</update_rate>
+        
+        <force_torque>
+          <!-- Child link frame (tool0) is the measurement frame -->
+          <frame>child</frame>
+          <!-- Measure wrench acting from child → parent, same as real UR -->
+          <measure_direction>child_to_parent</measure_direction>
+        </force_torque>
+
+        <!-- Add realistic sensor noise to match hardware behavior -->
+        <noise type="gaussian">
+          <mean>0.0</mean>
+          <stddev>0.05</stddev>  <!-- Small noise for realistic simulation -->
+        </noise>
+
+        <!-- Keep sensor always active -->
+        <always_on>true</always_on>
+        
+        <!-- Publish sensor data -->
+        <visualize>false</visualize>
+      </sensor>
+    </gazebo>
+
+    <!-- ros2_control configuration with F/T sensor interfaces -->
+    <ros2_control name="${name}_system" type="system">
+      <hardware>
+        <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+      </hardware>
+
+      <!-- Joint interfaces (standard UR5e joints) -->
+      <xacro:property name="initial_positions_dict" value="${initial_positions}"/>
+      
+      <joint name="${tf_prefix}shoulder_pan_joint">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <state_interface name="position">
+          <param name="initial_value">${initial_positions_dict['shoulder_pan_joint']}</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      
+      <joint name="${tf_prefix}shoulder_lift_joint">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <state_interface name="position">
+          <param name="initial_value">${initial_positions_dict['shoulder_lift_joint']}</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      
+      <joint name="${tf_prefix}elbow_joint">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <state_interface name="position">
+          <param name="initial_value">${initial_positions_dict['elbow_joint']}</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      
+      <joint name="${tf_prefix}wrist_1_joint">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <state_interface name="position">
+          <param name="initial_value">${initial_positions_dict['wrist_1_joint']}</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      
+      <joint name="${tf_prefix}wrist_2_joint">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <state_interface name="position">
+          <param name="initial_value">${initial_positions_dict['wrist_2_joint']}</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      
+      <joint name="${tf_prefix}wrist_3_joint">
+        <command_interface name="position"/>
+        <command_interface name="velocity"/>
+        <state_interface name="position">
+          <param name="initial_value">${initial_positions_dict['wrist_3_joint']}</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+
+      <!-- Force/Torque Sensor Interfaces -->
+      <!-- These match exactly what the real UR5e hardware provides -->
+      <sensor name="wrist_ft_sensor">
+        <state_interface name="force.x"/>
+        <state_interface name="force.y"/>
+        <state_interface name="force.z"/>
+        <state_interface name="torque.x"/>
+        <state_interface name="torque.y"/>
+        <state_interface name="torque.z"/>
+      </sensor>
+      
+    </ros2_control>
+
+  </xacro:macro>
+
+</robot>
