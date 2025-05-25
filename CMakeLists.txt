@@ -52,6 +52,7 @@ generate_parameter_library(
 # Create controller library
 add_library(${PROJECT_NAME} SHARED
   src/admittance_controller.cpp
+  src/communication_interface.cpp  # Add external communication handlers
 )
 
 # Set include directories
