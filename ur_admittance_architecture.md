@@ -59,6 +59,43 @@ Ad_T = [R   0]
 
 This transformation preserves the wrench's physical meaning while expressing it in the control frame.
 
+## Impedance Control Mode
+
+### Mathematical Formulation
+
+When K ≠ 0, the controller implements impedance control with position regulation:
+```
+F_spring = -K · (x_current - x_desired)
+```
+
+The total control law becomes:
+```
+ẍ = M^(-1)[F_external + F_spring - D·ẋ]
+ẍ = M^(-1)[F_external - K·(x - x_d) - D·ẋ]
+```
+
+### Stability Analysis
+
+For each decoupled axis, the system has natural frequency:
+```
+ωn = sqrt(K/M)
+```
+
+With damping ratio:
+```
+ζ = D / (2·sqrt(M·K))
+```
+
+The controller automatically computes D to achieve the specified damping ratio when K > 0.
+
+### Mixed Compliance Modes
+
+The diagonal stiffness matrix enables independent axis behavior:
+- K_i = 0: Pure admittance (axis i)
+- K_i > 0: Impedance control (axis i)
+
+This enables task-specific compliance patterns without coupling between axes.
+
 ## Real-Time Implementation
 
 ### Memory Management

@@ -16,8 +16,34 @@ External Force → Compliant Motion
 **Core Equation**: `M·a + D·v + K·x = F_ext`
 - **M**: Virtual mass (inertia) - controls responsiveness
 - **D**: Damping - controls stability  
-- **K**: Stiffness - enables position control (0 = pure admittance) // Idk under what you mean by pure admiiatcen check the code  and update this
+- **K**: Stiffness - controls position behavior:
+  - **K=0** (Pure Admittance Mode): Robot moves freely and stays where pushed
+  - **K>0** (Impedance Mode): Robot returns to desired position like a spring
+  - Set different K values per axis for mixed behavior!
 - **F_ext**: External forces from F/T sensor
+
+### Operating Modes
+
+#### Pure Admittance Mode (K=0)
+Robot acts like a free-floating mass. Push it, and it stays at the new position.
+```bash
+# Default configuration
+ros2 param set /ur_admittance_controller admittance.stiffness [0,0,0,0,0,0]
+```
+
+#### Impedance Mode (K>0)
+Robot acts like a mass-spring-damper system. Push it, and it springs back to the desired position.
+```bash
+# Full 6DOF impedance control
+ros2 param set /ur_admittance_controller admittance.stiffness [100,100,100,10,10,10]
+```
+
+#### Mixed Mode
+Different behavior per axis - incredibly powerful for task-specific compliance!
+```bash
+# XY compliant (stays where pushed), Z returns to height
+ros2 param set /ur_admittance_controller admittance.stiffness [0,0,200,0,0,0]
+```
 
 ## 🚀 Quick Start
 
@@ -99,6 +125,58 @@ ros2 param set /ur_admittance_controller admittance.enabled_axes [false,false,tr
 
 # Reduce sensitivity (higher force threshold)
 ros2 param set /ur_admittance_controller admittance.min_motion_threshold 3.0
+```
+
+## 🎯 Impedance Mode Examples
+
+### Basic Position Control
+Make the robot return to its starting position when pushed:
+```bash
+# Set moderate stiffness on all axes
+ros2 param set /ur_admittance_controller admittance.stiffness [100,100,100,10,10,10]
+
+# Test: Push robot and watch it spring back
+ros2 topic pub /ft_sensor_readings geometry_msgs/WrenchStamped \
+  "{wrench: {force: {x: 20.0}}}" --once
+```
+
+### Task-Specific Configurations
+
+#### Surface Contact (Polishing/Sanding)
+Maintain constant Z-height while allowing XY movement:
+```bash
+ros2 param set /ur_admittance_controller admittance.mass [3,3,1,0.3,0.3,0.3]
+ros2 param set /ur_admittance_controller admittance.stiffness [0,0,150,0,0,0]
+```
+
+#### Peg-in-Hole Assembly
+Gentle XY centering with free Z insertion:
+```bash
+ros2 param set /ur_admittance_controller admittance.stiffness [50,50,0,5,5,0]
+```
+
+#### Collaborative Handover
+Human can move robot, but it returns to position when released:
+```bash
+ros2 param set /ur_admittance_controller admittance.stiffness [80,80,80,8,8,8]
+ros2 param set /ur_admittance_controller admittance.damping_ratio [1.0,1.0,1.0,1.0,1.0,1.0]
+```
+
+### Understanding Stiffness Values
+
+- 0 N/m: No position control (pure admittance)
+- 10-50 N/m: Very gentle return force
+- 50-200 N/m: Moderate spring feeling
+- 200-500 N/m: Strong return force
+- 500+ N/m: Very stiff, hard to move
+
+### Monitoring Impedance Behavior
+```bash
+# Watch pose error (only non-zero with K>0)
+ros2 topic echo /ur_admittance_controller/pose_error
+
+# See return velocity after releasing force
+ros2 topic echo /ur_admittance_controller/cartesian_velocity_command
 ```
 
 ## 📊 System Monitoring

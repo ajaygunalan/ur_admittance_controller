@@ -1,0 +1,25 @@
+# UR Admittance Controller - Example Impedance Configurations
+# These pre-configured examples demonstrate how to tune the controller for common applications
+
+# Collaborative Handover Configuration
+collaborative_handover:
+  admittance:
+    mass: [5.0, 5.0, 5.0, 0.5, 0.5, 0.5]
+    stiffness: [80.0, 80.0, 80.0, 8.0, 8.0, 8.0]  # Moderate return forces
+    damping_ratio: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # Critical damping
+    min_motion_threshold: 2.0
+
+# Surface Following Configuration  
+surface_following:
+  admittance:
+    mass: [3.0, 3.0, 1.0, 0.3, 0.3, 0.3]
+    stiffness: [0.0, 0.0, 150.0, 0.0, 0.0, 0.0]  # Only Z-axis return
+    damping_ratio: [0.8, 0.8, 0.9, 0.8, 0.8, 0.8]
+    enabled_axes: [true, true, true, false, false, false]
+
+# Peg-in-Hole Configuration
+peg_in_hole:
+  admittance:
+    mass: [8.0, 8.0, 5.0, 0.8, 0.8, 0.8]
+    stiffness: [50.0, 50.0, 0.0, 5.0, 5.0, 0.0]  # XY centering, Z compliant
+    damping_ratio: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]

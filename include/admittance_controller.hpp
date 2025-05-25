@@ -49,6 +49,9 @@
 // Generated parameter includes
 #include <ur_admittance_controller/ur_admittance_controller_parameters.hpp>
 
+// Service includes
+#include "std_srvs/srv/trigger.hpp"
+
 namespace ur_admittance_controller
 {
 
@@ -168,6 +171,30 @@ protected:
    * Purpose: Provides joint commands to ScaledJointTrajectoryController
    */
   std::unique_ptr<realtime_tools::RealtimePublisher<trajectory_msgs::msg::JointTrajectory>> rt_trajectory_pub_;
+  
+  /**
+   * @brief Real-time safe pose error publisher
+   * 
+   * QoS: System defaults
+   * Threading: Lock-free, non-blocking publish from RT thread
+   * Topic: ~/pose_error
+   * Purpose: Provides pose error data for monitoring and debugging impedance mode
+   */
+  std::unique_ptr<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>> rt_pose_error_pub_;
+  
+  // Services and topics for impedance mode control
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_pose_service_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr set_pose_sub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_pub_;
+  
+  // Service and subscription callbacks
+  void handle_reset_pose(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    
+  void handle_set_desired_pose(
+    const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
 private:
   // Real-time safe logger

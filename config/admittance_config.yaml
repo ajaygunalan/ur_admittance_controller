@@ -39,6 +39,19 @@ ur_admittance_controller:
         Range: [0.0, 2000.0] for translations, [0.0, 200.0] for rotations
         Zero values = pure admittance control (force-to-motion)
         Positive values = impedance control (position+force regulation)
+        
+        PRESET CONFIGURATIONS:
+        Pure Admittance (default): [0, 0, 0, 0, 0, 0]
+        Full Impedance: [100, 100, 100, 10, 10, 10]
+        XY-Compliant/Z-Stiff: [0, 0, 200, 0, 0, 0]
+        Position Control Only: [150, 150, 150, 0, 0, 0]
+        
+        TUNING GUIDE:
+        0 N/m: Pure compliance (no return)
+        10-50 N/m: Very soft return
+        50-200 N/m: Moderate stiffness
+        200-500 N/m: Firm return
+        500-2000 N/m: Very stiff
       # Valid range: [0.0, 2000.0] for translations, [0.0, 200.0] for rotations
 
     damping_ratio:

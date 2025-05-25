@@ -28,6 +28,9 @@ find_package(std_msgs REQUIRED)
 find_package(control_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 
+# Transforms and services
+find_package(geometry_msgs REQUIRED)
+
 # Transforms and Math
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)

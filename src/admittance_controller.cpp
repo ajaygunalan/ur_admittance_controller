@@ -172,12 +172,40 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
     "/scaled_joint_trajectory_controller/joint_trajectory", 
     rclcpp::QoS(1).best_effort().durability_volatile());
     
+  // Debug publisher for pose error
+  auto pose_error_pub = get_node()->create_publisher<geometry_msgs::msg::Twist>(
+    "~/pose_error", rclcpp::SystemDefaultsQoS());
+    
   // Initialize real-time safe publishers with the standard publishers
   rt_cart_vel_pub_ = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>>(
     cart_vel_pub);
   
   rt_trajectory_pub_ = std::make_unique<realtime_tools::RealtimePublisher<trajectory_msgs::msg::JointTrajectory>>(
     trajectory_pub);
+    
+  rt_pose_error_pub_ = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>>(
+    pose_error_pub);
+    
+  // Add services and subscriptions for impedance mode control
+  reset_pose_service_ = get_node()->create_service<std_srvs::srv::Trigger>(
+    "~/reset_desired_pose", 
+    std::bind(&AdmittanceController::handle_reset_pose, this, 
+              std::placeholders::_1, std::placeholders::_2));
+
+  // Create subscriber for setting the desired pose
+  set_pose_sub_ = get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
+    "~/set_desired_pose", 10,
+    std::bind(&AdmittanceController::handle_set_desired_pose, this,
+              std::placeholders::_1));
+              
+  // Create publishers for monitoring
+  current_pose_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "~/current_pose", 10);
+    
+  desired_pose_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
+    "~/desired_pose", 10);
+              
+  RCLCPP_INFO(get_node()->get_logger(), "Impedance mode communication setup complete");
   
   // Initialize all vectors with proper sizes for real-time safety
   joint_positions_.resize(params_.joints.size());
@@ -409,6 +437,23 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     
     // Compute pose error for impedance control
     pose_error_ = computePoseError();
+    
+    // Publish pose error for debugging (in a real-time safe way)
+    if (rt_pose_error_pub_->trylock()) {
+      auto& msg = rt_pose_error_pub_->msg_;
+      
+      // Linear error (translation)
+      msg.linear.x = pose_error_(0);
+      msg.linear.y = pose_error_(1);
+      msg.linear.z = pose_error_(2);
+      
+      // Angular error (rotation)
+      msg.angular.x = pose_error_(3);
+      msg.angular.y = pose_error_(4);
+      msg.angular.z = pose_error_(5);
+      
+      rt_pose_error_pub_->unlockAndPublish();
+    }
     
     // Compute admittance with impedance: M*a + D*v + K*e = F_ext
     // Use pre-computed mass inverse for performance
@@ -743,6 +788,114 @@ bool AdmittanceController::loadJointLimitsFromURDF(
     RCLCPP_ERROR(node->get_logger(), 
       "Exception loading joint limits: %s", e.what());
     return false;
+  }
+}
+
+// Service callback implementations for impedance mode control
+void AdmittanceController::handle_reset_pose(
+  const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  try {
+    // Set desired pose to current pose (reset error to zero)
+    if (ee_transform_cache_.valid) {
+      desired_pose_ = current_pose_;
+      
+      // Publish the current/desired pose for visualization
+      auto pose_msg = std::make_unique<geometry_msgs::msg::PoseStamped>();
+      pose_msg->header.stamp = get_node()->now();
+      pose_msg->header.frame_id = params_.base_link;
+      
+      // Convert from Eigen to ROS message
+      Eigen::Quaterniond q(current_pose_.linear());
+      pose_msg->pose.orientation.w = q.w();
+      pose_msg->pose.orientation.x = q.x();
+      pose_msg->pose.orientation.y = q.y();
+      pose_msg->pose.orientation.z = q.z();
+      
+      pose_msg->pose.position.x = current_pose_.translation().x();
+      pose_msg->pose.position.y = current_pose_.translation().y();
+      pose_msg->pose.position.z = current_pose_.translation().z();
+      
+      // Publish to both topics since they're now identical
+      current_pose_pub_->publish(*pose_msg);
+      desired_pose_pub_->publish(*pose_msg);
+      
+      response->success = true;
+      response->message = "Desired pose reset to current pose successfully";
+      RCLCPP_INFO(get_node()->get_logger(), "Desired pose reset to current pose");
+    } else {
+      response->success = false;
+      response->message = "Failed to reset pose: No valid current pose available";
+      RCLCPP_ERROR(get_node()->get_logger(), "Failed to reset pose: No valid current pose");
+    }
+  } catch (const std::exception & e) {
+    response->success = false;
+    response->message = std::string("Exception during pose reset: ") + e.what();
+    RCLCPP_ERROR(get_node()->get_logger(), "Exception during pose reset: %s", e.what());
+  }
+}
+
+void AdmittanceController::handle_set_desired_pose(
+  const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+{
+  try {
+    // Transform the requested pose to the base frame if needed
+    if (msg->header.frame_id != params_.base_link && !msg->header.frame_id.empty()) {
+      RCLCPP_INFO(get_node()->get_logger(),
+        "Transforming desired pose from %s to %s",
+        msg->header.frame_id.c_str(), params_.base_link.c_str());
+      
+      // Look up the transform
+      auto transform = tf_buffer_->lookupTransform(
+        params_.base_link, msg->header.frame_id,
+        tf2::timeFromSec(0), tf2::durationFromSec(1.0));
+      
+      // Transform the pose
+      geometry_msgs::msg::PoseStamped pose_out;
+      tf2::doTransform(*msg, pose_out, transform);
+      
+      // Set the desired pose from the transformed pose
+      Eigen::Quaterniond q(pose_out.pose.orientation.w, pose_out.pose.orientation.x,
+                         pose_out.pose.orientation.y, pose_out.pose.orientation.z);
+                         
+      Eigen::Vector3d p(pose_out.pose.position.x, pose_out.pose.position.y, pose_out.pose.position.z);
+      
+      desired_pose_.linear() = q.toRotationMatrix();
+      desired_pose_.translation() = p;
+    } else {
+      // Directly use the pose since it's already in the base frame
+      Eigen::Quaterniond q(msg->pose.orientation.w, msg->pose.orientation.x,
+                         msg->pose.orientation.y, msg->pose.orientation.z);
+                         
+      Eigen::Vector3d p(msg->pose.position.x, msg->pose.position.y,
+                      msg->pose.position.z);
+      
+      desired_pose_.linear() = q.toRotationMatrix();
+      desired_pose_.translation() = p;
+    }
+    
+    // Publish the updated desired pose for visualization
+    auto pose_msg = std::make_unique<geometry_msgs::msg::PoseStamped>();
+    pose_msg->header.stamp = get_node()->now();
+    pose_msg->header.frame_id = params_.base_link;
+    
+    // Convert from Eigen to ROS message
+    Eigen::Quaterniond q(desired_pose_.linear());
+    pose_msg->pose.orientation.w = q.w();
+    pose_msg->pose.orientation.x = q.x();
+    pose_msg->pose.orientation.y = q.y();
+    pose_msg->pose.orientation.z = q.z();
+    
+    pose_msg->pose.position.x = desired_pose_.translation().x();
+    pose_msg->pose.position.y = desired_pose_.translation().y();
+    pose_msg->pose.position.z = desired_pose_.translation().z();
+    
+    desired_pose_pub_->publish(*pose_msg);
+    
+    RCLCPP_INFO(get_node()->get_logger(), "Desired pose updated successfully");
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(get_node()->get_logger(), "Exception during set_desired_pose: %s", e.what());
   }
 }
 
