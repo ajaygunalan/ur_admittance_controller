@@ -4,13 +4,9 @@
 [![ROS2](https://img.shields.io/badge/ROS2-Jazzy-blue)](https://docs.ros.org/en/rolling/)
 [![Build Status](https://img.shields.io/badge/Build-Passing-success)](https://github.com/ajaygunalan/ur_admittance_controller)
 
-> **Professional force-compliant motion control for Universal Robots manipulators**
+> ** ROS2 package for task-space (cartesian) force-compliant motion control (admittance control)for Universal Robots manipulators**
 
-Transform external forces into smooth, compliant robot motion using advanced admittance control. Perfect for assembly, polishing, surface finishing, and human-robot collaboration.
 
-## 🎯 What This Package Does
-
-This ROS2 package implements **Cartesian admittance control** for Universal Robots, enabling the robot to respond compliantly to external forces:
 
 ```
 External Force → Compliant Motion
@@ -20,7 +16,7 @@ External Force → Compliant Motion
 **Core Equation**: `M·a + D·v + K·x = F_ext`
 - **M**: Virtual mass (inertia) - controls responsiveness
 - **D**: Damping - controls stability  
-- **K**: Stiffness - enables position control (0 = pure admittance)
+- **K**: Stiffness - enables position control (0 = pure admittance) // Idk under what yoiu mean by pure admiiatcen acheck the code  and update this
 - **F_ext**: External forces from F/T sensor
 
 ## 🚀 Quick Start
@@ -35,6 +31,7 @@ External Force → Compliant Motion
 ```bash
 # Create workspace and clone
 mkdir -p ~/ur_ws/src && cd ~/ur_ws/src
+git clone https://github.com/UniversalRobots/Universal_Robots_ROS2_GZ_Simulation.git
 git clone https://github.com/ajaygunalan/ur_admittance_controller.git
 
 # Install dependencies
@@ -248,12 +245,10 @@ ros2 topic echo /ur_admittance_controller/cartesian_velocity_command
 
 the defaul model is `UR5e` but can work with any UR robot
 
-
 ### Why This Implementation?
-We use **admittance control** (force→motion) instead of impedance control (motion→force) because:
-- UR robots don't accept joint torque commands
-- Built-in TCP F/T sensor provides accurate 6D wrench data
-- Better safety characteristics for collaborative applications
+
+We use the default `scaled_joint_trajectory_controller` for safety and reliability. For detailed information about UR robot controllers and why we stciked with `default` controller and why we choose cartesian (task-space) admittance controller , see the [UR Controllers Reference](docs/ur_controllers.md).
+
 
 ## 🧪 Testing & Validation
 
@@ -307,7 +302,7 @@ A: Yes! Uses `realtime_tools::RealtimePublisher` for lock-free publishing, pre-a
 
 ## 📚 Further Reading
 
-- [UR Controllers Reference](ur_controllers.md) - Comparison with other UR controllers
+-
 - [Architecture Document](ur_admittance_architecture.md) - Technical implementation details
 - [Universal Robots Documentation](https://docs.universal-robots.com/) - Official UR resources
 
@@ -318,12 +313,6 @@ Contributions welcome! Please read our contributing guidelines and submit pull r
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Universal Robots for excellent ROS2 driver
-- ROS2 Control team for the chainable controller framework
-- Open-source robotics community for inspiration and feedback
 
 ---
 
