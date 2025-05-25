@@ -53,6 +53,7 @@ generate_parameter_library(
 add_library(${PROJECT_NAME} SHARED
   src/admittance_controller.cpp
   src/communication_interface.cpp  # Add external communication handlers
+  src/controller_setup.cpp  # Add lifecycle management and configuration
 )
 
 # Set include directories
