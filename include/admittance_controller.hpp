@@ -211,6 +211,14 @@ private:
   [[nodiscard]] bool waitForTransforms();
   [[nodiscard]] Vector6d computePoseError();  // Compute pose error for impedance control
   
+  // Real-time control helpers for improved modularity
+  bool updateSensorData();
+  Vector6d computeAdmittanceControl(const rclcpp::Duration& period);
+  bool convertToJointSpace(const Vector6d& cmd_vel, const rclcpp::Duration& period);
+  void applyJointLimits(const rclcpp::Duration& period);
+  void publishOutputs(const rclcpp::Duration& period);
+  controller_interface::return_type safeStop();
+  
   // Joint limits utilities  
   [[nodiscard]] bool loadJointLimitsFromURDF(
     const std::shared_ptr<rclcpp_lifecycle::LifecycleNode> & node,

@@ -146,11 +146,36 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
     mass_(i, i) = params_.admittance.mass[i];
     stiffness_(i, i) = params_.admittance.stiffness[i];
     
-    if (params_.admittance.stiffness[i] > 0.0) {
+    // Smooth damping calculation to avoid discontinuity when stiffness changes
+    // from zero to non-zero values
+    const double stiffness_threshold = 1.0; // N/m or Nm/rad threshold for blending
+    double stiffness_value = params_.admittance.stiffness[i];
+    
+    if (stiffness_value <= 0.0) {
+      // Pure admittance mode - direct damping value in Ns/m or Nms/rad
+      // Base damping scaled by mass for consistent units
+      damping_(i, i) = params_.admittance.damping_ratio[i] * 
+        std::sqrt(params_.admittance.mass[i]); // Consistent units Ns/m or Nms/rad
+    } 
+    else if (stiffness_value >= stiffness_threshold) {
+      // Full impedance mode - critical damping formula
       damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i] * params_.admittance.stiffness[i]);
-    } else {
-      damping_(i, i) = params_.admittance.damping_ratio[i];
+        std::sqrt(params_.admittance.mass[i] * stiffness_value);
+    }
+    else {
+      // Smooth transition zone - blend between the two formulas
+      double blend_factor = stiffness_value / stiffness_threshold; // 0.0 to 1.0
+      
+      // Calculate both damping values
+      double admittance_damping = params_.admittance.damping_ratio[i] * 
+        std::sqrt(params_.admittance.mass[i]);
+        
+      double impedance_damping = 2.0 * params_.admittance.damping_ratio[i] * 
+        std::sqrt(params_.admittance.mass[i] * stiffness_value);
+      
+      // Smoothly blend between the two values
+      damping_(i, i) = (1.0 - blend_factor) * admittance_damping + 
+                       blend_factor * impedance_damping;
     }
   }
   
