@@ -187,6 +187,21 @@ protected:
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr set_pose_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_pub_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr move_to_pose_service_;
+  
+  // State for safe startup
+  bool executing_trajectory_ = false;
+  geometry_msgs::msg::PoseStamped pending_desired_pose_;
+  double stiffness_engagement_factor_ = 1.0;
+  bool stiffness_recently_changed_ = false;
+  
+  // Safe startup parameters
+  struct SafeStartupParams {
+    double trajectory_duration = 5.0;     // Time to move from home to work position
+    double stiffness_ramp_time = 2.0;    // Time to gradually engage stiffness
+    double max_position_error = 0.15;    // Maximum safe position error (meters)
+    double max_orientation_error = 0.5;  // Maximum safe orientation error (radians)
+  } safe_startup_params_;
   
   // Service and subscription callbacks
   void handle_reset_pose(
@@ -195,6 +210,10 @@ protected:
     
   void handle_set_desired_pose(
     const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+    
+  void handle_move_to_pose(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
 private:
   // Real-time safe logger

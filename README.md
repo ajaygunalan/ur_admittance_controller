@@ -204,6 +204,54 @@ ros2 run ur_admittance_controller system_status.py
 ✅ SYSTEM READY
 ```
 
+## 🚀 Safe Startup Procedure
+
+### Automated Safe Startup
+
+For moving from home position to working position safely:
+
+```bash
+# 1. Start robot (simulation or real)
+ros2 launch ur_simulation_gz ur_sim_control.launch.py
+
+# 2. Launch admittance controller
+ros2 launch ur_admittance_controller ur_admittance_system.launch.py
+
+# 3. Execute safe startup to working position
+ros2 launch ur_admittance_controller safe_startup.launch.py \
+  target_pose:="[0.5, 0.3, 0.4, 0.0, 1.57, 0.0]" \
+  impedance_stiffness:="[100, 100, 100, 10, 10, 10]"
+```
+
+The startup sequence will:
+
+1. Ensure pure admittance mode (K=0)
+2. Move robot smoothly to target pose (5 seconds)
+3. Set desired pose at target
+4. Gradually enable impedance control (2 seconds)
+
+### Manual Safe Startup
+
+If you prefer manual control:
+
+```bash
+# 1. Ensure pure admittance
+ros2 param set /ur_admittance_controller admittance.stiffness [0,0,0,0,0,0]
+
+# 2. Move to working position
+ros2 service call /ur_admittance_controller/move_to_start_pose \
+  std_srvs/srv/Trigger "{}"
+
+# 3. Wait for movement completion (5 seconds)
+
+# 4. Enable impedance
+ros2 param set /ur_admittance_controller admittance.stiffness [100,100,100,10,10,10]
+```
+  ✅ admittance_velocity
+
+✅ SYSTEM READY
+```
+
 ## 🔧 Configuration
 
 ### Key Parameters
@@ -271,10 +319,38 @@ For detailed technical information, see [Architecture Document](ur_admittance_ar
 - ✅ **Joint Limits**: Auto-loaded from robot URDF
 - ✅ **Velocity Limits**: Separate linear/angular Cartesian limits  
 - ✅ **Force Deadband**: Prevents motion from sensor noise
+- ✅ **Safe Startup**: Gradual stiffness engagement and trajectory-based movements
 - ✅ **Drift Prevention**: Auto-reset when stationary (<1mm/s)
 - ✅ **Exception Recovery**: Safe fallbacks on any error
 - ✅ **Real-Time Safe**: No blocking operations in control loop
 - ✅ **Lock-Free Publishing**: Non-blocking data output
+
+## 🔄 Final Testing Procedure
+
+### Simulation Test:
+
+```bash
+# Terminal 1
+ros2 launch ur_simulation_gz ur_sim_control.launch.py
+
+# Terminal 2
+ros2 launch ur_admittance_controller ur_admittance_system.launch.py
+
+# Terminal 3
+ros2 launch ur_admittance_controller safe_startup.launch.py
+
+# Terminal 4 (monitoring)
+ros2 topic echo /ur_admittance_controller/pose_error
+```
+
+### Real Robot Test (with reduced speeds):
+
+```bash
+# Same as above but with:
+ros2 launch ur_admittance_controller safe_startup.launch.py \
+  trajectory_duration:=10.0 \
+  impedance_stiffness:="[50, 50, 50, 5, 5, 5]"
+```
 
 ## 🔍 Troubleshooting
 

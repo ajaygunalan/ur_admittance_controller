@@ -122,7 +122,9 @@ install(
 
 # Install Python executables
 install(
-  PROGRAMS scripts/system_status.py
+  PROGRAMS 
+    scripts/system_status.py
+    scripts/test_safe_startup.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

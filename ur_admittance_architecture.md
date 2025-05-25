@@ -59,6 +59,33 @@ Ad_T = [R   0]
 
 This transformation preserves the wrench's physical meaning while expressing it in the control frame.
 
+### Integration Strategy
+
+The controller implements Cartesian-space integration followed by inverse kinematics, rather than the alternative Jacobian-based approach:
+
+Current Implementation:
+```
+F_ext → Cartesian ẍ → Cartesian ẋ → Cartesian Δx → IK → Joint Δq → Joint q
+```
+
+Alternative (not used):
+```
+F_ext → Cartesian ẍ → Cartesian ẋ → J^(-1) → Joint q̇ → Integration → Joint q
+```
+
+This design choice provides:
+1. **Singularity robustness**: IK solver handles singularities better than Jacobian inverse
+2. **Workspace boundary respect**: Natural enforcement of reachability limits
+3. **Straight-line Cartesian paths**: Guaranteed linear trajectories in task space
+4. **Joint limit handling**: Built into the kinematics plugin
+
+The Jacobian approach would require:
+- Matrix inversion at each cycle (computationally expensive near singularities)
+- Additional drift compensation due to numerical integration
+- Custom singularity avoidance implementation
+
+For position-controlled robots with robust IK solvers (like UR), the Cartesian integration approach is industry standard and provides better reliability.
+
 ## Impedance Control Mode
 
 ### Mathematical Formulation

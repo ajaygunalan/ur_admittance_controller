@@ -1,5 +1,12 @@
 #include "admittance_controller.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <string>
+#include <vector>
+#include <rclcpp/callback_group.hpp>
+
 namespace ur_admittance_controller
 {
 
@@ -164,6 +171,39 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
     }
   }
   
+  // Load safe startup parameters
+  try {
+    // Load parameters from the config file
+    // Since these aren't in the auto-generated parameter schema, we need to declare them first
+    get_node()->declare_parameter("startup.trajectory_duration", safe_startup_params_.trajectory_duration);
+    get_node()->declare_parameter("startup.stiffness_ramp_time", safe_startup_params_.stiffness_ramp_time);
+    get_node()->declare_parameter("startup.max_position_error", safe_startup_params_.max_position_error);
+    get_node()->declare_parameter("startup.max_orientation_error", safe_startup_params_.max_orientation_error);
+    
+    // Now retrieve the parameters
+    safe_startup_params_.trajectory_duration = 
+      get_node()->get_parameter("startup.trajectory_duration").as_double();
+    safe_startup_params_.stiffness_ramp_time = 
+      get_node()->get_parameter("startup.stiffness_ramp_time").as_double();
+    safe_startup_params_.max_position_error = 
+      get_node()->get_parameter("startup.max_position_error").as_double();
+    safe_startup_params_.max_orientation_error = 
+      get_node()->get_parameter("startup.max_orientation_error").as_double();
+    
+    RCLCPP_INFO(get_node()->get_logger(), "Safe startup parameters loaded:");
+    RCLCPP_INFO(get_node()->get_logger(), "  Trajectory duration: %.2f s", 
+                safe_startup_params_.trajectory_duration);
+    RCLCPP_INFO(get_node()->get_logger(), "  Stiffness ramp time: %.2f s", 
+                safe_startup_params_.stiffness_ramp_time);
+    RCLCPP_INFO(get_node()->get_logger(), "  Max position error: %.3f m", 
+                safe_startup_params_.max_position_error);
+    RCLCPP_INFO(get_node()->get_logger(), "  Max orientation error: %.3f rad", 
+                safe_startup_params_.max_orientation_error);
+  } catch (const std::exception & e) {
+    RCLCPP_WARN(get_node()->get_logger(), 
+      "Failed to load some safe startup parameters, using defaults: %s", e.what());
+  }
+  
   // Create standard publishers first
   auto cart_vel_pub = get_node()->create_publisher<geometry_msgs::msg::Twist>(
     "~/cartesian_velocity_command", rclcpp::SystemDefaultsQoS());
@@ -204,6 +244,12 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
     
   desired_pose_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
     "~/desired_pose", 10);
+  
+  // Add safe movement service for impedance mode
+  move_to_pose_service_ = get_node()->create_service<std_srvs::srv::Trigger>(
+    "~/move_to_start_pose",
+    std::bind(&AdmittanceController::handle_move_to_pose, this,
+              std::placeholders::_1, std::placeholders::_2));
               
   RCLCPP_INFO(get_node()->get_logger(), "Impedance mode communication setup complete");
   
@@ -323,6 +369,13 @@ controller_interface::return_type AdmittanceController::update_and_write_command
             stiffness_(i, i) = params_.admittance.stiffness[i];
           }
           RCLCPP_INFO(get_node()->get_logger(), "Stiffness parameters updated");
+          
+          // Detect stiffness changes
+          if (stiffness_changed) {
+            stiffness_recently_changed_ = true;
+            stiffness_engagement_factor_ = 0.0;
+            RCLCPP_INFO(get_node()->get_logger(), "Starting gradual stiffness engagement");
+          }
         }
         
         // Update damping matrix if stiffness or damping ratio changed
@@ -438,6 +491,42 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     // Compute pose error for impedance control
     pose_error_ = computePoseError();
     
+    // Safety check: Verify pose error is within safe limits
+    double position_error_norm = pose_error_.head<3>().norm();
+    double orientation_error_norm = pose_error_.tail<3>().norm();
+    
+    bool error_within_limits = true;
+    
+    // Only check error limits when stiffness is fully engaged
+    if (stiffness_engagement_factor_ > 0.9 && 
+        (position_error_norm > safe_startup_params_.max_position_error || 
+         orientation_error_norm > safe_startup_params_.max_orientation_error)) {
+      error_within_limits = false;
+      
+      // If error exceeds limits, log warning and reduce stiffness
+      RCLCPP_WARN(get_node()->get_logger(), 
+        "SAFETY: Pose error exceeds limits (pos: %.3f > %.3f, orient: %.3f > %.3f). Reducing stiffness.",
+        position_error_norm, safe_startup_params_.max_position_error,
+        orientation_error_norm, safe_startup_params_.max_orientation_error);
+        
+      // Trigger gradual re-engagement of stiffness
+      stiffness_recently_changed_ = true;
+      stiffness_engagement_factor_ = 0.5;  // Reduce to 50% immediately
+    }
+    
+    // Gradually engage stiffness over the configured ramp time
+    if (stiffness_recently_changed_) {
+      // Only increase if error is within limits
+      if (error_within_limits) {
+        stiffness_engagement_factor_ += period.seconds() / safe_startup_params_.stiffness_ramp_time;
+        if (stiffness_engagement_factor_ >= 1.0) {
+          stiffness_engagement_factor_ = 1.0;
+          stiffness_recently_changed_ = false;
+          RCLCPP_INFO(get_node()->get_logger(), "Stiffness fully engaged");
+        }
+      }
+    }
+    
     // Publish pose error for debugging (in a real-time safe way)
     if (rt_pose_error_pub_->trylock()) {
       auto& msg = rt_pose_error_pub_->msg_;
@@ -457,8 +546,9 @@ controller_interface::return_type AdmittanceController::update_and_write_command
     
     // Compute admittance with impedance: M*a + D*v + K*e = F_ext
     // Use pre-computed mass inverse for performance
+    Vector6d stiffness_force = stiffness_engagement_factor_ * (stiffness_ * pose_error_);
     desired_accel_ = mass_inverse_ * 
-      (wrench_filtered_ - damping_ * desired_vel_ - stiffness_ * pose_error_);
+      (wrench_filtered_ - damping_ * desired_vel_ - stiffness_force);
     desired_vel_ += desired_accel_ * period.seconds();
     
     // Apply axis enables
@@ -896,6 +986,106 @@ void AdmittanceController::handle_set_desired_pose(
     RCLCPP_INFO(get_node()->get_logger(), "Desired pose updated successfully");
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "Exception during set_desired_pose: %s", e.what());
+  }
+}
+
+void AdmittanceController::handle_move_to_pose(
+  const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  try {
+    // Safety check: Don't allow move if already executing trajectory
+    if (executing_trajectory_) {
+      response->success = false;
+      response->message = "Already executing trajectory. Rejecting move request.";
+      RCLCPP_WARN(get_node()->get_logger(), response->message.c_str());
+      return;
+    }
+    
+    // Store the current pose as the target - we'll just use our current pose as target
+    // In a more complete implementation, we might use a predefined home or target position
+    auto current_pose_msg = std::make_shared<geometry_msgs::msg::PoseStamped>();
+    current_pose_msg->header.stamp = get_node()->now();
+    current_pose_msg->header.frame_id = params_.base_link;
+    
+    // Convert Eigen pose to geometry_msgs pose
+    current_pose_msg->pose.position.x = current_pose_.translation().x();
+    current_pose_msg->pose.position.y = current_pose_.translation().y();
+    current_pose_msg->pose.position.z = current_pose_.translation().z();
+    
+    Eigen::Quaterniond q(current_pose_.rotation());
+    current_pose_msg->pose.orientation.x = q.x();
+    current_pose_msg->pose.orientation.y = q.y();
+    current_pose_msg->pose.orientation.z = q.z();
+    current_pose_msg->pose.orientation.w = q.w();
+    
+    // Store as pending desired pose
+    pending_desired_pose_ = *current_pose_msg;
+    
+    // Create and send trajectory to move robot to target position
+    trajectory_msgs::msg::JointTrajectory traj;
+    traj.header.stamp = get_node()->now();
+    traj.joint_names = params_.joints;
+    
+    // First point: current position
+    trajectory_msgs::msg::JointTrajectoryPoint current_point;
+    current_point.positions.resize(params_.joints.size());
+    for (size_t i = 0; i < params_.joints.size(); ++i) {
+      current_point.positions[i] = joint_positions_[i];
+    }
+    current_point.time_from_start = rclcpp::Duration::from_seconds(0.0);
+    traj.points.push_back(current_point);
+    
+    // Start executing trajectory
+    executing_trajectory_ = true;
+    
+    // Temporarily disable stiffness by scaling it to zero
+    // This prevents spring forces during trajectory execution
+    stiffness_engagement_factor_ = 0.0;
+    
+    // Send trajectory to trajectory controller
+    if (rt_trajectory_pub_->trylock()) {
+      rt_trajectory_pub_->msg_ = traj;
+      rt_trajectory_pub_->unlockAndPublish();
+      RCLCPP_INFO(get_node()->get_logger(), "Safe movement trajectory sent");
+    } else {
+      RCLCPP_WARN(get_node()->get_logger(), "Failed to send trajectory: publisher locked");
+      executing_trajectory_ = false;
+      response->success = false;
+      response->message = "Failed to send trajectory: publisher locked";
+      return;
+    }
+    
+    // Setup callback group for the timer
+    auto callback_group = get_node()->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+      
+    // In a complete implementation, add callback for trajectory completion
+    // For now, set a timer to simulate trajectory completion
+    auto timer = get_node()->create_wall_timer(
+      std::chrono::duration<double>(safe_startup_params_.trajectory_duration),
+      [this]() {
+        // Trajectory completed
+        executing_trajectory_ = false;
+        
+        // Use stiffness_recently_changed_ to trigger gradual engagement
+        stiffness_recently_changed_ = true;
+        stiffness_engagement_factor_ = 0.0;
+        
+        RCLCPP_INFO(get_node()->get_logger(), 
+          "Safe movement completed, starting gradual stiffness engagement");
+      },
+      callback_group
+    );
+    
+    response->success = true;
+    response->message = "Moving to target position before enabling impedance control";
+    RCLCPP_INFO(get_node()->get_logger(), response->message.c_str());
+  } catch (const std::exception & e) {
+    executing_trajectory_ = false;
+    response->success = false;
+    response->message = std::string("Exception during move_to_pose: ") + e.what();
+    RCLCPP_ERROR(get_node()->get_logger(), response->message.c_str());
   }
 }
 

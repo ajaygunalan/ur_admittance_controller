@@ -1,0 +1,8 @@
+# Safe startup parameters
+ur_admittance_controller:
+  ros__parameters:
+    startup:
+      trajectory_duration: 5.0     # Time to move from home to work position
+      stiffness_ramp_time: 2.0    # Time to gradually engage stiffness
+      max_position_error: 0.15    # Maximum safe position error (meters)
+      max_orientation_error: 0.5  # Maximum safe orientation error (radians)
