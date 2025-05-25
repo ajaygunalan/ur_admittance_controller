@@ -27,7 +27,7 @@
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "realtime_tools/realtime_publisher.hpp"  // For real-time safe publishers
-#include "realtime_tools/realtime_buffer.h"      // For real-time safe parameter updates
+#include "realtime_tools/realtime_buffer.hpp"    // For real-time safe parameter updates
 
 // TF2 includes
 #include "tf2_geometry_msgs/tf2_geometry_msgs/tf2_geometry_msgs.hpp"
@@ -245,10 +245,15 @@ private:
   void checkParameterUpdates();  // RT-safe - only reads from buffer
   void prepareParameterUpdate();  // non-RT - does parameter checking and buffer writing
   
-  // Control matrix updates - these will be called in non-RT context only
+  // Control matrix updates - non-RT context with params and logging control
   void updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes);
   void updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes);
   void updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes);
+  
+  // Legacy methods - still needed for backward compatibility
+  void updateMassMatrix();
+  void updateStiffnessMatrix();
+  void updateDampingMatrix();
   
   // Real-time safe error reporting
   void reportRTError(RTErrorType error_type) {

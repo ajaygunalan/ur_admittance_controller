@@ -85,110 +85,159 @@
   return controller_interface::return_type::OK; 
  }
  
- void AdmittanceController::checkParameterUpdates()
- {
-   if (!params_.dynamic_parameters) return;
-   
-   auto new_params = param_listener_->get_params();
-   
-   // Use bit flags for efficient change detection
-   uint8_t changes = 0;
-   constexpr uint8_t MASS_CHANGED = 1;
-   constexpr uint8_t STIFFNESS_CHANGED = 2;
-   constexpr uint8_t DAMPING_CHANGED = 4;
-   
-   // Check for changes using memcmp for arrays
-   if (std::memcmp(params_.admittance.mass.data(), new_params.admittance.mass.data(), 
-                   sizeof(double) * 6) != 0) {
-     changes |= MASS_CHANGED;
-   }
-   if (std::memcmp(params_.admittance.stiffness.data(), new_params.admittance.stiffness.data(), 
-                   sizeof(double) * 6) != 0) {
-     changes |= STIFFNESS_CHANGED;
-   }
-   if (std::memcmp(params_.admittance.damping_ratio.data(), new_params.admittance.damping_ratio.data(), 
-                   sizeof(double) * 6) != 0) {
-     changes |= DAMPING_CHANGED;
-   }
-   
-   if (changes == 0) {
-     params_ = new_params;  // Update non-control parameters
-     return;
-   }
-   
-   // Update parameters
-   params_ = new_params;
-   
-   // Update matrices based on changes
-   if (changes & MASS_CHANGED) {
-     updateMassMatrix();
-   }
-   
-   if (changes & STIFFNESS_CHANGED) {
-     updateStiffnessMatrix();
-     // Trigger gradual engagement
-     stiffness_recently_changed_ = true;
-     stiffness_engagement_factor_ = 0.0;
-     RCLCPP_INFO(get_node()->get_logger(), "Starting gradual stiffness engagement");
-   }
-   
-   if (changes & (STIFFNESS_CHANGED | DAMPING_CHANGED)) {
-     updateDampingMatrix();
-   }
- }
- 
- void AdmittanceController::updateMassMatrix()
- {
-   for (size_t i = 0; i < 6; ++i) {
-     mass_(i, i) = params_.admittance.mass[i];
-   }
-   mass_inverse_ = mass_.inverse();
-   RCLCPP_INFO(get_node()->get_logger(), "Mass parameters updated");
- }
- 
- void AdmittanceController::updateStiffnessMatrix()
- {
-   for (size_t i = 0; i < 6; ++i) {
-     stiffness_(i, i) = params_.admittance.stiffness[i];
-   }
-   RCLCPP_INFO(get_node()->get_logger(), "Stiffness parameters updated");
- }
- 
- void AdmittanceController::updateDampingMatrix()
- {
-   // Smooth damping calculation to avoid discontinuity when stiffness changes
-   for (size_t i = 0; i < 6; ++i) {
-     double stiffness_value = params_.admittance.stiffness[i];
-     
-     if (stiffness_value <= 0.0) {
-       // Pure admittance mode - direct damping value
-       // Scale by sqrt(mass) for consistent units [Ns/m or Nms/rad]
-       damping_(i, i) = params_.admittance.damping_ratio[i] * 
-         std::sqrt(params_.admittance.mass[i]);
-     } 
-     else if (stiffness_value >= STIFFNESS_BLEND_THRESHOLD) {
-       // Full impedance mode - critical damping formula
-       damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
-         std::sqrt(params_.admittance.mass[i] * stiffness_value);
-     }
-     else {
-       // Smooth transition zone - blend between the two formulas
-       double blend_factor = stiffness_value / STIFFNESS_BLEND_THRESHOLD;
-       
-       double admittance_damping = params_.admittance.damping_ratio[i] * 
-         std::sqrt(params_.admittance.mass[i]);
-         
-       double impedance_damping = 2.0 * params_.admittance.damping_ratio[i] * 
-         std::sqrt(params_.admittance.mass[i] * stiffness_value);
-       
-       // Smoothly blend between the two values
-       damping_(i, i) = (1.0 - blend_factor) * admittance_damping + 
-                       blend_factor * impedance_damping;
-     }
-   }
-   RCLCPP_INFO(get_node()->get_logger(), "Damping parameters updated with smooth transitions");
- }
- 
+// REAL-TIME SAFE: This method runs in the RT thread and only reads from the buffer
+void AdmittanceController::checkParameterUpdates()
+{
+  if (!params_.dynamic_parameters) return;
+
+  // Signal that we need a parameter update in the non-RT thread
+  parameter_update_needed_.store(true);
+  
+  // Read the latest parameters from the RT buffer
+  const auto* latest_params = param_buffer_.readFromRT();
+  
+  // If no parameters are available yet, return
+  if (!latest_params) return;
+  
+  // Safely copy the parameters (fast operation, no allocations)
+  params_ = *latest_params;
+}
+
+ // Non-real-time parameter update function
+void AdmittanceController::prepareParameterUpdate()
+{
+  if (!parameter_update_needed_.load()) return;
+  
+  // Get latest parameters from the parameter server
+  auto new_params = param_listener_->get_params();
+  
+  // Check for changes using memcmp for arrays
+  bool mass_changed = std::memcmp(params_.admittance.mass.data(), 
+                                 new_params.admittance.mass.data(), 
+                                 sizeof(double) * 6) != 0;
+                                 
+  bool stiffness_changed = std::memcmp(params_.admittance.stiffness.data(), 
+                                      new_params.admittance.stiffness.data(), 
+                                      sizeof(double) * 6) != 0;
+                                      
+  bool damping_changed = std::memcmp(params_.admittance.damping_ratio.data(), 
+                                    new_params.admittance.damping_ratio.data(), 
+                                    sizeof(double) * 6) != 0;
+  
+  // If no changes, just write the params to buffer and return
+  if (!mass_changed && !stiffness_changed && !damping_changed) {
+    param_buffer_.writeFromNonRT(new_params);
+    parameter_update_needed_.store(false);
+    return;
+  }
+  
+  // Update matrices based on changes - this can safely log since we're non-RT
+  if (mass_changed) {
+    updateMassMatrix(new_params, true);
+  }
+  
+  if (stiffness_changed) {
+    updateStiffnessMatrix(new_params, true);
+    // Trigger gradual engagement
+    stiffness_recently_changed_ = true;
+    stiffness_engagement_factor_ = 0.0;
+    RCLCPP_INFO(get_node()->get_logger(), "Starting gradual stiffness engagement");
+  }
+  
+  if (stiffness_changed || damping_changed) {
+    updateDampingMatrix(new_params, true);
+  }
+  
+  // Write updated parameters to the RT buffer
+  param_buffer_.writeFromNonRT(new_params);
+  parameter_update_needed_.store(false);
+}
+
+// Update mass matrix - can be called from non-RT context only
+void AdmittanceController::updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes)
+{
+  for (size_t i = 0; i < 6; ++i) {
+    mass_(i, i) = params.admittance.mass[i];
+  }
+  mass_inverse_ = mass_.inverse();
+  
+  if (log_changes) {
+    RCLCPP_INFO(get_node()->get_logger(), "Mass parameters updated");
+  }
+}
+
+ // Legacy method - forwards to the new implementation
+void AdmittanceController::updateMassMatrix()
+{
+  // Forward to the new implementation with current params
+  updateMassMatrix(params_, false);
+}
+
+ // Update stiffness matrix - can be called from non-RT context only
+void AdmittanceController::updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes)
+{
+  for (size_t i = 0; i < 6; ++i) {
+    stiffness_(i, i) = params.admittance.stiffness[i];
+  }
+  
+  if (log_changes) {
+    RCLCPP_INFO(get_node()->get_logger(), "Stiffness parameters updated");
+  }
+}
+
+// Legacy method - forwards to the new implementation
+void AdmittanceController::updateStiffnessMatrix()
+{
+  // Forward to the new implementation with current params
+  updateStiffnessMatrix(params_, false);
+}
+
+ // Update damping matrix - can be called from non-RT context only
+void AdmittanceController::updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes)
+{
+  // Smooth damping calculation to avoid discontinuity when stiffness changes
+  for (size_t i = 0; i < 6; ++i) {
+    double stiffness_value = params.admittance.stiffness[i];
+    
+    if (stiffness_value <= 0.0) {
+      // Pure admittance mode - direct damping value
+      // Scale by sqrt(mass) for consistent units [Ns/m or Nms/rad]
+      damping_(i, i) = params.admittance.damping_ratio[i] * 
+        std::sqrt(params.admittance.mass[i]);
+    } 
+    else if (stiffness_value >= STIFFNESS_BLEND_THRESHOLD) {
+      // Full impedance mode - critical damping formula
+      damping_(i, i) = 2.0 * params.admittance.damping_ratio[i] * 
+        std::sqrt(params.admittance.mass[i] * stiffness_value);
+    }
+    else {
+      // Smooth transition zone - blend between the two formulas
+      double blend_factor = stiffness_value / STIFFNESS_BLEND_THRESHOLD;
+      
+      double admittance_damping = params.admittance.damping_ratio[i] * 
+        std::sqrt(params.admittance.mass[i]);
+        
+      double impedance_damping = 2.0 * params.admittance.damping_ratio[i] * 
+        std::sqrt(params.admittance.mass[i] * stiffness_value);
+      
+      // Smoothly blend between the two values
+      damping_(i, i) = (1.0 - blend_factor) * admittance_damping + 
+                      blend_factor * impedance_damping;
+    }
+  }
+  
+  if (log_changes) {
+    RCLCPP_INFO(get_node()->get_logger(), "Damping parameters updated with smooth transitions");
+  }
+}
+
+// Legacy method - forwards to the new implementation
+void AdmittanceController::updateDampingMatrix()
+{
+  // Forward to the new implementation with current params
+  updateDampingMatrix(params_, false);
+}
+
  bool AdmittanceController::updateSensorData()
  {
    // Implementation moved to sensor_processing.cpp
@@ -200,6 +249,10 @@ void AdmittanceController::processNonRTErrors()
   // 1. Update transform caches in non-RT context if needed
   // This is safe to do here since this is explicitly outside the RT control path
   updateTransformCaches();
+  
+  // 2. Update parameters in non-RT context if needed
+  // This handles all parameter updates and logging in non-RT context
+  prepareParameterUpdate();
   
   // 2. Process any real-time errors in a non-real-time context
   RTErrorType error = last_rt_error_.exchange(RTErrorType::NONE);
