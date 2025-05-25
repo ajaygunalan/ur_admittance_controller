@@ -35,18 +35,34 @@ struct SafeStartupParams {
   double max_orientation_error = 0.5;  // Maximum safe orientation error (radians)
 };
 
-// Transform caches
+// Real-time safe transform caches
 struct TransformCache {
-  geometry_msgs::msg::TransformStamped transform{};
-  Matrix6d adjoint = Matrix6d::Zero();
-  rclcpp::Time last_update{};
-  bool valid{false};
+  // Data accessible by RT thread
+  struct Entry {
+    geometry_msgs::msg::TransformStamped transform{};
+    Matrix6d adjoint = Matrix6d::Zero();
+    rclcpp::Time timestamp{};
+    std::atomic<bool> valid{false};
+  };
   
-  // C++17 feature: Reset method with default member initializer
+  // Cache entries for different transform pairs
+  Entry cache;
+  
+  // Non-RT data
+  std::string target_frame;
+  std::string source_frame;
+  rclcpp::Time last_update{};
+  
+  // Methods
   void reset() noexcept {
-    transform = geometry_msgs::msg::TransformStamped(); // Properly initialize with constructor
-    adjoint = Matrix6d::Zero();
-    valid = false;
+    cache.transform = geometry_msgs::msg::TransformStamped();
+    cache.adjoint = Matrix6d::Zero();
+    cache.valid.store(false);
+  }
+  
+  // Check if the transform is valid for RT thread
+  bool isValid() const noexcept {
+    return cache.valid.load();
   }
 };
 

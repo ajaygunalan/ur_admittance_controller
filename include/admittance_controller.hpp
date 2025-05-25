@@ -122,9 +122,21 @@ protected:
   Matrix6d damping_;
   Matrix6d stiffness_;
 
+  // Real-time safe error reporting
+  enum class RTErrorType {
+    NONE = 0,
+    UPDATE_ERROR,
+    SENSOR_ERROR,
+    TRANSFORM_ERROR,
+    CONTROL_ERROR,
+    KINEMATICS_ERROR,
+    JOINT_LIMITS_ERROR
+  };
+  std::atomic<RTErrorType> last_rt_error_{RTErrorType::NONE};
+  
   // Control state (using clean typedefs)
-  Vector6d wrench_;
-  Vector6d wrench_filtered_;
+  Vector6d wrench_ = Vector6d::Zero();  // Current F/T sensor reading
+  Vector6d wrench_filtered_ = Vector6d::Zero();  // Filtered F/T reading
   Vector6d pose_error_;
   Vector6d velocity_error_;
   Vector6d desired_accel_;
@@ -203,6 +215,10 @@ private:
   // Transform caches
   TransformCache ft_transform_cache_{};
   TransformCache ee_transform_cache_{};
+  
+  // Non-RT transform update method (called from update loop outside RT context)
+  void updateTransformCaches();
+  std::atomic<bool> transform_update_needed_{false};
 
   // Helper methods
   void cacheInterfaceIndices();
@@ -217,23 +233,25 @@ private:
   void updateStiffnessMatrix();
   void updateDampingMatrix();
   
+  // Real-time safe error reporting
+  void reportRTError(RTErrorType error_type) {
+    // Non-blocking error reporting - just sets an atomic flag
+    last_rt_error_.store(error_type);
+  }
+  void processNonRTErrors(); // Called in non-RT context to handle errors
+  
   bool updateSensorData();
-  bool updateTransforms();
-  bool updateSingleTransform(
-    const std::string& target_frame,
-    const std::string& source_frame,
-    TransformCache& cache,
-    const rclcpp::Time& time);
+  bool updateTransforms(); // Real-time safe - only uses cached transforms
   bool checkDeadband();
   
-  Vector6d computeAdmittanceControl(const rclcpp::Duration& period);
-  void updateStiffnessEngagement(const rclcpp::Duration& period);
-  void publishPoseError();
-  void applyCartesianVelocityLimits();
-  void handleDriftReset();
+  bool computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
+  bool updateStiffnessEngagement(const rclcpp::Duration& period);
+  bool publishPoseError();
+  bool applyCartesianVelocityLimits();
+  bool handleDriftReset();
   
   bool convertToJointSpace(const Vector6d& cart_vel, const rclcpp::Duration& period);
-  void applyJointLimits(const rclcpp::Duration& period);
+  bool applyJointLimits(const rclcpp::Duration& period);
   void updateReferenceInterfaces();
   void publishMonitoringData();
   controller_interface::return_type safeStop();

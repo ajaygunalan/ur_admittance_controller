@@ -312,13 +312,17 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
   current_pose_ = Eigen::Isometry3d::Identity();
   
   // When activating, set desired pose to current pose to avoid initial jumps
-  try {
-    auto tf = tf_buffer_->lookupTransform(params_.base_link, params_.tip_link, 
-                                         tf2::TimePointZero, tf2::durationFromSec(TRANSFORM_TIMEOUT));
-    desired_pose_ = tf2::transformToEigen(tf);
-    current_pose_ = desired_pose_;
-  } catch (const tf2::TransformException & ex) {
-    RCLCPP_WARN(get_node()->get_logger(), "Failed to get initial pose: %s", ex.what());
+  // Use our real-time safe transform cache instead of direct TF lookups
+  if (ee_transform_cache_.isValid()) {
+    // The transform cache should already be initialized by waitForTransforms()
+    current_pose_ = tf2::transformToEigen(ee_transform_cache_.cache.transform);
+    desired_pose_ = current_pose_;
+    RCLCPP_INFO(get_node()->get_logger(), "Initialized desired pose from cached transform");
+  } else {
+    RCLCPP_WARN(get_node()->get_logger(), "No valid transform cache for initial pose - using identity");
+    // Use identity as fallback
+    current_pose_ = Eigen::Isometry3d::Identity();
+    desired_pose_ = current_pose_;
   }
   wrench_filtered_.setZero();
   
@@ -407,13 +411,51 @@ bool AdmittanceController::waitForTransforms()
 {
   const auto timeout = rclcpp::Duration::from_seconds(5.0);
   std::string error;
+  auto now = get_node()->get_clock()->now();
   
-  return tf_buffer_->canTransform(params_.world_frame, params_.base_link, 
-                                   rclcpp::Time(0), timeout, &error) &&
-         tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
-                                   rclcpp::Time(0), timeout, &error) &&
-         tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
-                                   rclcpp::Time(0), timeout, &error);
+  // First check if transforms are available
+  bool transforms_available = 
+    tf_buffer_->canTransform(params_.world_frame, params_.base_link, 
+                            rclcpp::Time(0), timeout, &error) &&
+    tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
+                            rclcpp::Time(0), timeout, &error) &&
+    tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
+                            rclcpp::Time(0), timeout, &error);
+  
+  if (!transforms_available) {
+    RCLCPP_ERROR(get_node()->get_logger(), "Required transforms not available: %s", error.c_str());
+    return false;
+  }
+  
+  // Initialize transform cache frame names and reset the cache
+  ft_transform_cache_.reset();
+  ee_transform_cache_.reset();
+  
+  // Set frame names for later lookups
+  ft_transform_cache_.target_frame = params_.base_link;
+  ft_transform_cache_.source_frame = params_.ft_frame;
+  
+  ee_transform_cache_.target_frame = params_.base_link;
+  ee_transform_cache_.source_frame = params_.tip_link;
+  
+  // Explicitly request the first transform update
+  transform_update_needed_.store(true);
+  
+  // Do an initial transform update to populate the caches
+  try {
+    updateTransformCaches();
+    
+    // Verify the transforms were cached properly
+    if (!ft_transform_cache_.isValid() || !ee_transform_cache_.isValid()) {
+      RCLCPP_ERROR(get_node()->get_logger(), "Failed to initialize transform caches");
+      return false;
+    }
+    
+    return true;
+  } catch (const std::exception& ex) {
+    RCLCPP_ERROR(get_node()->get_logger(), "Exception during transform cache initialization: %s", ex.what());
+    return false;
+  }
 }
 
 bool AdmittanceController::loadJointLimitsFromURDF(

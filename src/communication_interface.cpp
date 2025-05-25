@@ -19,7 +19,7 @@ void AdmittanceController::handle_reset_pose(
 {
   try {
     // Set desired pose to current pose (reset error to zero)
-    if (ee_transform_cache_.valid) {
+    if (ee_transform_cache_.isValid()) {
       desired_pose_ = current_pose_;
       
       // Publish the current/desired pose for visualization

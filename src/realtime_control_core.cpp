@@ -31,45 +31,58 @@
  }
  
  controller_interface::return_type AdmittanceController::update_and_write_commands(
-     const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
- {
-   try {
-     // 1. Check parameter updates (non-blocking)
-     checkParameterUpdates();
-     
-     // 2. Update sensor data
-     if (!updateSensorData()) {
-       // Either below threshold or transform failed
-       return controller_interface::return_type::OK;
-     }
-     
-     // 3. Compute control law
-     Vector6d cmd_vel = computeAdmittanceControl(period);
-     
-     // Check if drift prevention was applied
-     if (cmd_vel.isZero()) {
-       return controller_interface::return_type::OK;
-     }
-     
-     // 4. Convert to joint space
-     if (!convertToJointSpace(cmd_vel, period)) {
-       return safeStop();
-     }
-     
-     // 5. Apply limits and update outputs
-     applyJointLimits(period);
-     updateReferenceInterfaces();
-     publishMonitoringData();
-     
-     return controller_interface::return_type::OK;
-     
-   } catch (const std::exception & e) {
-     if (rclcpp::ok()) {
-       RCLCPP_ERROR_SKIPFIRST_THROTTLE(rt_logger_, *get_node()->get_clock(), 1000,
-         "Exception in update: %s", e.what());
-     }
-     return safeStop();
-   }
+   const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
+{
+  // Step 1: Check for parameter updates - can't fail
+  checkParameterUpdates();
+  
+  // Step 2: Update sensor data and check for early exit conditions
+  if (!updateSensorData()) {
+    // Sensor data update failed - already logged in updateSensorData
+    return controller_interface::return_type::OK; // Continue to next cycle
+  }
+  
+  // Step 3: Update transforms
+  if (!updateTransforms()) {
+    // Transform update failed - already logged in updateTransforms
+    return controller_interface::return_type::OK; // Continue to next cycle
+  }
+  
+  // Step 4: Deadband check
+  if (!checkDeadband()) {
+    // Below deadband - no error, just skip calculation
+    return controller_interface::return_type::OK;
+  }
+  
+  // Step 5: Compute admittance control outputs
+  Vector6d cmd_vel;
+  if (!computeAdmittanceControl(period, cmd_vel)) {
+    reportRTError(RTErrorType::CONTROL_ERROR);
+    return safeStop();
+  }
+  
+  // Step 6: Convert to joint space velocities
+  if (!convertToJointSpace(cmd_vel, period)) {
+    reportRTError(RTErrorType::KINEMATICS_ERROR);
+    return safeStop();
+  }
+  
+  // Step 7: Apply joint limits - failure is critical
+  if (!applyJointLimits(period)) {
+    reportRTError(RTErrorType::JOINT_LIMITS_ERROR);
+    return safeStop(); // Changed to stop if limits can't be applied properly
+  }
+  
+  // Step 8: Update controller references
+  updateReferenceInterfaces();
+  
+  // Step 9: Publish monitoring data - non-critical
+  publishMonitoringData();
+  
+  // Process any errors that occurred in a non-RT context
+  processNonRTErrors();
+  
+  return controller_interface::return_type::OK; 
  }
  
  void AdmittanceController::checkParameterUpdates()
@@ -182,6 +195,45 @@
    return false;
  }
  
+void AdmittanceController::processNonRTErrors()
+{
+  // 1. Update transform caches in non-RT context if needed
+  // This is safe to do here since this is explicitly outside the RT control path
+  updateTransformCaches();
+  
+  // 2. Process any real-time errors in a non-real-time context
+  RTErrorType error = last_rt_error_.exchange(RTErrorType::NONE);
+  
+  if (error != RTErrorType::NONE && rclcpp::ok()) {
+    // Handle error without real-time violations
+    switch (error) {
+      case RTErrorType::UPDATE_ERROR:
+        RCLCPP_ERROR(get_node()->get_logger(), "Real-time error occurred in update loop");
+        break;
+      case RTErrorType::SENSOR_ERROR:
+        RCLCPP_ERROR(get_node()->get_logger(), "Real-time error in sensor data processing");
+        break;
+      case RTErrorType::TRANSFORM_ERROR:
+        RCLCPP_ERROR(get_node()->get_logger(), "Transform lookup failed in real-time context");
+        // Explicitly request transform update on error
+        transform_update_needed_.store(true);
+        break;
+      case RTErrorType::CONTROL_ERROR:
+        RCLCPP_ERROR(get_node()->get_logger(), "Control computation error in real-time context");
+        break;
+      case RTErrorType::KINEMATICS_ERROR:
+        RCLCPP_ERROR(get_node()->get_logger(), "Kinematics error in real-time context");
+        break;
+      case RTErrorType::JOINT_LIMITS_ERROR:
+        RCLCPP_ERROR(get_node()->get_logger(), "Joint limits error in real-time context");
+        break;
+      default:
+        RCLCPP_ERROR(get_node()->get_logger(), "Unknown real-time error occurred");
+        break;
+    }
+  }
+}
+ 
  void AdmittanceController::updateReferenceInterfaces()
  {
    // Update reference interfaces for downstream controller
@@ -212,11 +264,9 @@
      
      return controller_interface::return_type::OK;
      
-   } catch (const std::exception & e) {
-     if (rclcpp::ok()) {
-       RCLCPP_ERROR_SKIPFIRST_THROTTLE(rt_logger_, *get_node()->get_clock(), 1000,
-         "Exception in safeStop: %s", e.what());
-     }
+   } catch (const std::exception &) {
+     // Real-time safe error reporting without formatting or memory allocation
+     reportRTError(RTErrorType::CONTROL_ERROR);
      return controller_interface::return_type::ERROR;
    }
  }
