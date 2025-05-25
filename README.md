@@ -16,7 +16,7 @@ External Force → Compliant Motion
 **Core Equation**: `M·a + D·v + K·x = F_ext`
 - **M**: Virtual mass (inertia) - controls responsiveness
 - **D**: Damping - controls stability  
-- **K**: Stiffness - enables position control (0 = pure admittance) // Idk under what you mean by pure admiiatcen acheck the code  and update this
+- **K**: Stiffness - enables position control (0 = pure admittance) // Idk under what you mean by pure admiiatcen check the code  and update this
 - **F_ext**: External forces from F/T sensor
 
 ## 🚀 Quick Start
