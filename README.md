@@ -16,7 +16,7 @@ External Force → Compliant Motion
 **Core Equation**: `M·a + D·v + K·x = F_ext`
 - **M**: Virtual mass (inertia) - controls responsiveness
 - **D**: Damping - controls stability  
-- **K**: Stiffness - enables position control (0 = pure admittance) // Idk under what yoiu mean by pure admiiatcen acheck the code  and update this
+- **K**: Stiffness - enables position control (0 = pure admittance) // Idk under what you mean by pure admiiatcen acheck the code  and update this
 - **F_ext**: External forces from F/T sensor
 
 ## 🚀 Quick Start
@@ -271,41 +271,6 @@ ros2 topic pub /ft_sensor_readings geometry_msgs/WrenchStamped \
 # 4. Test emergency stop functionality
 ```
 
-## 📈 Performance Characteristics
-
-| Metric | Value |
-|--------|-------|
-| **Control Frequency** | 500 Hz |
-| **Force→Motion Latency** | <1 ms |
-| **Memory Usage** | <50 MB |
-| **CPU Usage** | <3% (single core) |
-| **Force Sensitivity** | ±0.1N |
-| **Position Accuracy** | ±0.1 mm |
-| **Real-Time Safety** | Lock-free publishers |
-
-## 🤔 FAQ
-
-**Q: Can I use this with other robot brands?**  
-A: The core admittance algorithm is generic, but F/T sensor interfaces and kinematics are UR-specific. Adaptation needed for other robots.
-
-**Q: What's the difference from built-in force mode?**  
-A: Our implementation provides continuous, high-rate Cartesian admittance vs. UR's discrete force setpoints. Better for smooth compliance.
-
-**Q: Is this safe for human collaboration?**  
-A: Yes, with proper velocity limits and application-specific tuning. Always follow safety standards (ISO 10218, ISO 15066).
-
-**Q: Can I combine with position control?**  
-A: Yes! Set non-zero stiffness parameters for impedance control (position + force regulation).
-
-**Q: Is this truly real-time safe?**  
-A: Yes! Uses `realtime_tools::RealtimePublisher` for lock-free publishing, pre-allocated memory, and non-blocking operations throughout.
-
-## 📚 Further Reading
-
--
-- [Architecture Document](ur_admittance_architecture.md) - Technical implementation details
-- [Universal Robots Documentation](https://docs.universal-robots.com/) - Official UR resources
-
 ## 🤝 Contributing
 
 Contributions welcome! Please read our contributing guidelines and submit pull requests for improvements.
@@ -314,6 +279,3 @@ Contributions welcome! Please read our contributing guidelines and submit pull r
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
----
-
-**Ready to add compliant behavior to your UR robot?** Start with our [Quick Start](#-quick-start) guide!
