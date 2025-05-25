@@ -235,17 +235,19 @@ ros2 topic echo /ur_admittance_controller/cartesian_velocity_command
 
 ## 🤝 Universal Robots Integration
 
-### Supported Models
-- **UR3/UR3e**: 3kg payload, compact workspace
-- **UR5/UR5e**: 5kg payload, versatile applications  
-- **UR10/UR10e**: 10kg payload, heavy-duty tasks
-- **UR16e**: 16kg payload, maximum capacity
 
-### Hardware Specifications
-- **Force Range**: ±200N (typical)
-- **Torque Range**: ±10Nm (typical)
-- **Update Rate**: 500Hz (e-Series)
-- **Built-in F/T Sensor**: 6-DOF TCP force/torque sensing
+### UR5e Specifications
+
+- 6 DOF, 5kg payload capacity, 850 mm maximum reach
+- Sensing/actuation capabilities:
+  - Joint position feedback
+  - Joint velocity feedback
+  - No direct joint torque control (only estimates via motor current)
+  - 6-axis force/torque sensing at the TCP
+
+
+the defaul model is `UR5e` but can work with any UR robot
+
 
 ### Why This Implementation?
 We use **admittance control** (force→motion) instead of impedance control (motion→force) because:
