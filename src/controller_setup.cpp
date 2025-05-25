@@ -233,30 +233,36 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
       "Failed to load some safe startup parameters, using defaults: %s", e.what());
   }
   
-  // Create standard publishers first
-  auto cart_vel_pub = get_node()->create_publisher<geometry_msgs::msg::Twist>(
+  // Create standard publishers first and store them in member variables
+  cart_vel_pub_ = get_node()->create_publisher<geometry_msgs::msg::Twist>(
     "~/cartesian_velocity_command", rclcpp::SystemDefaultsQoS());
   
   // Trajectory publisher removed - using reference interfaces is sufficient for controller chaining
     
   // Debug publisher for pose error
-  auto pose_error_pub = get_node()->create_publisher<geometry_msgs::msg::Twist>(
+  pose_error_pub_ = get_node()->create_publisher<geometry_msgs::msg::Twist>(
     "~/pose_error", rclcpp::SystemDefaultsQoS());
     
   // Initialize real-time safe publishers with the standard publishers
   rt_cart_vel_pub_ = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>>(
-    cart_vel_pub);
+    cart_vel_pub_);
   
   // Realtime trajectory publisher removed - using reference interfaces is sufficient for controller chaining
     
   rt_pose_error_pub_ = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>>(
-    pose_error_pub);
+    pose_error_pub_);
     
   // Add services and subscriptions for impedance mode control
-  reset_pose_service_ = get_node()->create_service<std_srvs::srv::Trigger>(
-    "~/reset_desired_pose", 
-    std::bind(&AdmittanceController::handle_reset_pose, this, 
-              std::placeholders::_1, std::placeholders::_2));
+  reset_pose_service_holder_ = get_node()->create_service<std_srvs::srv::Trigger>(
+    "~/reset_desired_pose",
+    [weak_this = std::weak_ptr<AdmittanceController>(shared_from_this())]
+    (const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+     std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+      if (auto controller = weak_this.lock()) {
+        controller->handle_reset_pose(request, response);
+      }
+    });
+  reset_pose_service_ = reset_pose_service_holder_;
 
   // Create subscriber for setting the desired pose
   set_pose_sub_ = get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -264,18 +270,26 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
     std::bind(&AdmittanceController::handle_set_desired_pose, this,
               std::placeholders::_1));
               
-  // Create publishers for monitoring
-  current_pose_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
+  // Create publishers for monitoring - store in both working and holder variables
+  current_pose_pub_holder_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
     "~/current_pose", 10);
+  current_pose_pub_ = current_pose_pub_holder_;
     
-  desired_pose_pub_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
+  desired_pose_pub_holder_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
     "~/desired_pose", 10);
+  desired_pose_pub_ = desired_pose_pub_holder_;
   
   // Add safe movement service for impedance mode
-  move_to_pose_service_ = get_node()->create_service<std_srvs::srv::Trigger>(
+  move_to_pose_service_holder_ = get_node()->create_service<std_srvs::srv::Trigger>(
     "~/move_to_start_pose",
-    std::bind(&AdmittanceController::handle_move_to_pose, this,
-              std::placeholders::_1, std::placeholders::_2));
+    [weak_this = std::weak_ptr<AdmittanceController>(shared_from_this())]
+    (const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+     std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+      if (auto controller = weak_this.lock()) {
+        controller->handle_move_to_pose(request, response);
+      }
+    });
+  move_to_pose_service_ = move_to_pose_service_holder_;
               
   RCLCPP_INFO(get_node()->get_logger(), "Impedance mode communication setup complete");
   
@@ -350,7 +364,53 @@ controller_interface::CallbackReturn AdmittanceController::on_deactivate(
   desired_accel_.setZero();
   wrench_.setZero();
   
+  // Note: For tf_listener, we don't fully reset it during deactivation
+  // as that would lose configuration, but we do want to minimize its
+  // activity while the controller is inactive. Full cleanup happens in on_cleanup().
+  
   RCLCPP_INFO(get_node()->get_logger(), "AdmittanceController deactivated");
+  return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::CallbackReturn AdmittanceController::on_cleanup(
+  const rclcpp_lifecycle::State & /*previous_state*/)
+{
+  RCLCPP_INFO(get_node()->get_logger(), "Starting cleanup...");
+  
+  // Clean up ROS services to break circular references
+  reset_pose_service_holder_.reset();
+  move_to_pose_service_holder_.reset();
+  // Service weak_ptrs will be automatically invalidated
+  
+  // Clean up subscribers and publishers
+  set_pose_sub_.reset();
+  current_pose_pub_.reset();
+  desired_pose_pub_.reset();
+  
+  // Clean up real-time publishers
+  rt_cart_vel_pub_.reset();
+  rt_pose_error_pub_.reset();
+  
+  // Clean up transform-related resources
+  RCLCPP_INFO(get_node()->get_logger(), "Cleaning up transform listeners...");
+  
+  // Stop transform listener first (it has a thread)
+  tf_listener_.reset();
+  
+  // Then clear the buffer
+  tf_buffer_.reset();
+  
+  // Clear transform caches
+  ft_transform_cache_.reset();
+  ee_transform_cache_.reset();
+  
+  // Clean up parameter buffer
+  param_buffer_.writeFromNonRT(ur_admittance_controller::Params());
+  
+  // Reset kinematic resources
+  kinematics_.reset();
+  
+  RCLCPP_INFO(get_node()->get_logger(), "Cleanup complete");
   return controller_interface::CallbackReturn::SUCCESS;
 }
 

@@ -59,7 +59,8 @@
 namespace ur_admittance_controller
 {
 
-class AdmittanceController : public controller_interface::ChainableControllerInterface
+class AdmittanceController : public controller_interface::ChainableControllerInterface,
+                           public std::enable_shared_from_this<AdmittanceController>
 {
 public:
   AdmittanceController();
@@ -77,6 +78,9 @@ public:
     const rclcpp_lifecycle::State & previous_state) override;
 
   controller_interface::CallbackReturn on_deactivate(
+    const rclcpp_lifecycle::State & previous_state) override;
+
+  controller_interface::CallbackReturn on_cleanup(
     const rclcpp_lifecycle::State & previous_state) override;
 
   controller_interface::return_type update_reference_from_subscribers(
@@ -173,6 +177,12 @@ protected:
    */
   std::unique_ptr<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>> rt_cart_vel_pub_;
   
+  // Store base publishers to ensure cleanup
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cart_vel_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pose_error_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_holder_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_pub_holder_;
+  
   /**
    * @brief Real-time safe joint trajectory publisher  
    * 
@@ -194,11 +204,13 @@ protected:
   std::unique_ptr<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>> rt_pose_error_pub_;
   
   // Services and topics for impedance mode control
-  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_pose_service_;
+  std::weak_ptr<rclcpp::Service<std_srvs::srv::Trigger>> reset_pose_service_;
+  std::weak_ptr<rclcpp::Service<std_srvs::srv::Trigger>> move_to_pose_service_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_pose_service_holder_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr move_to_pose_service_holder_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr set_pose_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_pub_;
-  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr move_to_pose_service_;
   
   // State for safe startup
   bool executing_trajectory_ = false;
