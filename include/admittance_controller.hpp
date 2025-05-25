@@ -52,25 +52,11 @@
 // Service includes
 #include "std_srvs/srv/trigger.hpp"
 
+// Include types definition
+#include "admittance_types.hpp"
+
 namespace ur_admittance_controller
 {
-
-// Constants for improved code clarity and maintainability
-static constexpr size_t DOF = 6;
-static constexpr double DEFAULT_FILTER_COEFF = 0.95;
-static constexpr double TRANSFORM_TIMEOUT = 0.1;  // seconds
-
-// Clean Eigen typedefs for better readability
-using Matrix6d = Eigen::Matrix<double, 6, 6>;
-using Vector6d = Eigen::Matrix<double, 6, 1>;
-
-struct JointLimits
-{
-  double min_position;
-  double max_position;
-  double max_velocity;
-  double max_acceleration;
-};
 
 class AdmittanceController : public controller_interface::ChainableControllerInterface
 {
@@ -196,12 +182,7 @@ protected:
   bool stiffness_recently_changed_ = false;
   
   // Safe startup parameters
-  struct SafeStartupParams {
-    double trajectory_duration = 5.0;     // Time to move from home to work position
-    double stiffness_ramp_time = 2.0;    // Time to gradually engage stiffness
-    double max_position_error = 0.15;    // Maximum safe position error (meters)
-    double max_orientation_error = 0.5;  // Maximum safe orientation error (radians)
-  } safe_startup_params_;
+  SafeStartupParams safe_startup_params_;
   
   // Service and subscription callbacks
   void handle_reset_pose(
@@ -220,20 +201,6 @@ private:
   rclcpp::Logger rt_logger_;
 
   // Transform caches
-  struct TransformCache {
-    geometry_msgs::msg::TransformStamped transform{};
-    Matrix6d adjoint = Matrix6d::Zero();
-    rclcpp::Time last_update{};
-    bool valid{false};
-    
-    // C++17 feature: Reset method with default member initializer
-    void reset() noexcept {
-      transform = geometry_msgs::msg::TransformStamped(); // Properly initialize with constructor
-      adjoint = Matrix6d::Zero();
-      valid = false;
-    }
-  };
-  
   TransformCache ft_transform_cache_{};
   TransformCache ee_transform_cache_{};
 
