@@ -1,30 +1,14 @@
+/**
+ * @file realtime_control_core.cpp
+ * @brief Real-time control algorithms for UR Admittance Controller
+ * 
+ * This file contains the high-frequency control loop implementation
+ * and all real-time safe operations. Performance critical code only.
+ */
+
 #include "admittance_controller.hpp"
 
-#include <algorithm>
-#include <cmath>
-#include <memory>
-#include <string>
-#include <vector>
-#include <rclcpp/callback_group.hpp>
-
-namespace ur_admittance_controller
-{
-
-// Constructor moved to controller_setup.cpp
-
-// command_interface_configuration moved to controller_setup.cpp
-
-// state_interface_configuration moved to controller_setup.cpp
-
-// on_export_reference_interfaces moved to controller_setup.cpp
-
-// on_init moved to controller_setup.cpp
-
-// on_configure moved to controller_setup.cpp
-
-// on_activate moved to controller_setup.cpp
-
-// on_deactivate moved to controller_setup.cpp
+namespace ur_admittance_controller {
 
 controller_interface::return_type AdmittanceController::update_reference_from_subscribers(
     const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
@@ -424,8 +408,6 @@ controller_interface::return_type AdmittanceController::update_and_write_command
   return controller_interface::return_type::OK;
 }
 
-// cacheInterfaceIndices moved to controller_setup.cpp
-
 void AdmittanceController::publishCartesianVelocity()
 {
   // Use realtime publisher with trylock pattern to ensure RT safety
@@ -443,8 +425,6 @@ void AdmittanceController::publishCartesianVelocity()
   }
 }
 
-// loadKinematics moved to controller_setup.cpp
-
 Vector6d AdmittanceController::computePoseError()
 {
   Vector6d error = Vector6d::Zero();
@@ -460,15 +440,4 @@ Vector6d AdmittanceController::computePoseError()
   return error;
 }
 
-// waitForTransforms moved to controller_setup.cpp
-
-// loadJointLimitsFromURDF moved to controller_setup.cpp
-
-// Service callback implementations moved to communication_interface.cpp
-
-}  // namespace ur_admittance_controller
-
-#include "pluginlib/class_list_macros.hpp"
-PLUGINLIB_EXPORT_CLASS(
-  ur_admittance_controller::AdmittanceController, 
-  controller_interface::ChainableControllerInterface)
+} // namespace ur_admittance_controller

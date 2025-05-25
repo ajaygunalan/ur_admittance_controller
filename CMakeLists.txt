@@ -51,9 +51,10 @@ generate_parameter_library(
 
 # Create controller library
 add_library(${PROJECT_NAME} SHARED
-  src/admittance_controller.cpp
-  src/communication_interface.cpp  # Add external communication handlers
-  src/controller_setup.cpp  # Add lifecycle management and configuration
+  src/plugin_export.cpp  # Plugin registration macro
+  src/communication_interface.cpp  # External communication handlers
+  src/controller_setup.cpp  # Lifecycle management and configuration
+  src/realtime_control_core.cpp  # Real-time control algorithms
 )
 
 # Set include directories
