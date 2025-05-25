@@ -27,6 +27,7 @@
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "realtime_tools/realtime_publisher.hpp"  // For real-time safe publishers
+#include "realtime_tools/realtime_buffer.h"      // For real-time safe parameter updates
 
 // TF2 includes
 #include "tf2_geometry_msgs/tf2_geometry_msgs/tf2_geometry_msgs.hpp"
@@ -94,9 +95,21 @@ protected:
   // Chainable override required for setting chained mode
   bool on_set_chained_mode(bool /*chained_mode*/) override { return true; }
 
+  // Real-time safe parameter handling
+  struct ParameterChange {
+    bool mass_changed{false};
+    bool stiffness_changed{false};
+    bool damping_changed{false};
+  };
+  
   // Parameters
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
   ur_admittance_controller::Params params_;
+  
+  // Real-time safe parameter buffer
+  realtime_tools::RealtimeBuffer<ur_admittance_controller::Params> param_buffer_;
+  std::atomic<bool> parameter_update_needed_{false};
+  std::unique_ptr<ParameterChange> pending_parameter_change_;
 
   // TF
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -228,10 +241,14 @@ private:
   [[nodiscard]] Vector6d computePoseError();  // Compute pose error for impedance control
   
   // Helper methods for cleaner control loop
-  void checkParameterUpdates();
-  void updateMassMatrix();
-  void updateStiffnessMatrix();
-  void updateDampingMatrix();
+  // Real-time safe parameter handling (split into RT and non-RT functions)
+  void checkParameterUpdates();  // RT-safe - only reads from buffer
+  void prepareParameterUpdate();  // non-RT - does parameter checking and buffer writing
+  
+  // Control matrix updates - these will be called in non-RT context only
+  void updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes);
+  void updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes);
+  void updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes);
   
   // Real-time safe error reporting
   void reportRTError(RTErrorType error_type) {
