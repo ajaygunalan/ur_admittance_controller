@@ -237,9 +237,7 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   auto cart_vel_pub = get_node()->create_publisher<geometry_msgs::msg::Twist>(
     "~/cartesian_velocity_command", rclcpp::SystemDefaultsQoS());
   
-  auto trajectory_pub = get_node()->create_publisher<trajectory_msgs::msg::JointTrajectory>(
-    "/scaled_joint_trajectory_controller/joint_trajectory", 
-    rclcpp::QoS(1).best_effort().durability_volatile());
+  // Trajectory publisher removed - using reference interfaces is sufficient for controller chaining
     
   // Debug publisher for pose error
   auto pose_error_pub = get_node()->create_publisher<geometry_msgs::msg::Twist>(
@@ -249,8 +247,7 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   rt_cart_vel_pub_ = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>>(
     cart_vel_pub);
   
-  rt_trajectory_pub_ = std::make_unique<realtime_tools::RealtimePublisher<trajectory_msgs::msg::JointTrajectory>>(
-    trajectory_pub);
+  // Realtime trajectory publisher removed - using reference interfaces is sufficient for controller chaining
     
   rt_pose_error_pub_ = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>>(
     pose_error_pub);

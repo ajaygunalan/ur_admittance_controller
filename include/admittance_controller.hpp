@@ -44,7 +44,7 @@
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/wrench_stamped.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
-#include "trajectory_msgs/msg/joint_trajectory.hpp"
+// trajectory_msgs include removed - no longer needed in this file
 
 // Generated parameter includes
 #include <ur_admittance_controller/ur_admittance_controller_parameters.hpp>
@@ -156,7 +156,7 @@ protected:
    * Topic: /scaled_joint_trajectory_controller/joint_trajectory
    * Purpose: Provides joint commands to ScaledJointTrajectoryController
    */
-  std::unique_ptr<realtime_tools::RealtimePublisher<trajectory_msgs::msg::JointTrajectory>> rt_trajectory_pub_;
+  // Trajectory publisher removed - using reference interfaces is sufficient for controller chaining
   
   /**
    * @brief Real-time safe pose error publisher
@@ -211,12 +211,31 @@ private:
   [[nodiscard]] bool waitForTransforms();
   [[nodiscard]] Vector6d computePoseError();  // Compute pose error for impedance control
   
-  // Real-time control helpers for improved modularity
+  // Helper methods for cleaner control loop
+  void checkParameterUpdates();
+  void updateMassMatrix();
+  void updateStiffnessMatrix();
+  void updateDampingMatrix();
+  
   bool updateSensorData();
+  bool updateTransforms();
+  bool updateSingleTransform(
+    const std::string& target_frame,
+    const std::string& source_frame,
+    TransformCache& cache,
+    const rclcpp::Time& time);
+  bool checkDeadband();
+  
   Vector6d computeAdmittanceControl(const rclcpp::Duration& period);
-  bool convertToJointSpace(const Vector6d& cmd_vel, const rclcpp::Duration& period);
+  void updateStiffnessEngagement(const rclcpp::Duration& period);
+  void publishPoseError();
+  void applyCartesianVelocityLimits();
+  void handleDriftReset();
+  
+  bool convertToJointSpace(const Vector6d& cart_vel, const rclcpp::Duration& period);
   void applyJointLimits(const rclcpp::Duration& period);
-  void publishOutputs(const rclcpp::Duration& period);
+  void updateReferenceInterfaces();
+  void publishMonitoringData();
   controller_interface::return_type safeStop();
   
   // Joint limits utilities  

@@ -8,6 +8,7 @@
 
 #include "admittance_controller.hpp"
 #include <memory>
+#include "trajectory_msgs/msg/joint_trajectory.hpp"
 
 namespace ur_admittance_controller {
 
@@ -152,39 +153,17 @@ void AdmittanceController::handle_move_to_pose(
     // Store as pending desired pose
     pending_desired_pose_ = *current_pose_msg;
     
-    // Create and send trajectory to move robot to target position
-    trajectory_msgs::msg::JointTrajectory traj;
-    traj.header.stamp = get_node()->now();
-    traj.joint_names = params_.joints;
-    
-    // First point: current position
-    trajectory_msgs::msg::JointTrajectoryPoint current_point;
-    current_point.positions.resize(params_.joints.size());
-    for (size_t i = 0; i < params_.joints.size(); ++i) {
-      current_point.positions[i] = joint_positions_[i];
-    }
-    current_point.time_from_start = rclcpp::Duration::from_seconds(0.0);
-    traj.points.push_back(current_point);
-    
-    // Start executing trajectory
+    // Start executing trajectory using reference interfaces
     executing_trajectory_ = true;
     
-    // Temporarily disable stiffness by scaling it to zero
-    // This prevents spring forces during trajectory execution
-    stiffness_engagement_factor_ = 0.0;
+    // Set the target as the current reference pose
+    // The controller will automatically transition to this pose through
+    // the update_reference_interfaces() method in the control loop
+    RCLCPP_INFO(get_node()->get_logger(), "Setting target pose through reference interfaces");
     
-    // Send trajectory to trajectory controller
-    if (rt_trajectory_pub_->trylock()) {
-      rt_trajectory_pub_->msg_ = traj;
-      rt_trajectory_pub_->unlockAndPublish();
-      RCLCPP_INFO(get_node()->get_logger(), "Safe movement trajectory sent");
-    } else {
-      RCLCPP_WARN(get_node()->get_logger(), "Failed to send trajectory: publisher locked");
-      executing_trajectory_ = false;
-      response->success = false;
-      response->message = "Failed to send trajectory: publisher locked";
-      return;
-    }
+    // Signal success
+    response->success = true;
+    response->message = "Target pose set successfully";
     
     // Setup callback group for the timer
     auto callback_group = get_node()->create_callback_group(
