@@ -4,7 +4,7 @@
 [![ROS2](https://img.shields.io/badge/ROS2-Jazzy-blue)](https://docs.ros.org/en/rolling/)
 [![Build Status](https://img.shields.io/badge/Build-Passing-success)](https://github.com/ajaygunalan/ur_admittance_controller)
 
-> ** ROS2 package for task-space (cartesian) force-compliant motion control (admittance control)for Universal Robots manipulators**
+> **ROS2 package for task-space (cartesian) force-compliant motion control (admittance control) for Universal Robots manipulators**
 
 
 
