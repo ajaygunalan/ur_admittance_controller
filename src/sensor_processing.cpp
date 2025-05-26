@@ -38,7 +38,7 @@ bool AdmittanceController::updateSensorData()
     // Use untransformed wrench if no valid transform exists
     F_sensor_base_ = raw_wrench;
     return checkDeadband();
-  }s
+  }
   
   // Always apply transform from F/T sensor to base frame
   if (transform_base_ft_.isValid()) {
