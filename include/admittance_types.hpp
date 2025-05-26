@@ -28,27 +28,92 @@ enum class LogLevel : uint8_t {
   FATAL = 4
 };
 
-struct LogMessage {
-  LogLevel level;
-  std::chrono::steady_clock::time_point timestamp;
-  std::string message;
+// Predefined message types for RT-safe logging
+// Add all possible log messages used in RT context here
+enum class RTLogType : uint16_t {
+  // System messages
+  SYSTEM_INITIALIZED = 0,
+  SYSTEM_SHUTDOWN = 1,
   
-  LogMessage() = default;
-  LogMessage(LogLevel lvl, const std::string& msg) 
-    : level(lvl), timestamp(std::chrono::steady_clock::now()), message(msg) {}
+  // Errors
+  ERROR_SENSOR_READ_FAILED = 100,
+  ERROR_TRANSFORM_INVALID = 101,
+  ERROR_KINEMATICS_FAILED = 102,
+  ERROR_JOINT_LIMITS = 103,
+  ERROR_CONTROL_COMPUTATION = 104,
+  
+  // Warnings
+  WARN_POSE_ERROR_LIMIT = 200,
+  WARN_VELOCITY_LIMITED = 201,
+  WARN_DEADBAND_ACTIVE = 202,
+  
+  // Info
+  INFO_STIFFNESS_ENGAGED = 300,
+  INFO_DRIFT_RESET = 301,
+  INFO_PARAMETER_UPDATED = 302,
+
+  // Parameterized messages (with numeric values)
+  PARAM_FORCE_READING = 400,      // With force value
+  PARAM_JOINT_POSITION = 401,     // With joint index and position
+  PARAM_CART_VELOCITY = 402       // With velocity component and value
+};
+
+// RT-safe log message with fixed-size buffer and no string allocations
+struct RTLogMessage {
+  LogLevel level;
+  RTLogType type;
+  std::chrono::steady_clock::time_point timestamp;
+  
+  // For parameterized messages (up to 3 parameters)
+  double param1;
+  double param2;
+  double param3;
+  
+  // For cases where a static string literal is needed
+  const char* literal_msg;
+  
+  RTLogMessage() : 
+    level(LogLevel::INFO), 
+    type(RTLogType::SYSTEM_INITIALIZED),
+    timestamp(std::chrono::steady_clock::now()),
+    param1(0.0), param2(0.0), param3(0.0),
+    literal_msg(nullptr) {}
+  
+  // RT-safe: No string construction, just enum and timestamp
+  RTLogMessage(LogLevel lvl, RTLogType typ) : 
+    level(lvl), type(typ),
+    timestamp(std::chrono::steady_clock::now()),
+    param1(0.0), param2(0.0), param3(0.0),
+    literal_msg(nullptr) {}
+  
+  // RT-safe: With parameters, no string operations
+  RTLogMessage(LogLevel lvl, RTLogType typ, double p1, double p2 = 0.0, double p3 = 0.0) : 
+    level(lvl), type(typ),
+    timestamp(std::chrono::steady_clock::now()),
+    param1(p1), param2(p2), param3(p3),
+    literal_msg(nullptr) {}
+    
+  // RT-safe: For static string literals only (no allocation/copy)
+  // WARNING: literal_msg MUST be a string literal or static char array
+  // that outlives this object. Never pass a dynamically allocated string.
+  RTLogMessage(LogLevel lvl, const char* msg) : 
+    level(lvl), type(RTLogType::SYSTEM_INITIALIZED),
+    timestamp(std::chrono::steady_clock::now()),
+    param1(0.0), param2(0.0), param3(0.0),
+    literal_msg(msg) {}
 };
 
 // Lock-free circular buffer for RT-safe logging
 template<size_t N>
 class RTLogBuffer {
 private:
-  std::array<LogMessage, N> buffer_;
+  std::array<RTLogMessage, N> buffer_;
   std::atomic<size_t> write_index_{0};
   std::atomic<size_t> read_index_{0};
   
 public:
-  // RT-safe: Add message to buffer (non-blocking)
-  bool push(LogLevel level, const std::string& message) noexcept {
+  // RT-safe: Add message to buffer using enum type (no string ops)
+  bool push(LogLevel level, RTLogType type) noexcept {
     size_t current_write = write_index_.load(std::memory_order_relaxed);
     size_t next_write = (current_write + 1) % N;
     
@@ -57,14 +122,48 @@ public:
       return false; // Buffer full, drop message
     }
     
-    // Write message
-    buffer_[current_write] = LogMessage(level, message);
+    // Write message (RT-safe: no dynamic memory allocation)
+    buffer_[current_write] = RTLogMessage(level, type);
+    write_index_.store(next_write, std::memory_order_release);
+    return true;
+  }
+  
+  // RT-safe: Add parameterized message (no string ops)
+  bool push(LogLevel level, RTLogType type, 
+            double param1, double param2 = 0.0, double param3 = 0.0) noexcept {
+    size_t current_write = write_index_.load(std::memory_order_relaxed);
+    size_t next_write = (current_write + 1) % N;
+    
+    // Check if buffer is full
+    if (next_write == read_index_.load(std::memory_order_acquire)) {
+      return false; // Buffer full, drop message
+    }
+    
+    // Write message with parameters (RT-safe: no string operations)
+    buffer_[current_write] = RTLogMessage(level, type, param1, param2, param3);
+    write_index_.store(next_write, std::memory_order_release);
+    return true;
+  }
+  
+  // RT-safe: Add message with string literal (no allocation/copy)
+  // WARNING: msg MUST be a string literal or static char array that outlives this object
+  bool push(LogLevel level, const char* msg) noexcept {
+    size_t current_write = write_index_.load(std::memory_order_relaxed);
+    size_t next_write = (current_write + 1) % N;
+    
+    // Check if buffer is full
+    if (next_write == read_index_.load(std::memory_order_acquire)) {
+      return false; // Buffer full, drop message
+    }
+    
+    // Store pointer to literal (RT-safe: no string copy)
+    buffer_[current_write] = RTLogMessage(level, msg);
     write_index_.store(next_write, std::memory_order_release);
     return true;
   }
   
   // Non-RT: Retrieve message from buffer
-  bool pop(LogMessage& message) noexcept {
+  bool pop(RTLogMessage& message) noexcept {
     size_t current_read = read_index_.load(std::memory_order_relaxed);
     if (current_read == write_index_.load(std::memory_order_acquire)) {
       return false; // Buffer empty

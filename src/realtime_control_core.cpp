@@ -307,13 +307,20 @@ void AdmittanceController::processNonRTErrors()
  
  void AdmittanceController::updateReferenceInterfaces()
  {
-   // Update reference interfaces for downstream controller
+   // First update our reference interfaces (exported to downstream controllers)
    for (size_t i = 0; i < params_.joints.size(); ++i) {
      joint_position_references_[i] = joint_positions_[i];
    }
    
-   // Note: Removed redundant trajectory publishing
-   // The reference interfaces are sufficient for controller chaining
+   // Now write to the claimed downstream controller reference interfaces
+   // This is critical for proper controller chaining
+   for (size_t i = 0; i < command_interfaces_.size(); ++i) {
+     // Use the mapping to get the correct joint index for each command interface
+     const size_t joint_idx = cmd_interface_to_joint_index_[i];
+     
+     // Write the joint position reference to the downstream controller interface
+     command_interfaces_[i].set_value(joint_position_references_[joint_idx]);
+   }
  }
  
  void AdmittanceController::publishMonitoringData()

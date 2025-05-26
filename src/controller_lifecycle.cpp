@@ -30,9 +30,13 @@ controller_interface::InterfaceConfiguration AdmittanceController::command_inter
   controller_interface::InterfaceConfiguration config;
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
   
-  // CHAINABLE MODE: We don't claim hardware command interfaces
-  // We only export reference interfaces via export_reference_interfaces()
-  return config;  // Empty - we don't write to hardware directly
+  // CHAINABLE MODE: Claim reference interfaces from downstream controller
+  for (const auto & joint : params_.joints) {
+    config.names.push_back(
+      params_.downstream_controller_name + "/" + joint + "/position");
+  }
+  
+  return config;
 }
 
 controller_interface::InterfaceConfiguration AdmittanceController::state_interface_configuration() const
@@ -326,6 +330,42 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
   
   // Cache interface indices for RT performance
   cacheInterfaceIndices();
+  
+  // Create mapping between command interfaces and joint indices
+  cmd_interface_to_joint_index_.clear();
+  cmd_interface_to_joint_index_.resize(command_interfaces_.size(), 0);
+  
+  // Map command interfaces to joint indices for proper controller chaining
+  for (size_t i = 0; i < command_interfaces_.size(); ++i) {
+    const std::string& interface_name = command_interfaces_[i].get_interface_name();
+    const std::string& prefix_name = command_interfaces_[i].get_prefix_name();
+    
+    // Extract joint name from the full interface name
+    // Format is: <downstream_controller>/<joint_name>/position
+    std::string joint_name;
+    size_t last_slash = prefix_name.find_last_of('/');
+    if (last_slash != std::string::npos) {
+      joint_name = prefix_name.substr(last_slash + 1);
+    } else {
+      RCLCPP_ERROR(get_node()->get_logger(), 
+        "Invalid command interface format: %s", prefix_name.c_str());
+      return controller_interface::CallbackReturn::ERROR;
+    }
+    
+    // Find the matching joint index
+    auto it = std::find(params_.joints.begin(), params_.joints.end(), joint_name);
+    if (it != params_.joints.end()) {
+      size_t joint_idx = std::distance(params_.joints.begin(), it);
+      cmd_interface_to_joint_index_[i] = joint_idx;
+      RCLCPP_DEBUG(get_node()->get_logger(), 
+        "Mapped command interface %s to joint index %zu", 
+        (prefix_name + "/" + interface_name).c_str(), joint_idx);
+    } else {
+      RCLCPP_ERROR(get_node()->get_logger(), 
+        "Joint %s not found in controller joints", joint_name.c_str());
+      return controller_interface::CallbackReturn::ERROR;
+    }
+  }
   
   // Initialize joint positions from state
   for (size_t i = 0; i < params_.joints.size(); ++i) {

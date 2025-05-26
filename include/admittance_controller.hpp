@@ -167,6 +167,9 @@ protected:
   // Interface caching for RT performance (CRITICAL)
   std::vector<size_t> pos_state_indices_;
   std::vector<long> ft_indices_;
+  
+  // Mapping from command interface indices to joint indices for controller chaining
+  std::vector<size_t> cmd_interface_to_joint_index_;
 
   /**
    * @brief Real-time safe Cartesian velocity publisher
@@ -241,17 +244,46 @@ private:
   mutable RTLogger rt_log_buffer_;
   void processRTLogs();  // Process RT logs in non-RT context
   
-  // RT-safe logging methods
-  void rtLogDebug(const std::string& message) const {
+  // RT-safe logging methods - use enums instead of strings for RT safety
+  void rtLogDebug(RTLogType type) const {
+    rt_log_buffer_.push(LogLevel::DEBUG, type);
+  }
+  void rtLogInfo(RTLogType type) const {
+    rt_log_buffer_.push(LogLevel::INFO, type);
+  }
+  void rtLogWarn(RTLogType type) const {
+    rt_log_buffer_.push(LogLevel::WARN, type);
+  }
+  void rtLogError(RTLogType type) const {
+    rt_log_buffer_.push(LogLevel::ERROR, type);
+  }
+  
+  // RT-safe logging methods with parameters
+  void rtLogDebug(RTLogType type, double param1, double param2 = 0.0, double param3 = 0.0) const {
+    rt_log_buffer_.push(LogLevel::DEBUG, type, param1, param2, param3);
+  }
+  void rtLogInfo(RTLogType type, double param1, double param2 = 0.0, double param3 = 0.0) const {
+    rt_log_buffer_.push(LogLevel::INFO, type, param1, param2, param3);
+  }
+  void rtLogWarn(RTLogType type, double param1, double param2 = 0.0, double param3 = 0.0) const {
+    rt_log_buffer_.push(LogLevel::WARN, type, param1, param2, param3);
+  }
+  void rtLogError(RTLogType type, double param1, double param2 = 0.0, double param3 = 0.0) const {
+    rt_log_buffer_.push(LogLevel::ERROR, type, param1, param2, param3);
+  }
+  
+  // RT-safe logging methods for string literals only
+  // WARNING: Only use with string literals, not dynamically created strings
+  void rtLogDebugLiteral(const char* message) const {
     rt_log_buffer_.push(LogLevel::DEBUG, message);
   }
-  void rtLogInfo(const std::string& message) const {
+  void rtLogInfoLiteral(const char* message) const {
     rt_log_buffer_.push(LogLevel::INFO, message);
   }
-  void rtLogWarn(const std::string& message) const {
+  void rtLogWarnLiteral(const char* message) const {
     rt_log_buffer_.push(LogLevel::WARN, message);
   }
-  void rtLogError(const std::string& message) const {
+  void rtLogErrorLiteral(const char* message) const {
     rt_log_buffer_.push(LogLevel::ERROR, message);
   }
 

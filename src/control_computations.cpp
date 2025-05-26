@@ -170,8 +170,8 @@ bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& per
        orientation_error_norm > safe_startup_params_.max_orientation_error)) {
     error_within_limits = false;
     
-    // Use RT-safe logging instead of direct logging
-    rtLogWarn("Pose error exceeds safety limits, reducing stiffness engagement");
+    // Use RT-safe logging with predefined message type
+    rtLogWarn(RTLogType::WARN_POSE_ERROR_LIMIT);
     
     // Reduce stiffness immediately
     stiffness_recently_changed_ = true;
@@ -184,8 +184,8 @@ bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& per
     if (stiffness_engagement_factor_ >= 1.0) {
       stiffness_engagement_factor_ = 1.0;
       stiffness_recently_changed_ = false;
-      // Use RT-safe logging
-      rtLogInfo("Stiffness engagement completed");
+      // Use RT-safe logging with predefined message type
+      rtLogInfo(RTLogType::INFO_STIFFNESS_ENGAGED);
     }
   }
   
