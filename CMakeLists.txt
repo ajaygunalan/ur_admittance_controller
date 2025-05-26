@@ -56,7 +56,6 @@ add_library(${PROJECT_NAME} SHARED
   src/controller_lifecycle.cpp  # ROS2 controller lifecycle and setup
   src/controller_integration.cpp  # External system integration (TF2, kinematics, URDF)
   src/realtime_control_core.cpp  # Real-time control algorithms
-  src/parameter_validation.cpp  # Parameter validation methods
   src/rt_logging.cpp  # Real-time safe logging implementation
 )
 

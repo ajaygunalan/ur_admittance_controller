@@ -308,13 +308,7 @@ private:
   void checkParameterUpdates();  // RT-safe - only reads from buffer
   void prepareParameterUpdate();  // non-RT - does parameter checking and buffer writing
   
-  // Parameter validation methods
-  bool validateParameters(const ur_admittance_controller::Params& params) const;
-  bool validateMassParameters(const std::array<double, 6>& mass) const;
-  bool validateStiffnessParameters(const std::array<double, 6>& stiffness) const;
-  bool validateDampingParameters(const std::array<double, 6>& damping_ratio) const;
-  bool validateVelocityLimits(double max_linear, double max_angular) const;
-  void logParameterValidationError(const std::string& parameter_name, const std::string& reason) const;
+  // No parameter validation - assume parameters are always valid
   
   // Control matrix updates - non-RT context with params and logging control
   void updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes);

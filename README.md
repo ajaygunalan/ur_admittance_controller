@@ -39,6 +39,11 @@ ros2 launch ur_robot_driver ur_control.launch.py \
   robot_ip:=192.168.1.100 \
   launch_rviz:=false
 
+# Verify the required downstream controller is active
+ros2 controller list  # Should show "scaled_joint_trajectory_controller: active"
+# If not active, activate it:
+# ros2 controller set_state scaled_joint_trajectory_controller active
+
 # Terminal 2: Launch admittance controller
 ros2 launch ur_admittance_controller ur_admittance_system.launch.py \
   use_sim:=false

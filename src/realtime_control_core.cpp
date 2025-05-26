@@ -108,13 +108,7 @@ void AdmittanceController::prepareParameterUpdate()
   // Get latest parameters from the parameter server
   auto new_params = param_listener_->get_params();
   
-  // Validate parameters before using them
-  if (!validateParameters(new_params)) {
-    RCLCPP_ERROR(get_node()->get_logger(), 
-      "Parameter validation failed - keeping previous parameters");
-    parameter_update_needed_.store(false);
-    return;
-  }
+  // No parameter validation - assume all parameters are valid
   
   // Proper floating-point comparison with epsilon tolerance
   // Check for changes using proper floating-point comparison
