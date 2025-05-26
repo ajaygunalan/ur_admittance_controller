@@ -86,39 +86,53 @@ class SystemStatusChecker(Node):
                 self.get_logger().info(f"🎯 Motion: {vel:.3f}m/s", throttle_duration_sec=1.0)
 
     def check_status(self):
+        """Main status check with better error handling"""
         self.get_logger().info("\n========== STATUS CHECK ==========")
         
         # Check controller manager
-        if not self.list_controllers_client.wait_for_service(timeout_sec=1.0):
+        if not self.list_controllers_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().error("❌ Controller Manager not available!")
-            self.get_logger().info("💡 Start robot/simulation first")
+            self.get_logger().info("💡 Start robot/simulation first:")
+            self.get_logger().info("   ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur5e robot_ip:=192.168.1.100")
+            self.get_logger().info("   # OR for simulation:")
+            self.get_logger().info("   ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e")
             return
         
-        # Get controllers
+        # Get controllers and data status
         controllers_ok = self.check_controllers()
         data_ok = self.check_data_flow()
         
-        # Overall status
+        # Overall status with recommendations
         if controllers_ok and data_ok:
-            self.get_logger().info("✅ SYSTEM READY")
+            self.get_logger().info("\n✅ SYSTEM READY")
+            self.get_logger().info("🎯 Ready for admittance control operations!")
         elif controllers_ok:
-            self.get_logger().warn("⚠️  Controllers OK, but missing data")
+            self.get_logger().warn("\n⚠️  Controllers OK, but missing data")
+            self.get_logger().info("💡 Check that robot is connected and force/torque sensor is publishing")
         else:
-            self.get_logger().error("❌ SYSTEM NOT READY")
+            self.get_logger().error("\n❌ SYSTEM NOT READY")
+            self.get_logger().info("💡 Start controllers and verify robot connection")
         
         # Quick commands
         self.get_logger().info("\n📋 Quick commands:")
         self.get_logger().info("  • ros2 control list_controllers")
         self.get_logger().info("  • ros2 topic echo /ft_sensor_readings --once")
         self.get_logger().info("  • ros2 param set /ur_admittance_controller mass.0 5.0")
+        self.get_logger().info("  • ros2 param set /ur_admittance_controller realtime_logging true")
 
     def check_controllers(self):
+        """Check controller status with improved error handling"""
         request = ListControllers.Request()
         future = self.list_controllers_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+        
+        try:
+            rclpy.spin_until_future_complete(self, future, timeout_sec=3.0)
+        except Exception as e:
+            self.get_logger().error(f"Exception while checking controllers: {e}")
+            return False
         
         if not future.result():
-            self.get_logger().error("Failed to get controller list")
+            self.get_logger().error("Failed to get controller list - service call failed")
             return False
         
         active_controllers = {c.name: c.state for c in future.result().controller}
@@ -134,7 +148,8 @@ class SystemStatusChecker(Node):
                 else:
                     self.get_logger().warn(f"  ⚠️  {controller} [{state}]")
                     if state == "inactive":
-                        self.get_logger().info(f"     → ros2 control set_controller_state {controller} start")
+                        self.get_logger().info(f"     → ros2 control set_controller_state {controller} configure")
+                        self.get_logger().info(f"     → ros2 control set_controller_state {controller} activate")
                     all_ok = False
             else:
                 self.get_logger().error(f"  ❌ {controller} [NOT FOUND]")
@@ -158,16 +173,27 @@ class SystemStatusChecker(Node):
 
 def main(args=None):
     rclpy.init(args=args)
+    node = None
     
     try:
         node = SystemStatusChecker()
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        if node:
+            node.get_logger().info("Status checker stopped by user")
+    except Exception as e:
+        if node:
+            node.get_logger().error(f"Status checker failed: {e}")
+        else:
+            print(f"Failed to start status checker: {e}")
     finally:
-        if rclpy.ok():
-            node.destroy_node()
-            rclpy.shutdown()
+        try:
+            if node:
+                node.destroy_node()
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception as e:
+            print(f"Cleanup error: {e}")
 
 
 if __name__ == '__main__':

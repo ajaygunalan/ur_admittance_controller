@@ -1,76 +1,186 @@
 #!/usr/bin/env python3
+"""
+Safe startup test for UR Admittance Controller.
+Tests that the robot can safely move to start pose without exceeding error thresholds.
+"""
+
 import rclpy
 from rclpy.node import Node
 import time
 import sys
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import PoseStamped, Twist
+from rclpy.executors import MultiThreadedExecutor
+import threading
 
 class SafeStartupTest(Node):
     def __init__(self):
         super().__init__('safe_startup_test')
+        
+        # Parameters
+        self.declare_parameter('max_error_threshold', 0.15)  # meters
+        self.declare_parameter('test_timeout', 15.0)  # seconds
+        self.declare_parameter('service_timeout', 5.0)  # seconds
+        self.declare_parameter('error_topic', '/ur_admittance_controller/pose_error')
+        self.declare_parameter('service_name', '/ur_admittance_controller/move_to_start_pose')
+        
+        self.max_error_threshold = self.get_parameter('max_error_threshold').get_parameter_value().double_value
+        self.test_timeout = self.get_parameter('test_timeout').get_parameter_value().double_value
+        self.service_timeout = self.get_parameter('service_timeout').get_parameter_value().double_value
+        error_topic = self.get_parameter('error_topic').get_parameter_value().string_value
+        service_name = self.get_parameter('service_name').get_parameter_value().string_value
+        
+        # State tracking
+        self.max_error = 0.0
+        self.error_samples = []
+        self.test_started = False
+        self.service_completed = False
+        self.lock = threading.Lock()
+        
+        # Set up subscription
         self.pose_error_sub = self.create_subscription(
-            Twist, '/ur_admittance_controller/pose_error',
-            self.pose_error_callback, 10)
-        self.max_error = 0.0
-        self.get_logger().info("Safe Startup Test initialized. Monitoring pose errors...")
+            Twist, error_topic, self.pose_error_callback, 10)
+            
+        # Service client
+        self.service_client = self.create_client(Trigger, service_name)
         
+        self.get_logger().info(f"Safe Startup Test initialized. Error threshold: {self.max_error_threshold}m")
     def pose_error_callback(self, msg):
+        """Track pose errors during the test"""
+        if not self.test_started:
+            return
+            
         error = (msg.linear.x**2 + msg.linear.y**2 + msg.linear.z**2)**0.5
-        self.max_error = max(self.max_error, error)
-        self.get_logger().debug(f"Current error: {error:.4f}m, Max error: {self.max_error:.4f}m")
         
-    def test_startup(self):
-        # Test sequence
-        self.get_logger().info("Testing safe startup...")
-        
-        # Reset max error before starting the test
-        self.max_error = 0.0
-        
-        # Create client for the move_to_start_pose service
-        client = self.create_client(Trigger, '/ur_admittance_controller/move_to_start_pose')
-        while not client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Service not available, waiting...')
+        with self.lock:
+            self.max_error = max(self.max_error, error)
+            self.error_samples.append((self.get_clock().now(), error))
             
-        # Call the service to start the safe movement
-        self.get_logger().info("Calling move_to_start_pose service...")
+            # Log significant errors
+            if error > self.max_error_threshold * 0.8:  # Warn at 80% of threshold
+                self.get_logger().warn(f"High error detected: {error:.4f}m (threshold: {self.max_error_threshold}m)")
+            else:
+                self.get_logger().debug(f"Current error: {error:.4f}m, Max error: {self.max_error:.4f}m")
+    
+    def reset_test_state(self):
+        """Reset test state before starting a new test"""
+        with self.lock:
+            self.max_error = 0.0
+            self.error_samples.clear()
+            self.test_started = False
+            self.service_completed = False
+    
+    def wait_for_service_ready(self):
+        """Wait for the move_to_start_pose service to be available"""
+        self.get_logger().info("Waiting for move_to_start_pose service...")
+        
+        if not self.service_client.wait_for_service(timeout_sec=self.service_timeout):
+            self.get_logger().error(f"Service not available after {self.service_timeout}s timeout")
+            return False
+            
+        self.get_logger().info("Service is ready")
+        return True
+    
+    def call_move_to_start_pose(self):
+        """Call the move_to_start_pose service"""
         request = Trigger.Request()
-        future = client.call_async(request)
         
-        # Wait for the service call to complete
-        rclpy.spin_until_future_complete(self, future)
-        
-        # Check if the service call was successful
-        if future.result().success:
-            self.get_logger().info(f"Service call succeeded: {future.result().message}")
-        else:
-            self.get_logger().error(f"Service call failed: {future.result().message}")
-            return False
+        try:
+            future = self.service_client.call_async(request)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=self.service_timeout)
             
-        # Wait for the full startup sequence to complete
-        self.get_logger().info("Waiting for startup sequence to complete...")
-        time.sleep(10)  # Wait for full startup
+            if not future.done():
+                self.get_logger().error("Service call timed out")
+                return False
+                
+            result = future.result()
+            if result.success:
+                self.get_logger().info(f"Service call succeeded: {result.message}")
+                return True
+            else:
+                self.get_logger().error(f"Service call failed: {result.message}")
+                return False
+                
+        except Exception as e:
+            self.get_logger().error(f"Exception during service call: {str(e)}")
+            return False
+    def test_startup(self):
+        """Execute the safe startup test"""
+        self.get_logger().info("=== Starting Safe Startup Test ===")
         
-        # Evaluate test results
-        if self.max_error > 0.15:
-            self.get_logger().error(f"FAILED: Max error {self.max_error:.4f}m > 0.15m")
+        # Reset state
+        self.reset_test_state()
+        
+        # Check service availability
+        if not self.wait_for_service_ready():
+            return False
+        
+        # Start monitoring errors
+        self.test_started = True
+        self.get_logger().info("Started error monitoring")
+        
+        # Call the service
+        if not self.call_move_to_start_pose():
+            return False
+        
+        self.service_completed = True
+        
+        # Wait for movement to complete (non-blocking with progress updates)
+        self.get_logger().info(f"Waiting up to {self.test_timeout}s for startup sequence to complete...")
+        
+        start_time = self.get_clock().now()
+        last_progress_time = start_time
+        
+        while (self.get_clock().now() - start_time).nanoseconds < self.test_timeout * 1e9:
+            # Spin to process callbacks
+            rclpy.spin_once(self, timeout_sec=0.1)
+            
+            # Progress update every 2 seconds
+            current_time = self.get_clock().now()
+            if (current_time - last_progress_time).nanoseconds > 2e9:
+                elapsed = (current_time - start_time).nanoseconds / 1e9
+                with self.lock:
+                    self.get_logger().info(f"Progress: {elapsed:.1f}s elapsed, max error so far: {self.max_error:.4f}m")
+                last_progress_time = current_time
+            
+            # Check for early failure
+            with self.lock:
+                if self.max_error > self.max_error_threshold:
+                    self.get_logger().error(f"Test failed early: error {self.max_error:.4f}m > threshold {self.max_error_threshold}m")
+                    return False
+        
+        # Final evaluation
+        with self.lock:
+            final_max_error = self.max_error
+            num_samples = len(self.error_samples)
+        
+        self.get_logger().info(f"Test completed. Processed {num_samples} error samples")
+        
+        if final_max_error > self.max_error_threshold:
+            self.get_logger().error(f"FAILED: Max error {final_max_error:.4f}m > {self.max_error_threshold}m")
             return False
         else:
-            self.get_logger().info(f"PASSED: Max error {self.max_error:.4f}m < 0.15m")
+            self.get_logger().info(f"PASSED: Max error {final_max_error:.4f}m < {self.max_error_threshold}m")
             return True
 
 
 def main(args=None):
     rclpy.init(args=args)
     
-    # Create the test node
+    # Use MultiThreadedExecutor for better callback handling
+    executor = MultiThreadedExecutor()
     test_node = SafeStartupTest()
+    executor.add_node(test_node)
+    
+    # Run executor in separate thread
+    executor_thread = threading.Thread(target=executor.spin, daemon=True)
+    executor_thread.start()
     
     try:
         # Run the test
         result = test_node.test_startup()
         
-        # Exit with appropriate status code
+        # Print final results
         if result:
             print("\n✅ TEST PASSED: Safe startup sequence completed successfully!")
             exit_code = 0
@@ -78,11 +188,16 @@ def main(args=None):
             print("\n❌ TEST FAILED: Safe startup sequence exceeded error limits!")
             exit_code = 1
     
+    except KeyboardInterrupt:
+        test_node.get_logger().info("Test interrupted by user")
+        exit_code = 130  # Standard exit code for SIGINT
     except Exception as e:
         test_node.get_logger().error(f"Test failed with exception: {str(e)}")
         exit_code = 2
     finally:
         # Cleanup
+        test_node.get_logger().info("Cleaning up...")
+        executor.shutdown()
         test_node.destroy_node()
         rclpy.shutdown()
         
