@@ -6,7 +6,7 @@ def generate_launch_description():
         # Set impedance mode parameters
         ExecuteProcess(
             cmd=['ros2', 'param', 'set', '/ur_admittance_controller', 
-                 'admittance.stiffness', '[100,100,100,10,10,10]'],
+                 'admittance.stiffness', '[100.0,100.0,100.0,10.0,10.0,10.0]'],
             output='screen'
         ),
         

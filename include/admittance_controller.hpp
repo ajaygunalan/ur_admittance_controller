@@ -236,6 +236,24 @@ protected:
 private:
   // Real-time safe logger
   rclcpp::Logger rt_logger_;
+  
+  // RT-safe logging infrastructure
+  mutable RTLogger rt_log_buffer_;
+  void processRTLogs();  // Process RT logs in non-RT context
+  
+  // RT-safe logging methods
+  void rtLogDebug(const std::string& message) const {
+    rt_log_buffer_.push(LogLevel::DEBUG, message);
+  }
+  void rtLogInfo(const std::string& message) const {
+    rt_log_buffer_.push(LogLevel::INFO, message);
+  }
+  void rtLogWarn(const std::string& message) const {
+    rt_log_buffer_.push(LogLevel::WARN, message);
+  }
+  void rtLogError(const std::string& message) const {
+    rt_log_buffer_.push(LogLevel::ERROR, message);
+  }
 
   // Transform caches
   TransformCache ft_transform_cache_{};
@@ -256,6 +274,14 @@ private:
   // Real-time safe parameter handling (split into RT and non-RT functions)
   void checkParameterUpdates();  // RT-safe - only reads from buffer
   void prepareParameterUpdate();  // non-RT - does parameter checking and buffer writing
+  
+  // Parameter validation methods
+  bool validateParameters(const ur_admittance_controller::Params& params) const;
+  bool validateMassParameters(const std::array<double, 6>& mass) const;
+  bool validateStiffnessParameters(const std::array<double, 6>& stiffness) const;
+  bool validateDampingParameters(const std::array<double, 6>& damping_ratio) const;
+  bool validateVelocityLimits(double max_linear, double max_angular) const;
+  void logParameterValidationError(const std::string& parameter_name, const std::string& reason) const;
   
   // Control matrix updates - non-RT context with params and logging control
   void updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes);

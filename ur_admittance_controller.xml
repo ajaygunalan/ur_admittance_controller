@@ -1,7 +1,7 @@
 <library path="ur_admittance_controller">
   <class name="ur_admittance_controller/AdmittanceController"
          type="ur_admittance_controller::AdmittanceController"
-         base_class_type="controller_interface::ChainableControllerInterface">
+         base_class_type="controller_interface::ControllerInterface">
     <description>
       Admittance controller for Universal Robots that reacts to external forces.
     </description>

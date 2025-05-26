@@ -11,6 +11,9 @@
 
 namespace ur_admittance_controller {
 
+// Constants used in this file (should match realtime_control_core.cpp)
+constexpr double CACHE_VALIDITY_WARNING_TIME = 0.5;  // seconds
+
 bool AdmittanceController::updateSensorData()
 {
   // REAL-TIME SAFE: No exceptions, no memory allocations
@@ -20,8 +23,8 @@ bool AdmittanceController::updateSensorData()
   for (size_t i = 0; i < 6; ++i) {
     if (ft_indices_[i] >= 0 && static_cast<size_t>(ft_indices_[i]) < state_interfaces_.size()) {
       const auto& interface = state_interfaces_[ft_indices_[i]];
-      if (interface.get_optional()) {
-        raw_wrench(i) = interface.get_optional().value();
+      if (interface.get_value() != std::numeric_limits<double>::quiet_NaN()) {
+        raw_wrench(i) = interface.get_value();
         if (std::isnan(raw_wrench(i))) {
           reportRTError(RTErrorType::SENSOR_ERROR);
           return false;
@@ -39,7 +42,8 @@ bool AdmittanceController::updateSensorData()
   
   // Apply correct transform to wrench - real-time safe since adjoint is cached
   if (ft_transform_cache_.isValid()) {
-    wrench_ = ft_transform_cache_.cache.adjoint * raw_wrench;
+    const auto& transform_data = ft_transform_cache_.getTransform();
+    wrench_ = transform_data.adjoint * raw_wrench;
   } else {
     // No valid transform, use untransformed wrench
     wrench_ = raw_wrench;
@@ -77,7 +81,8 @@ bool AdmittanceController::updateTransforms()
   
   // Update the current pose from the cached EE transform if it's valid
   if (ee_transform_cache_.isValid()) {
-    current_pose_ = tf2::transformToEigen(ee_transform_cache_.cache.transform);
+    const auto& ee_data = ee_transform_cache_.getTransform();
+    current_pose_ = tf2::transformToEigen(ee_data.transform);
   }
   
   // Log if using old cached transforms
@@ -137,13 +142,8 @@ void AdmittanceController::updateTransformCaches()
                -t.y(), t.x(), 0;
     adjoint.block<3, 3>(3, 0) = t_cross * R;
     
-    // Now safely update the atomic-protected cache
-    ft_transform_cache_.cache.valid.store(false); // Temporarily mark invalid during update
-    ft_transform_cache_.cache.transform = ft_transform;
-    ft_transform_cache_.cache.adjoint = adjoint;
-    ft_transform_cache_.cache.timestamp = now;
-    ft_transform_cache_.last_update = now;
-    ft_transform_cache_.cache.valid.store(true); // Mark as valid after update complete
+    // Use the atomic double-buffering method for race-condition-free updates
+    ft_transform_cache_.updateTransform(ft_transform, adjoint, now);
     
     // Get EE transform
     auto ee_transform = tf_buffer_->lookupTransform(
@@ -151,12 +151,10 @@ void AdmittanceController::updateTransformCaches()
       ee_transform_cache_.source_frame,
       tf2_ros::fromMsg(now), tf2::durationFromSec(0.1));
     
-    // Update EE transform cache
-    ee_transform_cache_.cache.valid.store(false); // Temporarily mark invalid during update
-    ee_transform_cache_.cache.transform = ee_transform;
-    ee_transform_cache_.cache.timestamp = now;
-    ee_transform_cache_.last_update = now;
-    ee_transform_cache_.cache.valid.store(true); // Mark as valid after update complete
+    // Use the atomic double-buffering method for race-condition-free updates
+    // Note: EE transform doesn't need adjoint, so we pass identity matrix
+    Matrix6d identity_adjoint = Matrix6d::Identity();
+    ee_transform_cache_.updateTransform(ee_transform, identity_adjoint, now);
     
     updated = true;
   } catch (const tf2::TransformException& ex) {
@@ -182,7 +180,7 @@ bool AdmittanceController::checkDeadband()
   // Below threshold - maintain current position
   cart_twist_.setZero();
   for (size_t i = 0; i < params_.joints.size(); ++i) {
-    joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
+    joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_value();
   }
   return false;
 }

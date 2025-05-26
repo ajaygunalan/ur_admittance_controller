@@ -329,7 +329,7 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
   // Use our real-time safe transform cache instead of direct TF lookups
   if (ee_transform_cache_.isValid()) {
     // The transform cache should already be initialized by waitForTransforms()
-    current_pose_ = tf2::transformToEigen(ee_transform_cache_.cache.transform);
+    current_pose_ = tf2::transformToEigen(ee_transform_cache_.getTransform().transform);
     desired_pose_ = current_pose_;
     RCLCPP_INFO(get_node()->get_logger(), "Initialized desired pose from cached transform");
   } else {

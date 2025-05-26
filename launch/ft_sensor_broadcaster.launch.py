@@ -73,13 +73,7 @@ def generate_launch_description():
             "--param-file", config_file,
             "--controller-manager-timeout", "300"
         ],
-        output="screen",
-        parameters=[{
-            "sensor_name": sensor_name,
-            "frame_id": frame_id,
-            "topic_name": topic_name,
-            "use_sim": use_sim
-        }]
+        output="screen"
     )
 
     return LaunchDescription(declared_arguments + [

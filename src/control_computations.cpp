@@ -13,6 +13,12 @@
 
 namespace ur_admittance_controller {
 
+// Constants used in this file (should match realtime_control_core.cpp)
+constexpr double STIFFNESS_REDUCTION_FACTOR = 0.5;
+constexpr double STIFFNESS_ENGAGEMENT_THRESHOLD = 0.9;
+constexpr double QUATERNION_EPSILON = 1e-6;
+constexpr double MAX_ORIENTATION_ERROR = M_PI * 0.9;  // 90% of π to avoid singularities
+
 bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {
   // Compute pose error for impedance control
@@ -26,18 +32,54 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
     return false;
   }
   
-  // Compute admittance control law: M*a + D*v + K*e = F_ext
-  Vector6d stiffness_force = stiffness_engagement_factor_ * (stiffness_ * pose_error_);
-  desired_accel_ = mass_inverse_ * 
-    (wrench_filtered_ - damping_ * desired_vel_ - stiffness_force);
-  
-  // Check for numerical issues
-  if (desired_accel_.hasNaN()) {
+  // RK4 integration for numerical stability
+  double dt = period.seconds();
+  if (dt <= 0.0 || dt > 0.1) {  // Sanity check on time step
     return false;
   }
   
-  // Integrate acceleration to velocity
-  desired_vel_ += desired_accel_ * period.seconds();
+  // Current state
+  Vector6d v0 = desired_vel_;
+  
+  // k1 = f(t, v0)
+  Vector6d stiffness_force1 = stiffness_engagement_factor_ * (stiffness_ * pose_error_);
+  Vector6d k1 = mass_inverse_ * (wrench_filtered_ - damping_ * v0 - stiffness_force1);
+  
+  if (k1.hasNaN()) {
+    return false;
+  }
+  
+  // k2 = f(t + dt/2, v0 + k1*dt/2)
+  Vector6d v1 = v0 + k1 * (dt / 2.0);
+  Vector6d k2 = mass_inverse_ * (wrench_filtered_ - damping_ * v1 - stiffness_force1);
+  
+  if (k2.hasNaN()) {
+    return false;
+  }
+  
+  // k3 = f(t + dt/2, v0 + k2*dt/2)
+  Vector6d v2 = v0 + k2 * (dt / 2.0);
+  Vector6d k3 = mass_inverse_ * (wrench_filtered_ - damping_ * v2 - stiffness_force1);
+  
+  if (k3.hasNaN()) {
+    return false;
+  }
+  
+  // k4 = f(t + dt, v0 + k3*dt)
+  Vector6d v3 = v0 + k3 * dt;
+  Vector6d k4 = mass_inverse_ * (wrench_filtered_ - damping_ * v3 - stiffness_force1);
+  
+  if (k4.hasNaN()) {
+    return false;
+  }
+  
+  // RK4 integration: v_new = v0 + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
+  desired_vel_ = v0 + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+  
+  // Final NaN check after integration
+  if (desired_vel_.hasNaN()) {
+    return false;
+  }
   
   // Apply axis enables
   for (size_t i = 0; i < 6; ++i) {
@@ -130,8 +172,8 @@ bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& per
        orientation_error_norm > safe_startup_params_.max_orientation_error)) {
     error_within_limits = false;
     
-    // Queue logging for non-RT context instead of direct logging
-    reportRTError(RTErrorType::CONTROL_ERROR);
+    // Use RT-safe logging instead of direct logging
+    rtLogWarn("Pose error exceeds safety limits, reducing stiffness engagement");
     
     // Reduce stiffness immediately
     stiffness_recently_changed_ = true;
@@ -144,7 +186,8 @@ bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& per
     if (stiffness_engagement_factor_ >= 1.0) {
       stiffness_engagement_factor_ = 1.0;
       stiffness_recently_changed_ = false;
-      // Defer logging to non-RT context
+      // Use RT-safe logging
+      rtLogInfo("Stiffness engagement completed");
     }
   }
   
@@ -204,10 +247,10 @@ bool AdmittanceController::handleDriftReset()
   try {
     size_t i = 0;
     for (const auto& index : pos_state_indices_) {
-      if (index >= state_interfaces_.size() || !state_interfaces_[index].get_optional()) {
+      if (index >= state_interfaces_.size()) {
         return false;
       }
-      joint_positions_[i++] = state_interfaces_[index].get_optional().value();
+      joint_positions_[i++] = state_interfaces_[index].get_value();
     }
   } catch (...) {
     // Catch and report any errors without propagating exceptions
@@ -222,109 +265,12 @@ bool AdmittanceController::handleDriftReset()
   return true;
 }
 
-void AdmittanceController::checkParameterUpdates()
-{
-  if (!params_.dynamic_parameters) return;
-  
-  auto new_params = param_listener_->get_params();
-  
-  // Use bit flags for efficient change detection
-  uint8_t changes = 0;
-  constexpr uint8_t MASS_CHANGED = 1;
-  constexpr uint8_t STIFFNESS_CHANGED = 2;
-  constexpr uint8_t DAMPING_CHANGED = 4;
-  
-  // Check for changes using memcmp for arrays
-  if (std::memcmp(params_.admittance.mass.data(), new_params.admittance.mass.data(), 
-                  sizeof(double) * 6) != 0) {
-    changes |= MASS_CHANGED;
-  }
-  if (std::memcmp(params_.admittance.stiffness.data(), new_params.admittance.stiffness.data(), 
-                  sizeof(double) * 6) != 0) {
-    changes |= STIFFNESS_CHANGED;
-  }
-  if (std::memcmp(params_.admittance.damping_ratio.data(), new_params.admittance.damping_ratio.data(), 
-                  sizeof(double) * 6) != 0) {
-    changes |= DAMPING_CHANGED;
-  }
-  
-  if (changes == 0) {
-    params_ = new_params;  // Update non-control parameters
-    return;
-  }
-  
-  // Update parameters
-  params_ = new_params;
-  
-  // Update matrices based on changes
-  if (changes & MASS_CHANGED) {
-    updateMassMatrix();
-  }
-  
-  if (changes & STIFFNESS_CHANGED) {
-    updateStiffnessMatrix();
-    // Trigger gradual engagement
-    stiffness_recently_changed_ = true;
-    stiffness_engagement_factor_ = 0.0;
-    RCLCPP_INFO(get_node()->get_logger(), "Starting gradual stiffness engagement");
-  }
-  
-  if (changes & (STIFFNESS_CHANGED | DAMPING_CHANGED)) {
-    updateDampingMatrix();
-  }
-}
+// Parameter update method moved to realtime_control_core.cpp
+// to maintain proper RT/non-RT separation. This method is no longer needed
+// as the RT-safe checkParameterUpdates() in realtime_control_core.cpp handles
+// parameter updates correctly with proper atomic operations.
 
-void AdmittanceController::updateMassMatrix()
-{
-  for (size_t i = 0; i < 6; ++i) {
-    mass_(i, i) = params_.admittance.mass[i];
-  }
-  mass_inverse_ = mass_.inverse();
-  RCLCPP_INFO(get_node()->get_logger(), "Mass parameters updated");
-}
-
-void AdmittanceController::updateStiffnessMatrix()
-{
-  for (size_t i = 0; i < 6; ++i) {
-    stiffness_(i, i) = params_.admittance.stiffness[i];
-  }
-  RCLCPP_INFO(get_node()->get_logger(), "Stiffness parameters updated");
-}
-
-void AdmittanceController::updateDampingMatrix()
-{
-  // Smooth damping calculation to avoid discontinuity when stiffness changes
-  for (size_t i = 0; i < 6; ++i) {
-    double stiffness_value = params_.admittance.stiffness[i];
-    
-    if (stiffness_value <= 0.0) {
-      // Pure admittance mode - direct damping value
-      // Scale by sqrt(mass) for consistent units [Ns/m or Nms/rad]
-      damping_(i, i) = params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i]);
-    } 
-    else if (stiffness_value >= STIFFNESS_BLEND_THRESHOLD) {
-      // Full impedance mode - critical damping formula
-      damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i] * stiffness_value);
-    }
-    else {
-      // Smooth transition zone - blend between the two formulas
-      double blend_factor = stiffness_value / STIFFNESS_BLEND_THRESHOLD;
-      
-      double admittance_damping = params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i]);
-        
-      double impedance_damping = 2.0 * params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i] * stiffness_value);
-      
-      // Smoothly blend between the two values
-      damping_(i, i) = (1.0 - blend_factor) * admittance_damping + 
-                      blend_factor * impedance_damping;
-    }
-  }
-  RCLCPP_INFO(get_node()->get_logger(), "Damping parameters updated with smooth transitions");
-}
+// Matrix update methods removed - using centralized implementations from realtime_control_core.cpp
 
 bool AdmittanceController::convertToJointSpace(
     const Vector6d& cart_vel, 
@@ -345,10 +291,10 @@ bool AdmittanceController::convertToJointSpace(
   // Read current joint positions - without using exceptions
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     size_t idx = pos_state_indices_[i];
-    if (idx >= state_interfaces_.size() || !state_interfaces_[idx].get_optional()) {
+    if (idx >= state_interfaces_.size()) {
       return false;
     }
-    current_pos_[i] = state_interfaces_[idx].get_optional().value();
+    current_pos_[i] = state_interfaces_[idx].get_value();
     if (std::isnan(current_pos_[i])) {
       return false;
     }
@@ -402,10 +348,8 @@ bool AdmittanceController::applyJointLimits(const rclcpp::Duration& period)
     }
     
     // Apply position limits (hard constraint)
-    joint_positions_[i] = std::clamp(
-      joint_positions_[i], 
-      joint_limits_[i].min_position, 
-      joint_limits_[i].max_position);
+    joint_positions_[i] = std::max(joint_limits_[i].min_position, 
+                          std::min(joint_positions_[i], joint_limits_[i].max_position));
     
     // Check for NaN values after operations
     if (std::isnan(joint_positions_[i])) {

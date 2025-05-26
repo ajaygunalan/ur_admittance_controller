@@ -122,6 +122,9 @@ ur_admittance_controller:
       - position
       - velocity
 
+    command_interfaces:
+      - position
+
     ft_sensor_name: "wrist_ft_sensor"  # Updated to match URDF
 
     # Add namespace for better organization
@@ -145,10 +148,9 @@ ur_admittance_controller:
     tip_link: "tool0"
     ft_frame: "tool0"
 
-    joint_limits:
-      position_min: [-6.283, -6.283, -3.142, -6.283, -6.283, -6.283]
-      position_max: [6.283, 6.283, 3.142, 6.283, 6.283, 6.283]
-      velocity_max: [3.14, 3.14, 3.14, 6.28, 6.28, 6.28]
+    joint_limits_position_min: [-6.283, -6.283, -3.142, -6.283, -6.283, -6.283]
+    joint_limits_position_max: [6.283, 6.283, 3.142, 6.283, 6.283, 6.283]
+    joint_limits_velocity_max: [3.14, 3.14, 3.14, 6.28, 6.28, 6.28]
 
     kinematics_plugin_package: "ur_kinematics"
     kinematics_plugin_name: "ur_kinematics/URKinematicsPlugin"

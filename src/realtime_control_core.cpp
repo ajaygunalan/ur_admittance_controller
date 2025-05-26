@@ -111,18 +111,42 @@ void AdmittanceController::prepareParameterUpdate()
   // Get latest parameters from the parameter server
   auto new_params = param_listener_->get_params();
   
-  // Check for changes using memcmp for arrays
-  bool mass_changed = std::memcmp(params_.admittance.mass.data(), 
-                                 new_params.admittance.mass.data(), 
-                                 sizeof(double) * 6) != 0;
-                                 
-  bool stiffness_changed = std::memcmp(params_.admittance.stiffness.data(), 
-                                      new_params.admittance.stiffness.data(), 
-                                      sizeof(double) * 6) != 0;
-                                      
-  bool damping_changed = std::memcmp(params_.admittance.damping_ratio.data(), 
-                                    new_params.admittance.damping_ratio.data(), 
-                                    sizeof(double) * 6) != 0;
+  // Validate parameters before using them
+  if (!validateParameters(new_params)) {
+    RCLCPP_ERROR(get_node()->get_logger(), 
+      "Parameter validation failed - keeping previous parameters");
+    parameter_update_needed_.store(false);
+    return;
+  }
+  
+  // Proper floating-point comparison with epsilon tolerance
+  constexpr double EPSILON = 1e-12;
+  
+  // Check for changes using proper floating-point comparison
+  bool mass_changed = false;
+  bool stiffness_changed = false;
+  bool damping_changed = false;
+  
+  for (size_t i = 0; i < 6; ++i) {
+    if (std::abs(params_.admittance.mass[i] - new_params.admittance.mass[i]) > EPSILON) {
+      mass_changed = true;
+      break;
+    }
+  }
+  
+  for (size_t i = 0; i < 6; ++i) {
+    if (std::abs(params_.admittance.stiffness[i] - new_params.admittance.stiffness[i]) > EPSILON) {
+      stiffness_changed = true;
+      break;
+    }
+  }
+  
+  for (size_t i = 0; i < 6; ++i) {
+    if (std::abs(params_.admittance.damping_ratio[i] - new_params.admittance.damping_ratio[i]) > EPSILON) {
+      damping_changed = true;
+      break;
+    }
+  }
   
   // If no changes, just write the params to buffer and return
   if (!mass_changed && !stiffness_changed && !damping_changed) {
@@ -159,10 +183,33 @@ void AdmittanceController::updateMassMatrix(const ur_admittance_controller::Para
   for (size_t i = 0; i < 6; ++i) {
     mass_(i, i) = params.admittance.mass[i];
   }
-  mass_inverse_ = mass_.inverse();
   
-  if (log_changes) {
-    RCLCPP_INFO(get_node()->get_logger(), "Mass parameters updated");
+  // Numerically stable matrix inversion with condition number checking
+  constexpr double MAX_CONDITION_NUMBER = 1e12;
+  constexpr double REGULARIZATION_FACTOR = 1e-8;
+  
+  // For diagonal matrices, condition number is max/min eigenvalue ratio
+  double max_mass = mass_.diagonal().maxCoeff();
+  double min_mass = mass_.diagonal().minCoeff();
+  double condition_number = max_mass / min_mass;
+  
+  if (condition_number > MAX_CONDITION_NUMBER || min_mass <= 0.0) {
+    // Apply regularization to improve numerical stability
+    Matrix6d regularized_mass = mass_ + Matrix6d::Identity() * REGULARIZATION_FACTOR;
+    mass_inverse_ = regularized_mass.inverse();
+    
+    if (log_changes) {
+      RCLCPP_WARN(get_node()->get_logger(), 
+        "Mass matrix regularized (condition number: %.2e, min mass: %.6f)", 
+        condition_number, min_mass);
+    }
+  } else {
+    mass_inverse_ = mass_.inverse();
+    
+    if (log_changes) {
+      RCLCPP_INFO(get_node()->get_logger(), 
+        "Mass parameters updated (condition number: %.2e)", condition_number);
+    }
   }
 }
 
@@ -195,30 +242,33 @@ void AdmittanceController::updateStiffnessMatrix()
  // Update damping matrix - can be called from non-RT context only
 void AdmittanceController::updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes)
 {
-  // Smooth damping calculation to avoid discontinuity when stiffness changes
+  // Mathematically correct damping calculation
+  constexpr double VIRTUAL_STIFFNESS = 10.0;  // N/m or Nm/rad for pure admittance mode
+  
   for (size_t i = 0; i < 6; ++i) {
     double stiffness_value = params.admittance.stiffness[i];
+    double mass_value = params.admittance.mass[i];
+    double damping_ratio = params.admittance.damping_ratio[i];
     
     if (stiffness_value <= 0.0) {
-      // Pure admittance mode - direct damping value
-      // Scale by sqrt(mass) for consistent units [Ns/m or Nms/rad]
-      damping_(i, i) = params.admittance.damping_ratio[i] * 
-        std::sqrt(params.admittance.mass[i]);
+      // Pure admittance mode - use virtual stiffness for dimensional correctness
+      // D = 2ζ√(M·K_virtual) ensures proper units [Ns/m or Nms/rad]
+      damping_(i, i) = 2.0 * damping_ratio * std::sqrt(mass_value * VIRTUAL_STIFFNESS);
     } 
     else if (stiffness_value >= STIFFNESS_BLEND_THRESHOLD) {
-      // Full impedance mode - critical damping formula
-      damping_(i, i) = 2.0 * params.admittance.damping_ratio[i] * 
-        std::sqrt(params.admittance.mass[i] * stiffness_value);
+      // Full impedance mode - standard critical damping formula
+      // D = 2ζ√(M·K) for impedance control
+      damping_(i, i) = 2.0 * damping_ratio * std::sqrt(mass_value * stiffness_value);
     }
     else {
-      // Smooth transition zone - blend between the two formulas
+      // Smooth transition zone - blend between virtual and actual stiffness
       double blend_factor = stiffness_value / STIFFNESS_BLEND_THRESHOLD;
       
-      double admittance_damping = params.admittance.damping_ratio[i] * 
-        std::sqrt(params.admittance.mass[i]);
+      double admittance_damping = 2.0 * damping_ratio * 
+        std::sqrt(mass_value * VIRTUAL_STIFFNESS);
         
-      double impedance_damping = 2.0 * params.admittance.damping_ratio[i] * 
-        std::sqrt(params.admittance.mass[i] * stiffness_value);
+      double impedance_damping = 2.0 * damping_ratio * 
+        std::sqrt(mass_value * stiffness_value);
       
       // Smoothly blend between the two values
       damping_(i, i) = (1.0 - blend_factor) * admittance_damping + 
@@ -227,7 +277,8 @@ void AdmittanceController::updateDampingMatrix(const ur_admittance_controller::P
   }
   
   if (log_changes) {
-    RCLCPP_INFO(get_node()->get_logger(), "Damping parameters updated with smooth transitions");
+    RCLCPP_INFO(get_node()->get_logger(), 
+      "Damping parameters updated with mathematically correct formulas");
   }
 }
 
@@ -238,23 +289,23 @@ void AdmittanceController::updateDampingMatrix()
   updateDampingMatrix(params_, false);
 }
 
- bool AdmittanceController::updateSensorData()
- {
-   // Implementation moved to sensor_processing.cpp
-   return false;
- }
+ // Function implementation moved to sensor_processing.cpp
+ // This stub is removed - the actual implementation is in sensor_processing.cpp
  
 void AdmittanceController::processNonRTErrors()
 {
-  // 1. Update transform caches in non-RT context if needed
+  // 1. Process RT logs first
+  processRTLogs();
+  
+  // 2. Update transform caches in non-RT context if needed
   // This is safe to do here since this is explicitly outside the RT control path
   updateTransformCaches();
   
-  // 2. Update parameters in non-RT context if needed
+  // 3. Update parameters in non-RT context if needed
   // This handles all parameter updates and logging in non-RT context
   prepareParameterUpdate();
   
-  // 2. Process any real-time errors in a non-real-time context
+  // 4. Process any real-time errors in a non-real-time context
   RTErrorType error = last_rt_error_.exchange(RTErrorType::NONE);
   
   if (error != RTErrorType::NONE && rclcpp::ok()) {
@@ -312,7 +363,7 @@ void AdmittanceController::processNonRTErrors()
      
      // Maintain current positions
      for (size_t i = 0; i < params_.joints.size(); ++i) {
-       joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
+       joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_value();
      }
      
      return controller_interface::return_type::OK;
@@ -324,10 +375,9 @@ void AdmittanceController::processNonRTErrors()
    }
  }
  
- // Function moved to sensor_processing.cpp
-void AdmittanceController::publishCartesianVelocity()
-{
-  // Implementation moved to sensor_processing.cpp
-}
+ // Function implementation moved to sensor_processing.cpp
+ // This stub is removed - the actual implementation is in sensor_processing.cpp
+
+// Parameter validation methods are implemented in parameter_validation.cpp
 
  } // namespace ur_admittance_controller

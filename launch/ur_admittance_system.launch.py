@@ -75,7 +75,7 @@ def generate_launch_description():
         actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([
-                    PathJoinSubstitution([ur_admittance_pkg, "launch", "admittance_controller.launch.py"])
+                    PathJoinSubstitution([ur_admittance_pkg, "launch", "admittance_control.launch.py"])
                 ]),
                 launch_arguments={
                     "use_sim": use_sim,

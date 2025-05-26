@@ -55,6 +55,8 @@ add_library(${PROJECT_NAME} SHARED
   src/communication_interface.cpp  # External communication handlers
   src/controller_setup.cpp  # Lifecycle management and configuration
   src/realtime_control_core.cpp  # Real-time control algorithms
+  src/parameter_validation.cpp  # Parameter validation methods
+  src/rt_logging.cpp  # Real-time safe logging implementation
 )
 
 # Set include directories
