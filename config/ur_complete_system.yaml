@@ -146,7 +146,10 @@ ur_admittance_controller:
     world_frame: "world"
     base_link: "base_link"
     tip_link: "tool0"
-    ft_frame: "tool0"
+    
+    # F/T sensor frame configuration
+    # The F/T sensor outputs forces at the TCP with respect to the base_link frame
+    ft_frame: "base_link"
 
     joint_limits_position_min: [-6.283, -6.283, -3.142, -6.283, -6.283, -6.283]
     joint_limits_position_max: [6.283, 6.283, 3.142, 6.283, 6.283, 6.283]

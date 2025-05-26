@@ -259,8 +259,9 @@ private:
   TransformCache ft_transform_cache_{};
   TransformCache ee_transform_cache_{};
   
-  // Non-RT transform update method (called from update loop outside RT context)
+  // Non-RT transform update methods (called from update loop outside RT context)
   void updateTransformCaches();
+  void updateEETransformOnly();  // Helper method for when F/T transform not needed
   std::atomic<bool> transform_update_needed_{false};
 
   // Helper methods

@@ -40,12 +40,13 @@ bool AdmittanceController::updateSensorData()
     return checkDeadband();
   }
   
-  // Apply correct transform to wrench - real-time safe since adjoint is cached
-  if (ft_transform_cache_.isValid()) {
+  // Apply transform only if F/T frame differs from control frame
+  // If sensor already outputs in base_link frame, no transformation needed
+  if (params_.ft_frame != params_.base_link && ft_transform_cache_.isValid()) {
     const auto& transform_data = ft_transform_cache_.getTransform();
     wrench_ = transform_data.adjoint * raw_wrench;
   } else {
-    // No valid transform, use untransformed wrench
+    // Sensor outputs in base_link frame OR no valid transform - use raw data
     wrench_ = raw_wrench;
   }
   
@@ -66,6 +67,16 @@ bool AdmittanceController::updateTransforms()
 {
   // REAL-TIME SAFE: Only check atomic flag, never do lookups
   // This is called from the real-time thread and must be deterministic
+  
+  // If F/T sensor frame same as control frame, no transform needed
+  if (params_.ft_frame == params_.base_link) {
+    // Update current pose from EE transform only
+    if (ee_transform_cache_.isValid()) {
+      const auto& ee_data = ee_transform_cache_.getTransform();
+      current_pose_ = tf2::transformToEigen(ee_data.transform);
+    }
+    return true; // No F/T transform needed
+  }
   
   // Mark that we need a transform update (will be handled in non-RT context)
   auto now = get_node()->get_clock()->now();
@@ -101,6 +112,17 @@ void AdmittanceController::updateTransformCaches()
     return; // No update needed
   }
   
+  // If F/T sensor frame same as control frame, skip F/T transform
+  if (params_.ft_frame == params_.base_link) {
+    RCLCPP_INFO_ONCE(get_node()->get_logger(), 
+      "F/T sensor frame (%s) same as control frame (%s) - no F/T transform needed",
+      params_.ft_frame.c_str(), params_.base_link.c_str());
+    
+    // Still update EE transform for pose tracking
+    updateEETransformOnly();
+    return;
+  }
+
   auto now = get_node()->get_clock()->now();
   bool updated = false;
   
@@ -164,6 +186,37 @@ void AdmittanceController::updateTransformCaches()
   }
   
   transform_update_needed_.store(!updated);
+}
+
+void AdmittanceController::updateEETransformOnly()
+{
+  // Helper method to update only EE transform when F/T transform not needed
+  try {
+    auto now = get_node()->get_clock()->now();
+    
+    // Setup EE transform names if not already done
+    if (ee_transform_cache_.target_frame.empty()) {
+      ee_transform_cache_.target_frame = params_.base_link;
+      ee_transform_cache_.source_frame = params_.tip_link;
+    }
+    
+    // Get EE transform only
+    auto ee_transform = tf_buffer_->lookupTransform(
+      ee_transform_cache_.target_frame, 
+      ee_transform_cache_.source_frame,
+      tf2_ros::fromMsg(now), tf2::durationFromSec(0.1));
+    
+    // EE transform doesn't need adjoint for force transformation
+    Matrix6d identity_adjoint = Matrix6d::Identity();
+    ee_transform_cache_.updateTransform(ee_transform, identity_adjoint, now);
+    
+    transform_update_needed_.store(false);
+    
+  } catch (const tf2::TransformException& ex) {
+    RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 5000,
+      "EE transform lookup failed: %s", ex.what());
+    transform_update_needed_.store(true);
+  }
 }
 
 // This method has been replaced by the non-RT updateTransformCaches() method

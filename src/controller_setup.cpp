@@ -473,14 +473,19 @@ bool AdmittanceController::waitForTransforms()
   std::string error;
   auto now = get_node()->get_clock()->now();
   
-  // First check if transforms are available
+  // Always check world->base and base->tip transforms
   bool transforms_available = 
     tf_buffer_->canTransform(params_.world_frame, params_.base_link, 
                             rclcpp::Time(0), timeout, &error) &&
     tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
-                            rclcpp::Time(0), timeout, &error) &&
-    tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
                             rclcpp::Time(0), timeout, &error);
+  
+  // Only check F/T transform if sensor frame differs from control frame
+  if (params_.ft_frame != params_.base_link) {
+    transforms_available = transforms_available && 
+      tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
+                              rclcpp::Time(0), timeout, &error);
+  }
   
   if (!transforms_available) {
     RCLCPP_ERROR(get_node()->get_logger(), "Required transforms not available: %s", error.c_str());
@@ -506,8 +511,15 @@ bool AdmittanceController::waitForTransforms()
     updateTransformCaches();
     
     // Verify the transforms were cached properly
-    if (!ft_transform_cache_.isValid() || !ee_transform_cache_.isValid()) {
-      RCLCPP_ERROR(get_node()->get_logger(), "Failed to initialize transform caches");
+    // For Scenario B (ft_frame == base_link), F/T transform cache might not be valid
+    bool ee_valid = ee_transform_cache_.isValid();
+    bool ft_valid = (params_.ft_frame == params_.base_link) || ft_transform_cache_.isValid();
+    
+    if (!ee_valid || !ft_valid) {
+      RCLCPP_ERROR(get_node()->get_logger(), 
+        "Failed to initialize transform caches - EE: %s, F/T: %s", 
+        ee_valid ? "OK" : "FAILED", 
+        ft_valid ? "OK" : "FAILED");
       return false;
     }
     
