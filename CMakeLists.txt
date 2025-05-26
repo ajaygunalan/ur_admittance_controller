@@ -121,7 +121,7 @@ install(
 
 # Install other resources
 install(
-  DIRECTORY config launch urdf scripts
+  DIRECTORY config launch scripts
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -130,6 +130,8 @@ install(
   PROGRAMS 
     scripts/system_status.py
     scripts/test_safe_startup.py
+    scripts/debug_ft_sensor.py
+    scripts/test_ft_sensor_complete.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

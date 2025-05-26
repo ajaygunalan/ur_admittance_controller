@@ -313,7 +313,9 @@ void AdmittanceController::processNonRTErrors()
      const size_t joint_idx = cmd_interface_to_joint_index_[i];
      
      // Write the joint position reference to the downstream controller interface
-     command_interfaces_[i].set_value(joint_position_references_[joint_idx]);
+     if (!command_interfaces_[i].set_value(joint_position_references_[joint_idx])) {
+       reportRTError(RTErrorType::CONTROL_ERROR);
+     }
    }
  }
  
@@ -331,7 +333,7 @@ void AdmittanceController::processNonRTErrors()
      
      // Maintain current positions
      for (size_t i = 0; i < params_.joints.size(); ++i) {
-       joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_value();
+       joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
      }
      
      return controller_interface::return_type::OK;

@@ -6,7 +6,7 @@
 
 ```bash
 mkdir -p ~/ur_ws/src && cd ~/ur_ws/src
-git clone https://github.com/UniversalRobots/Universal_Robots_ROS2_GZ_Simulation.git
+git clone https://github.com/ajaygunalan/ur_simulation_gz.git
 git clone https://github.com/ajaygunalan/ur_admittance_controller.git
 
 cd ~/ur_ws && rosdep install --from-paths src --ignore-src -r -y
@@ -16,11 +16,12 @@ colcon build && source install/setup.bash
 ## 🎮 Quick Start - Simulation
 
 
-# Terminal 1: Gazebo with UR5e + F/T sensor to start all [this](docs/GZ_SIMULATION_SETUP.md
-)
+# Terminal 1: Gazebo with UR5e + F/T sensor 
 ```
 ros2 launch ur_simulation_gz ur_sim_control.launch.py
 ```
+
+[see docs/GZ_SIMULATION_SETUP.md](docs/GZ_SIMULATION_SETUP.md)
 
 # Terminal 2: Launch admittance controller
 ros2 launch ur_admittance_controller ur_admittance_system.launch.py
