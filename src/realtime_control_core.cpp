@@ -7,17 +7,14 @@
  */
 
  #include "admittance_controller.hpp"
+ #include "admittance_constants.hpp"
+ #include "matrix_utilities.hpp"
  #include <cstring>  // for memcmp
  
  namespace ur_admittance_controller {
  
- // Constants for improved readability and maintainability
- constexpr double STIFFNESS_REDUCTION_FACTOR = 0.5;
- constexpr double STIFFNESS_ENGAGEMENT_THRESHOLD = 0.9;
- constexpr double CACHE_VALIDITY_WARNING_TIME = 0.5;  // seconds
- constexpr double STIFFNESS_BLEND_THRESHOLD = 1.0;   // N/m or Nm/rad for smooth transition
- constexpr double QUATERNION_EPSILON = 1e-6;
- constexpr double MAX_ORIENTATION_ERROR = M_PI * 0.9;  // 90% of π to avoid singularities
+ // Use centralized constants
+ using namespace constants;
  
  controller_interface::return_type AdmittanceController::update_reference_from_subscribers(
      const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
@@ -120,29 +117,27 @@ void AdmittanceController::prepareParameterUpdate()
   }
   
   // Proper floating-point comparison with epsilon tolerance
-  constexpr double EPSILON = 1e-12;
-  
   // Check for changes using proper floating-point comparison
   bool mass_changed = false;
   bool stiffness_changed = false;
   bool damping_changed = false;
   
   for (size_t i = 0; i < 6; ++i) {
-    if (std::abs(params_.admittance.mass[i] - new_params.admittance.mass[i]) > EPSILON) {
+    if (!utils::areEqual(params_.admittance.mass[i], new_params.admittance.mass[i])) {
       mass_changed = true;
       break;
     }
   }
   
   for (size_t i = 0; i < 6; ++i) {
-    if (std::abs(params_.admittance.stiffness[i] - new_params.admittance.stiffness[i]) > EPSILON) {
+    if (!utils::areEqual(params_.admittance.stiffness[i], new_params.admittance.stiffness[i])) {
       stiffness_changed = true;
       break;
     }
   }
   
   for (size_t i = 0; i < 6; ++i) {
-    if (std::abs(params_.admittance.damping_ratio[i] - new_params.admittance.damping_ratio[i]) > EPSILON) {
+    if (!utils::areEqual(params_.admittance.damping_ratio[i], new_params.admittance.damping_ratio[i])) {
       damping_changed = true;
       break;
     }
@@ -180,33 +175,27 @@ void AdmittanceController::prepareParameterUpdate()
 // Update mass matrix - can be called from non-RT context only
 void AdmittanceController::updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes)
 {
+  // Convert parameter vector to array for utility function
+  std::array<double, 6> mass_array;
   for (size_t i = 0; i < 6; ++i) {
-    mass_(i, i) = params.admittance.mass[i];
+    mass_array[i] = params.admittance.mass[i];
+    mass_(i, i) = mass_array[i];
   }
   
-  // Numerically stable matrix inversion with condition number checking
-  constexpr double MAX_CONDITION_NUMBER = 1e12;
-  constexpr double REGULARIZATION_FACTOR = 1e-8;
+  // Use centralized mass inverse computation with stability checks
+  mass_inverse_ = utils::computeMassInverse(mass_array);
   
-  // For diagonal matrices, condition number is max/min eigenvalue ratio
-  double max_mass = mass_.diagonal().maxCoeff();
-  double min_mass = mass_.diagonal().minCoeff();
-  double condition_number = max_mass / min_mass;
-  
-  if (condition_number > MAX_CONDITION_NUMBER || min_mass <= 0.0) {
-    // Apply regularization to improve numerical stability
-    Matrix6d regularized_mass = mass_ + Matrix6d::Identity() * REGULARIZATION_FACTOR;
-    mass_inverse_ = regularized_mass.inverse();
+  if (log_changes) {
+    // Check condition number for logging
+    double max_mass = mass_.diagonal().maxCoeff();
+    double min_mass = mass_.diagonal().minCoeff();
+    double condition_number = max_mass / min_mass;
     
-    if (log_changes) {
+    if (condition_number > MAX_CONDITION_NUMBER || min_mass <= 0.0) {
       RCLCPP_WARN(get_node()->get_logger(), 
         "Mass matrix regularized (condition number: %.2e, min mass: %.6f)", 
         condition_number, min_mass);
-    }
-  } else {
-    mass_inverse_ = mass_.inverse();
-    
-    if (log_changes) {
+    } else {
       RCLCPP_INFO(get_node()->get_logger(), 
         "Mass parameters updated (condition number: %.2e)", condition_number);
     }
@@ -242,39 +231,17 @@ void AdmittanceController::updateStiffnessMatrix()
  // Update damping matrix - can be called from non-RT context only
 void AdmittanceController::updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes)
 {
-  // Mathematically correct damping calculation
-  constexpr double VIRTUAL_STIFFNESS = 10.0;  // N/m or Nm/rad for pure admittance mode
+  // Convert parameter vectors to arrays for utility function
+  std::array<double, 6> mass_array, stiffness_array, damping_ratio_array;
   
   for (size_t i = 0; i < 6; ++i) {
-    double stiffness_value = params.admittance.stiffness[i];
-    double mass_value = params.admittance.mass[i];
-    double damping_ratio = params.admittance.damping_ratio[i];
-    
-    if (stiffness_value <= 0.0) {
-      // Pure admittance mode - use virtual stiffness for dimensional correctness
-      // D = 2ζ√(M·K_virtual) ensures proper units [Ns/m or Nms/rad]
-      damping_(i, i) = 2.0 * damping_ratio * std::sqrt(mass_value * VIRTUAL_STIFFNESS);
-    } 
-    else if (stiffness_value >= STIFFNESS_BLEND_THRESHOLD) {
-      // Full impedance mode - standard critical damping formula
-      // D = 2ζ√(M·K) for impedance control
-      damping_(i, i) = 2.0 * damping_ratio * std::sqrt(mass_value * stiffness_value);
-    }
-    else {
-      // Smooth transition zone - blend between virtual and actual stiffness
-      double blend_factor = stiffness_value / STIFFNESS_BLEND_THRESHOLD;
-      
-      double admittance_damping = 2.0 * damping_ratio * 
-        std::sqrt(mass_value * VIRTUAL_STIFFNESS);
-        
-      double impedance_damping = 2.0 * damping_ratio * 
-        std::sqrt(mass_value * stiffness_value);
-      
-      // Smoothly blend between the two values
-      damping_(i, i) = (1.0 - blend_factor) * admittance_damping + 
-                      blend_factor * impedance_damping;
-    }
+    mass_array[i] = params.admittance.mass[i];
+    stiffness_array[i] = params.admittance.stiffness[i]; 
+    damping_ratio_array[i] = params.admittance.damping_ratio[i];
   }
+  
+  // Use centralized damping computation
+  damping_ = utils::computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
   
   if (log_changes) {
     RCLCPP_INFO(get_node()->get_logger(), 

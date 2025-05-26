@@ -7,17 +7,15 @@
  */
 
 #include "admittance_controller.hpp"
+#include "admittance_constants.hpp"
 #include <memory>
 #include <algorithm>
 #include <cmath>
 
 namespace ur_admittance_controller {
 
-// Constants used in this file (should match realtime_control_core.cpp)
-constexpr double STIFFNESS_REDUCTION_FACTOR = 0.5;
-constexpr double STIFFNESS_ENGAGEMENT_THRESHOLD = 0.9;
-constexpr double QUATERNION_EPSILON = 1e-6;
-constexpr double MAX_ORIENTATION_ERROR = M_PI * 0.9;  // 90% of π to avoid singularities
+// Use centralized constants
+using namespace constants;
 
 bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {

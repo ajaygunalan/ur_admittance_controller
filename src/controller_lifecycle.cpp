@@ -7,12 +7,17 @@
  */
 
 #include "admittance_controller.hpp"
+#include "admittance_constants.hpp"
+#include "matrix_utilities.hpp"
 
 // Additional includes needed for setup
 #include <algorithm>
 #include <rclcpp/callback_group.hpp>
 
 namespace ur_admittance_controller {
+
+// Use centralized constants
+using namespace constants;
 
 AdmittanceController::AdmittanceController()
 : controller_interface::ChainableControllerInterface(),
@@ -145,39 +150,18 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   for (size_t i = 0; i < 6; ++i) {
     mass_(i, i) = params_.admittance.mass[i];
     stiffness_(i, i) = params_.admittance.stiffness[i];
-    
-    // Smooth damping calculation to avoid discontinuity when stiffness changes
-    // from zero to non-zero values
-    const double stiffness_threshold = 1.0; // N/m or Nm/rad threshold for blending
-    double stiffness_value = params_.admittance.stiffness[i];
-    
-    if (stiffness_value <= 0.0) {
-      // Pure admittance mode - direct damping value in Ns/m or Nms/rad
-      // Base damping scaled by mass for consistent units
-      damping_(i, i) = params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i]); // Consistent units Ns/m or Nms/rad
-    } 
-    else if (stiffness_value >= stiffness_threshold) {
-      // Full impedance mode - critical damping formula
-      damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i] * stiffness_value);
-    }
-    else {
-      // Smooth transition zone - blend between the two formulas
-      double blend_factor = stiffness_value / stiffness_threshold; // 0.0 to 1.0
-      
-      // Calculate both damping values
-      double admittance_damping = params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i]);
-        
-      double impedance_damping = 2.0 * params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i] * stiffness_value);
-      
-      // Smoothly blend between the two values
-      damping_(i, i) = (1.0 - blend_factor) * admittance_damping + 
-                       blend_factor * impedance_damping;
-    }
   }
+  
+  // Convert parameter vectors to arrays for utility function
+  std::array<double, 6> mass_array, stiffness_array, damping_ratio_array;
+  for (size_t i = 0; i < 6; ++i) {
+    mass_array[i] = params_.admittance.mass[i];
+    stiffness_array[i] = params_.admittance.stiffness[i]; 
+    damping_ratio_array[i] = params_.admittance.damping_ratio[i];
+  }
+  
+  // Use centralized damping matrix computation
+  damping_ = utils::computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
   
   // Load real joint limits from URDF
   if (!loadJointLimitsFromURDF(get_node(), params_.joints, joint_limits_)) {

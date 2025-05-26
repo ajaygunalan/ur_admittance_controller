@@ -7,10 +7,14 @@
  */
 
 #include "admittance_controller.hpp"
+#include "admittance_constants.hpp"
 #include <cmath>
 #include <string>
 
 namespace ur_admittance_controller {
+
+// Use centralized constants
+using namespace constants;
 
 bool AdmittanceController::validateParameters(const ur_admittance_controller::Params& params) const
 {
@@ -71,11 +75,6 @@ bool AdmittanceController::validateParameters(const ur_admittance_controller::Pa
 
 bool AdmittanceController::validateMassParameters(const std::array<double, 6>& mass) const
 {
-  constexpr double MIN_MASS_TRANSLATIONAL = 0.1;    // kg
-  constexpr double MAX_MASS_TRANSLATIONAL = 100.0;  // kg
-  constexpr double MIN_MASS_ROTATIONAL = 0.01;      // kg⋅m²
-  constexpr double MAX_MASS_ROTATIONAL = 10.0;      // kg⋅m²
-  
   bool valid = true;
   
   // Check translational masses (X, Y, Z)
@@ -119,9 +118,6 @@ bool AdmittanceController::validateMassParameters(const std::array<double, 6>& m
 
 bool AdmittanceController::validateStiffnessParameters(const std::array<double, 6>& stiffness) const
 {
-  constexpr double MAX_STIFFNESS_TRANSLATIONAL = 2000.0;  // N/m
-  constexpr double MAX_STIFFNESS_ROTATIONAL = 200.0;     // Nm/rad
-  
   bool valid = true;
   
   // Check translational stiffness (X, Y, Z)
@@ -163,9 +159,6 @@ bool AdmittanceController::validateStiffnessParameters(const std::array<double, 
 
 bool AdmittanceController::validateDampingParameters(const std::array<double, 6>& damping_ratio) const
 {
-  constexpr double MIN_DAMPING_RATIO = 0.1;   // Minimum for stability
-  constexpr double MAX_DAMPING_RATIO = 10.0;  // Maximum reasonable value
-  
   bool valid = true;
   
   for (size_t i = 0; i < 6; ++i) {
@@ -193,11 +186,6 @@ bool AdmittanceController::validateDampingParameters(const std::array<double, 6>
 
 bool AdmittanceController::validateVelocityLimits(double max_linear, double max_angular) const
 {
-  constexpr double MIN_LINEAR_VEL = 0.001;   // m/s
-  constexpr double MAX_LINEAR_VEL = 2.0;     // m/s
-  constexpr double MIN_ANGULAR_VEL = 0.001;  // rad/s
-  constexpr double MAX_ANGULAR_VEL = 3.14;   // rad/s
-  
   bool valid = true;
   
   if (std::isnan(max_linear) || std::isinf(max_linear) || 

@@ -1,3 +1,18 @@
+# Complete UR Admittance Controller Configuration
+# This is the ONLY config file you need - everything is here!
+
+# System-wide controller manager (optional - uncomment if running full system)
+# controller_manager:
+#   ros__parameters:
+#     update_rate: 1000  # Hz
+#     ur_admittance_controller:
+#       type: ur_admittance_controller/URAdmittanceController
+#     joint_state_broadcaster:
+#       type: joint_state_broadcaster/JointStateBroadcaster
+#     ft_sensor_broadcaster:
+#       type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+
+# Main controller configuration
 ur_admittance_controller:
   joints:
     type: string_array
@@ -193,3 +208,33 @@ ur_admittance_controller:
     type: string
     default_value: "ur_kinematics/URKinematicsPlugin"
     description: "Name of the kinematics plugin to use"
+
+# ==============================================================================
+# EXAMPLE CONFIGURATIONS - Copy these values to override defaults above
+# ==============================================================================
+
+# PRESET 1: Pure Admittance (Default) - No position return, pure force control
+# admittance:
+#   stiffness: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+#   mass: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
+#   damping_ratio: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
+
+# PRESET 2: Soft Impedance - Gentle position return
+# admittance:
+#   stiffness: [50.0, 50.0, 50.0, 5.0, 5.0, 5.0]
+#   mass: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
+#   damping_ratio: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
+
+# PRESET 3: Stiff Z-axis - Compliant X/Y, rigid vertical (assembly tasks)
+# admittance:
+#   stiffness: [0.0, 0.0, 200.0, 0.0, 0.0, 0.0]
+#   mass: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
+#   damping_ratio: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
+
+# PRESET 4: Conservative Startup - Safe parameters for initial testing
+# max_linear_velocity: 0.3      # m/s (reduced from default 0.5)
+# max_angular_velocity: 0.8     # rad/s (reduced from default 1.0)
+# admittance:
+#   mass: [12.0, 12.0, 12.0, 1.2, 1.2, 1.2]  # Higher mass for stability
+#   damping_ratio: [1.2, 1.2, 1.2, 1.2, 1.2, 1.2]  # Higher damping
+#   min_motion_threshold: 3.0  # More intentional force required
