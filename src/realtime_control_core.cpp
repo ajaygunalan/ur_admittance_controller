@@ -332,7 +332,7 @@ void AdmittanceController::processNonRTErrors()
  {
    try {
      // Zero all velocities
-     cart_twist_.setZero();
+     V_base_tip_base_.setZero();
      desired_vel_.setZero();
      
      // Maintain current positions

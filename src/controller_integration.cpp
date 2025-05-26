@@ -23,12 +23,10 @@ bool AdmittanceController::waitForTransforms()
     tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
                             rclcpp::Time(0), timeout, &error);
   
-  // Only check F/T transform if sensor frame differs from control frame
-  if (params_.ft_frame != params_.base_link) {
-    transforms_available = transforms_available && 
-      tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
-                              rclcpp::Time(0), timeout, &error);
-  }
+  // Always check F/T transform, regardless of frame configuration
+  transforms_available = transforms_available && 
+    tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
+                            rclcpp::Time(0), timeout, &error);
   
   if (!transforms_available) {
     RCLCPP_ERROR(get_node()->get_logger(), "Required transforms not available: %s", error.c_str());
@@ -36,15 +34,15 @@ bool AdmittanceController::waitForTransforms()
   }
   
   // Initialize transform cache frame names and reset the cache
-  ft_transform_cache_.reset();
-  ee_transform_cache_.reset();
+  transform_base_ft_.reset();
+  transform_base_tip_.reset();
   
   // Set frame names for later lookups
-  ft_transform_cache_.target_frame = params_.base_link;
-  ft_transform_cache_.source_frame = params_.ft_frame;
+  transform_base_ft_.target_frame = params_.base_link;
+  transform_base_ft_.source_frame = params_.ft_frame;
   
-  ee_transform_cache_.target_frame = params_.base_link;
-  ee_transform_cache_.source_frame = params_.tip_link;
+  transform_base_tip_.target_frame = params_.base_link;
+  transform_base_tip_.source_frame = params_.tip_link;
   
   // Explicitly request the first transform update
   transform_update_needed_.store(true);
@@ -55,8 +53,8 @@ bool AdmittanceController::waitForTransforms()
     
     // Verify the transforms were cached properly
     // For Scenario B (ft_frame == base_link), F/T transform cache might not be valid
-    bool ee_valid = ee_transform_cache_.isValid();
-    bool ft_valid = (params_.ft_frame == params_.base_link) || ft_transform_cache_.isValid();
+    bool ee_valid = transform_base_tip_.isValid();
+    bool ft_valid = (params_.ft_frame == params_.base_link) || transform_base_ft_.isValid();
     
     if (!ee_valid || !ft_valid) {
       RCLCPP_ERROR(get_node()->get_logger(), 

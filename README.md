@@ -161,3 +161,7 @@ ros2 param set /ur_admittance_controller admittance.mass [15,15,15,1.5,1.5,1.5]
 - **Real-time Safe**: Pre-allocated memory, cached indices, lock-free publishing
 
 See [Architecture Document](ur_admittance_architecture.md) for implementation details.
+
+
+
+The UR5e has a built-in force/torque sensor that measures forces and torques at the tool flange (where the end-effector attaches), and the get_tcp_force() function returns these measurements expressed in the BASE frame.

@@ -152,17 +152,17 @@ protected:
   std::atomic<RTErrorType> last_rt_error_{RTErrorType::NONE};
   
   // Control state (using clean typedefs)
-  Vector6d wrench_ = Vector6d::Zero();  // Current F/T sensor reading
-  Vector6d wrench_filtered_ = Vector6d::Zero();  // Filtered F/T reading
-  Vector6d pose_error_;
+  Vector6d F_sensor_base_ = Vector6d::Zero();      // Force from sensor, in base frame
+  Vector6d V_base_tip_base_ = Vector6d::Zero();    // Tip velocity in base frame
+  Vector6d wrench_filtered_ = Vector6d::Zero();    // Filtered F/T reading
+  Vector6d error_tip_base_;
   Vector6d velocity_error_;
   Vector6d desired_accel_;
   Vector6d desired_vel_;
-  Vector6d cart_twist_;
   
-  // Pose tracking for impedance control
-  Eigen::Isometry3d desired_pose_;
-  Eigen::Isometry3d current_pose_;
+  // Pose tracking for impedance control (notation-compliant)
+  Eigen::Isometry3d X_base_tip_desired_;
+  Eigen::Isometry3d X_base_tip_current_;
 
   // Interface caching for RT performance (CRITICAL)
   std::vector<size_t> pos_state_indices_;
@@ -287,9 +287,9 @@ private:
     rt_log_buffer_.push(LogLevel::ERROR, message);
   }
 
-  // Transform caches
-  TransformCache ft_transform_cache_{};
-  TransformCache ee_transform_cache_{};
+  // Transform caches (notation-compliant)
+  TransformCache transform_base_tip_{};  // X_base_tip
+  TransformCache transform_base_ft_{};   // X_base_ft
   
   // Non-RT transform update methods (called from update loop outside RT context)
   void updateTransformCaches();
@@ -301,7 +301,7 @@ private:
   void publishCartesianVelocity();
   [[nodiscard]] bool loadKinematics();
   [[nodiscard]] bool waitForTransforms();
-  [[nodiscard]] Vector6d computePoseError();  // Compute pose error for impedance control
+  [[nodiscard]] Vector6d computePoseError_tip_base();  // Compute tip pose error in base frame
   
   // Helper methods for cleaner control loop
   // Real-time safe parameter handling (split into RT and non-RT functions)

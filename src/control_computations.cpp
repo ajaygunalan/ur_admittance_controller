@@ -20,8 +20,8 @@ using namespace constants;
 bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {
   // Compute pose error for impedance control
-  pose_error_ = computePoseError();
-  if (pose_error_.hasNaN()) {
+  error_tip_base_ = computePoseError_tip_base();
+  if (error_tip_base_.hasNaN()) {
     return false;
   }
   
@@ -40,7 +40,7 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
   Vector6d v0 = desired_vel_;
   
   // k1 = f(t, v0)
-  Vector6d stiffness_force1 = stiffness_engagement_factor_ * (stiffness_ * pose_error_);
+  Vector6d stiffness_force1 = stiffness_engagement_factor_ * (stiffness_ * error_tip_base_);
   Vector6d k1 = mass_inverse_ * (wrench_filtered_ - damping_ * v0 - stiffness_force1);
   
   if (k1.hasNaN()) {
@@ -101,21 +101,21 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
   }
   
   // Set output and return success
-  cart_twist_ = desired_vel_;
-  cmd_vel_out = cart_twist_;
+  V_base_tip_base_ = desired_vel_;
+  cmd_vel_out = V_base_tip_base_;
   return true;
 }
 
-Vector6d AdmittanceController::computePoseError()
+Vector6d AdmittanceController::computePoseError_tip_base()
 {
   Vector6d error = Vector6d::Zero();
   
-  // Position error
-  error.head<3>() = desired_pose_.translation() - current_pose_.translation();
+  // Position error (tip position error in base frame)
+  error.head<3>() = X_base_tip_desired_.translation() - X_base_tip_current_.translation();
   
   // Orientation error calculation with improved singularity handling
-  Eigen::Matrix3d R_current = current_pose_.rotation();
-  Eigen::Matrix3d R_desired = desired_pose_.rotation();
+  Eigen::Matrix3d R_current = X_base_tip_current_.rotation();
+  Eigen::Matrix3d R_desired = X_base_tip_desired_.rotation();
   
   // Convert to quaternions for more stable interpolation
   Eigen::Quaterniond q_current(R_current);
@@ -160,8 +160,8 @@ bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& per
     return false;
   }
   
-  double position_error_norm = pose_error_.head<3>().norm();
-  double orientation_error_norm = pose_error_.tail<3>().norm();
+  double position_error_norm = error_tip_base_.head<3>().norm();
+  double orientation_error_norm = error_tip_base_.tail<3>().norm();
   
   // Check if error exceeds safety limits
   bool error_within_limits = true;
@@ -199,12 +199,12 @@ bool AdmittanceController::publishPoseError()
   // Even if publishing fails, the controller can continue
   if (rt_pose_error_pub_->trylock()) {
     auto& msg = rt_pose_error_pub_->msg_;
-    msg.linear.x = pose_error_(0);
-    msg.linear.y = pose_error_(1);
-    msg.linear.z = pose_error_(2);
-    msg.angular.x = pose_error_(3);
-    msg.angular.y = pose_error_(4);
-    msg.angular.z = pose_error_(5);
+    msg.linear.x = error_tip_base_(0);
+    msg.linear.y = error_tip_base_(1);
+    msg.linear.z = error_tip_base_(2);
+    msg.angular.x = error_tip_base_(3);
+    msg.angular.y = error_tip_base_(4);
+    msg.angular.z = error_tip_base_(5);
     rt_pose_error_pub_->unlockAndPublish();
   }
   return true;
@@ -239,7 +239,7 @@ bool AdmittanceController::handleDriftReset()
 {
   // Reset integration states
   desired_vel_.setZero();
-  cart_twist_.setZero();
+  V_base_tip_base_.setZero();
   
   // Reset to actual positions (with error checking)
   try {
@@ -257,7 +257,7 @@ bool AdmittanceController::handleDriftReset()
   }
   
   // Update desired pose to current pose
-  desired_pose_ = current_pose_;
+  X_base_tip_desired_ = X_base_tip_current_;
   
   // Success - logging deferred to non-RT context
   return true;

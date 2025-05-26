@@ -19,8 +19,8 @@ void AdmittanceController::handle_reset_pose(
 {
   try {
     // Set desired pose to current pose (reset error to zero)
-    if (ee_transform_cache_.isValid()) {
-      desired_pose_ = current_pose_;
+    if (transform_base_tip_.isValid()) {
+      X_base_tip_desired_ = X_base_tip_current_;
       
       // Publish the current/desired pose for visualization
       auto pose_msg = std::make_unique<geometry_msgs::msg::PoseStamped>();
@@ -28,15 +28,15 @@ void AdmittanceController::handle_reset_pose(
       pose_msg->header.frame_id = params_.base_link;
       
       // Convert from Eigen to ROS message
-      Eigen::Quaterniond q(current_pose_.linear());
+      Eigen::Quaterniond q(X_base_tip_current_.linear());
       pose_msg->pose.orientation.w = q.w();
       pose_msg->pose.orientation.x = q.x();
       pose_msg->pose.orientation.y = q.y();
       pose_msg->pose.orientation.z = q.z();
       
-      pose_msg->pose.position.x = current_pose_.translation().x();
-      pose_msg->pose.position.y = current_pose_.translation().y();
-      pose_msg->pose.position.z = current_pose_.translation().z();
+      pose_msg->pose.position.x = X_base_tip_current_.translation().x();
+      pose_msg->pose.position.y = X_base_tip_current_.translation().y();
+      pose_msg->pose.position.z = X_base_tip_current_.translation().z();
       
       // Publish to both topics since they're now identical
       current_pose_pub_->publish(*pose_msg);
@@ -82,8 +82,8 @@ void AdmittanceController::handle_set_desired_pose(
                          
       Eigen::Vector3d p(pose_out.pose.position.x, pose_out.pose.position.y, pose_out.pose.position.z);
       
-      desired_pose_.linear() = q.toRotationMatrix();
-      desired_pose_.translation() = p;
+      X_base_tip_desired_.linear() = q.toRotationMatrix();
+      X_base_tip_desired_.translation() = p;
     } else {
       // Directly use the pose since it's already in the base frame
       Eigen::Quaterniond q(msg->pose.orientation.w, msg->pose.orientation.x,
@@ -92,8 +92,8 @@ void AdmittanceController::handle_set_desired_pose(
       Eigen::Vector3d p(msg->pose.position.x, msg->pose.position.y,
                       msg->pose.position.z);
       
-      desired_pose_.linear() = q.toRotationMatrix();
-      desired_pose_.translation() = p;
+      X_base_tip_desired_.linear() = q.toRotationMatrix();
+      X_base_tip_desired_.translation() = p;
     }
     
     // Publish the updated desired pose for visualization
@@ -102,15 +102,15 @@ void AdmittanceController::handle_set_desired_pose(
     pose_msg->header.frame_id = params_.base_link;
     
     // Convert from Eigen to ROS message
-    Eigen::Quaterniond q(desired_pose_.linear());
+    Eigen::Quaterniond q(X_base_tip_desired_.linear());
     pose_msg->pose.orientation.w = q.w();
     pose_msg->pose.orientation.x = q.x();
     pose_msg->pose.orientation.y = q.y();
     pose_msg->pose.orientation.z = q.z();
     
-    pose_msg->pose.position.x = desired_pose_.translation().x();
-    pose_msg->pose.position.y = desired_pose_.translation().y();
-    pose_msg->pose.position.z = desired_pose_.translation().z();
+    pose_msg->pose.position.x = X_base_tip_desired_.translation().x();
+    pose_msg->pose.position.y = X_base_tip_desired_.translation().y();
+    pose_msg->pose.position.z = X_base_tip_desired_.translation().z();
     
     desired_pose_pub_->publish(*pose_msg);
     
@@ -140,11 +140,11 @@ void AdmittanceController::handle_move_to_pose(
     current_pose_msg->header.frame_id = params_.base_link;
     
     // Convert Eigen pose to geometry_msgs pose
-    current_pose_msg->pose.position.x = current_pose_.translation().x();
-    current_pose_msg->pose.position.y = current_pose_.translation().y();
-    current_pose_msg->pose.position.z = current_pose_.translation().z();
+    current_pose_msg->pose.position.x = X_base_tip_current_.translation().x();
+    current_pose_msg->pose.position.y = X_base_tip_current_.translation().y();
+    current_pose_msg->pose.position.z = X_base_tip_current_.translation().z();
     
-    Eigen::Quaterniond q(current_pose_.rotation());
+    Eigen::Quaterniond q(X_base_tip_current_.rotation());
     current_pose_msg->pose.orientation.x = q.x();
     current_pose_msg->pose.orientation.y = q.y();
     current_pose_msg->pose.orientation.z = q.z();

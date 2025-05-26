@@ -89,14 +89,14 @@ controller_interface::CallbackReturn AdmittanceController::on_init()
     mass_inverse_ = mass_.inverse();  // Pre-compute inverse for performance
     damping_ = Matrix6d::Identity();
     stiffness_ = Matrix6d::Zero();
-    wrench_ = wrench_filtered_ = Vector6d::Zero();
-    pose_error_ = velocity_error_ = Vector6d::Zero();
+    F_sensor_base_ = wrench_filtered_ = Vector6d::Zero();
+    error_tip_base_ = velocity_error_ = Vector6d::Zero();
     desired_accel_ = desired_vel_ = Vector6d::Zero();
-    cart_twist_ = Vector6d::Zero();
+    V_base_tip_base_ = Vector6d::Zero();
     
     // Initialize pose tracking for impedance control
-    desired_pose_ = Eigen::Isometry3d::Identity();
-    current_pose_ = Eigen::Isometry3d::Identity();
+    X_base_tip_desired_ = Eigen::Isometry3d::Identity();
+    X_base_tip_current_ = Eigen::Isometry3d::Identity();
     
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "Exception in on_init: %s", e.what());
@@ -302,29 +302,29 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
   }
   
   // Reset all integrator states
-  pose_error_.setZero();
+  error_tip_base_.setZero();
   velocity_error_.setZero(); 
   desired_accel_.setZero();
   desired_vel_.setZero();
-  cart_twist_.setZero();
-  wrench_.setZero();
+  V_base_tip_base_.setZero();
+  F_sensor_base_.setZero();
   
   // Initialize pose tracking with current robot pose
-  desired_pose_ = Eigen::Isometry3d::Identity();
-  current_pose_ = Eigen::Isometry3d::Identity();
+  X_base_tip_desired_ = Eigen::Isometry3d::Identity();
+  X_base_tip_current_ = Eigen::Isometry3d::Identity();
   
   // When activating, set desired pose to current pose to avoid initial jumps
   // Use our real-time safe transform cache instead of direct TF lookups
-  if (ee_transform_cache_.isValid()) {
+  if (transform_base_tip_.isValid()) {
     // The transform cache should already be initialized by waitForTransforms()
-    current_pose_ = tf2::transformToEigen(ee_transform_cache_.getTransform().transform);
-    desired_pose_ = current_pose_;
+    X_base_tip_current_ = tf2::transformToEigen(transform_base_tip_.getTransform().transform);
+    X_base_tip_desired_ = X_base_tip_current_;
     RCLCPP_INFO(get_node()->get_logger(), "Initialized desired pose from cached transform");
   } else {
     RCLCPP_WARN(get_node()->get_logger(), "No valid transform cache for initial pose - using identity");
     // Use identity as fallback
-    current_pose_ = Eigen::Isometry3d::Identity();
-    desired_pose_ = current_pose_;
+    X_base_tip_current_ = Eigen::Isometry3d::Identity();
+    X_base_tip_desired_ = X_base_tip_current_;
   }
   wrench_filtered_.setZero();
   
@@ -382,11 +382,11 @@ controller_interface::CallbackReturn AdmittanceController::on_deactivate(
 {
   // Clear ALL integrator states to avoid jerk on restart
   desired_vel_.setZero();
-  pose_error_.setZero();
-  cart_twist_.setZero();
+  error_tip_base_.setZero();
+  V_base_tip_base_.setZero();
   wrench_filtered_.setZero();
   desired_accel_.setZero();
-  wrench_.setZero();
+  F_sensor_base_.setZero();
   
   // Note: For tf_listener, we don't fully reset it during deactivation
   // as that would lose configuration, but we do want to minimize its
@@ -425,8 +425,8 @@ controller_interface::CallbackReturn AdmittanceController::on_cleanup(
   tf_buffer_.reset();
   
   // Clear transform caches
-  ft_transform_cache_.reset();
-  ee_transform_cache_.reset();
+  transform_base_ft_.reset();
+  transform_base_tip_.reset();
   
   // Clean up parameter buffer
   param_buffer_.writeFromNonRT(ur_admittance_controller::Params());
