@@ -15,11 +15,12 @@ colcon build && source install/setup.bash
 
 ## 🎮 Quick Start - Simulation
 
-```bash
-# Terminal 1: Gazebo with UR5e + F/T sensor
-ros2 launch ur_simulation_gz ur_sim_control.launch.py \
-  description_package:=ur_admittance_controller \
-  description_file:=ur5e_admittance_sim.urdf.xacro
+
+# Terminal 1: Gazebo with UR5e + F/T sensor to start all [this](docs/GZ_SIMULATION_SETUP.md
+)
+```
+ros2 launch ur_simulation_gz ur_sim_control.launch.py
+```
 
 # Terminal 2: Launch admittance controller
 ros2 launch ur_admittance_controller ur_admittance_system.launch.py
