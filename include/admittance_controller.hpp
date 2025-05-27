@@ -13,7 +13,6 @@
 
 // ROS2 Control includes
 #include "controller_interface/chainable_controller_interface.hpp"
-#include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "hardware_interface/loaned_command_interface.hpp"
 #include "hardware_interface/handle.hpp"
 
@@ -30,8 +29,8 @@
 #include "realtime_tools/realtime_buffer.hpp"    // For real-time safe parameter updates
 
 // TF2 includes
-#include "tf2_geometry_msgs/tf2_geometry_msgs/tf2_geometry_msgs.hpp"
-#include "tf2_eigen/tf2_eigen/tf2_eigen.hpp"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include "tf2_eigen/tf2_eigen.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 
@@ -329,6 +328,8 @@ private:
   
   bool updateSensorData();
   bool updateTransforms(); // Real-time safe - only uses cached transforms
+  bool updateTransform_base_tip(); // Non-RT transform update
+  bool updateTransform_base_ft();  // Non-RT transform update
   bool checkDeadband();
   
   bool computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);

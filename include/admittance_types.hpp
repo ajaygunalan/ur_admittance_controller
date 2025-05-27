@@ -5,7 +5,6 @@
 #include <Eigen/Dense>
 #include <rclcpp/time.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
-#include <geometry_msgs/msg/pose_stamped.hpp>
 
 namespace ur_admittance_controller
 {

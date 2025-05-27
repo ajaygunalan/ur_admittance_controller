@@ -51,12 +51,12 @@ generate_parameter_library(
 
 # Create controller library
 add_library(${PROJECT_NAME} SHARED
-  src/plugin_export.cpp  # Plugin registration macro
-  src/communication_interface.cpp  # External communication handlers
-  src/controller_lifecycle.cpp  # ROS2 controller lifecycle and setup
+  src/admittance_controller.cpp  # Main controller implementation (merged lifecycle + setup)
+  src/realtime_computations.cpp  # Real-time control algorithms (merged computations + RT core)
+  src/sensor_interface.cpp  # Sensor data processing and filtering
   src/controller_integration.cpp  # External system integration (TF2, kinematics, URDF)
-  src/realtime_control_core.cpp  # Real-time control algorithms
-  src/rt_logging.cpp  # Real-time safe logging implementation
+  src/utilities.cpp  # RT-safe logging and utility functions
+  src/plugin_export.cpp  # Plugin registration macro
 )
 
 # Set include directories
@@ -128,10 +128,9 @@ install(
 # Install Python executables
 install(
   PROGRAMS 
-    scripts/system_status.py
-    scripts/test_safe_startup.py
-    scripts/debug_ft_sensor.py
-    scripts/test_ft_sensor_complete.py
+    scripts/ur_admittance_tests.py
+    scripts/ur_admittance_utils.py
+    scripts/validate_notation.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

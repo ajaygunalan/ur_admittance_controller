@@ -1,8 +1,36 @@
-# Universal Robots Controllers Reference
+# UR Admittance Controller Setup Guide
 
-This document provides a reference for the controllers available in the Universal Robots ROS2 Driver.
+## UR Robot Simulation System
 
-## Available Controllers
+When you launch `ur_sim_control.launch.py`, you're starting a comprehensive robotic simulation environment. Here's what becomes available:
+
+### 🤖 Core Robot System
+
+#### Active Controllers:
+- **`joint_state_broadcaster`** - Continuously publishes real-time joint data (positions, velocities, efforts) from all 6 robot joints
+- **`scaled_joint_trajectory_controller`** - Accepts trajectory commands to move the robot arm smoothly between waypoints
+
+#### Key Robot Topics:
+- **`/joint_states`** - Real-time feed of all joint positions, velocities, and efforts
+- **`/robot_description`** - URDF model defining robot geometry, joints, and properties
+- **`/scaled_joint_trajectory_controller/joint_trajectory`** - Send movement commands here
+- **`/tf` & `/tf_static`** - Coordinate transformations between all robot links
+
+### 🎮 Control & Monitoring Infrastructure
+
+#### Controller Management:
+The `/controller_manager/*` services let you:
+- Load/unload new controllers dynamically
+- Switch between different control modes
+- Monitor controller health and performance
+- List available hardware interfaces
+
+#### Visualization & Interaction:
+- **`/clicked_point` & `/goal_pose`** - RViz interaction points for setting targets
+- **`/initialpose`** - Set robot's initial position in RViz
+- **`/diagnostics`** - System health monitoring
+
+## Available Controllers Reference
 
 List of all the commanding controllers is found [here](https://docs.universal-robots.com/Universal_Robots_ROS2_Documentation/doc/ur_robot_driver/ur_robot_driver/doc/usage/controllers.html)
 
@@ -39,3 +67,60 @@ We choose cartesian space over joint space because:
 - We get accurate and precise 6D wrench at the TCP from the force sensor
 
 While `forward_velocity_controller` might seem like a good choice for cartesian-based admittance control compared to the robot's proprietary `force_mode_controller` (which offers coarser control and only one set-point wrench at a time), we use the default `scaled_joint_trajectory_controller` because it offers better safety features, which is important for our applications.
+
+## Force/Torque Sensor Processing
+
+### Changes Made
+
+We have simplified the force/torque sensor processing in the UR Admittance Controller by removing the special case handling that was previously used when the force/torque sensor frame was identical to the base frame.
+
+### Key Modifications
+
+1. **Force Processing Logic**
+   - **Before**: Conditionally applied transform only if `params_.ft_frame != params_.base_link`
+   - **After**: Unconditionally applies force transformation if transform is valid
+
+2. **Transform Caches**
+   - **Before**: Skipped F/T transform update when sensor frame matched base frame
+   - **After**: Always updates both tip and F/T transforms regardless of frame configuration
+
+3. **Transform Validation**
+   - **Before**: Special condition for when F/T frame matched base frame
+   - **After**: Consistently checks F/T transform validity in all cases
+
+4. **TF Lookup**
+   - **Before**: Only checked for F/T transform if frames differed
+   - **After**: Always checks for F/T transform availability
+
+### Benefits
+
+1. **Simplified Logic**
+   - Removed special case branching, making code flow more consistent
+   - Improved readability by using a unified approach
+
+2. **Consistent Transform Management**
+   - All transforms are treated equally regardless of frame configuration
+   - Reduces potential for bugs due to inconsistent handling
+
+3. **Standardized Force Processing**
+   - Forces are always explicitly transformed using the adjoint matrix
+   - Creates a more predictable behavior model
+
+### Implementation Details
+
+The simplified approach follows our updated frame notation consistently:
+
+```cpp
+// Always apply transform from F/T sensor to base frame
+if (transform_base_ft_.isValid()) {
+  const auto& transform_data = transform_base_ft_.getTransform();
+  F_sensor_base_ = transform_data.adjoint * raw_wrench;
+} else {
+  // No valid transform yet - use raw data as fallback
+  F_sensor_base_ = raw_wrench;
+}
+```
+
+This consistent handling ensures that all spatial quantities are properly transformed between frames, maintaining our notation principle that clearly indicates what is being measured (`F`), from where (`sensor`), and in which frame it's expressed (`base`).
+
+The controller now always treats the force/torque sensor frame as potentially different from the base frame, applying the appropriate transformation matrix in all cases. This approach is both more explicit and more robust to configuration changes.

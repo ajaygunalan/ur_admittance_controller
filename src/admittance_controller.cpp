@@ -1,18 +1,23 @@
 /**
- * @file controller_setup.cpp
+ * @file admittance_controller.cpp
  * @brief Lifecycle management and configuration for UR Admittance Controller
  * 
- * This file contains all one-time setup operations including parameter
- * loading, kinematic configuration, and ROS 2 lifecycle management.
+ * This file contains all lifecycle operations including parameter loading,
+ * kinematic configuration, matrix setup, and ROS 2 lifecycle management.
  */
 
 #include "admittance_controller.hpp"
+#include "admittance_constants.hpp"
+#include "matrix_utilities.hpp"
 
 // Additional includes needed for setup
 #include <algorithm>
 #include <rclcpp/callback_group.hpp>
 
 namespace ur_admittance_controller {
+
+// Use centralized constants
+using namespace constants;
 
 AdmittanceController::AdmittanceController()
 : controller_interface::ChainableControllerInterface(),
@@ -27,7 +32,15 @@ controller_interface::InterfaceConfiguration AdmittanceController::command_inter
   
   // CHAINABLE MODE: We don't claim hardware command interfaces
   // We only export reference interfaces via export_reference_interfaces()
-  return config;  // Empty - we don't write to hardware directly
+  // If downstream_controller_name is set, claim reference interfaces from it
+  if (!params_.downstream_controller_name.empty()) {
+    for (const auto & joint : params_.joints) {
+      config.names.push_back(
+        params_.downstream_controller_name + "/" + joint + "/position");
+    }
+  }
+  
+  return config;
 }
 
 controller_interface::InterfaceConfiguration AdmittanceController::state_interface_configuration() const
@@ -80,14 +93,21 @@ controller_interface::CallbackReturn AdmittanceController::on_init()
     mass_inverse_ = mass_.inverse();  // Pre-compute inverse for performance
     damping_ = Matrix6d::Identity();
     stiffness_ = Matrix6d::Zero();
-    wrench_ = wrench_filtered_ = Vector6d::Zero();
-    pose_error_ = velocity_error_ = Vector6d::Zero();
+    
+    // Initialize vectors with consistent naming
+    F_sensor_base_ = wrench_filtered_ = Vector6d::Zero();
+    error_tip_base_ = velocity_error_ = Vector6d::Zero();
     desired_accel_ = desired_vel_ = Vector6d::Zero();
-    cart_twist_ = Vector6d::Zero();
+    V_base_tip_base_ = Vector6d::Zero();
+    
+    // States initialized above
     
     // Initialize pose tracking for impedance control
-    desired_pose_ = Eigen::Isometry3d::Identity();
-    current_pose_ = Eigen::Isometry3d::Identity();
+    X_base_tip_desired_ = Eigen::Isometry3d::Identity();
+    X_base_tip_current_ = Eigen::Isometry3d::Identity();
+    
+    // Legacy naming support
+    // Poses initialized above
     
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "Exception in on_init: %s", e.what());
@@ -145,39 +165,18 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   for (size_t i = 0; i < 6; ++i) {
     mass_(i, i) = params_.admittance.mass[i];
     stiffness_(i, i) = params_.admittance.stiffness[i];
-    
-    // Smooth damping calculation to avoid discontinuity when stiffness changes
-    // from zero to non-zero values
-    const double stiffness_threshold = 1.0; // N/m or Nm/rad threshold for blending
-    double stiffness_value = params_.admittance.stiffness[i];
-    
-    if (stiffness_value <= 0.0) {
-      // Pure admittance mode - direct damping value in Ns/m or Nms/rad
-      // Base damping scaled by mass for consistent units
-      damping_(i, i) = params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i]); // Consistent units Ns/m or Nms/rad
-    } 
-    else if (stiffness_value >= stiffness_threshold) {
-      // Full impedance mode - critical damping formula
-      damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i] * stiffness_value);
-    }
-    else {
-      // Smooth transition zone - blend between the two formulas
-      double blend_factor = stiffness_value / stiffness_threshold; // 0.0 to 1.0
-      
-      // Calculate both damping values
-      double admittance_damping = params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i]);
-        
-      double impedance_damping = 2.0 * params_.admittance.damping_ratio[i] * 
-        std::sqrt(params_.admittance.mass[i] * stiffness_value);
-      
-      // Smoothly blend between the two values
-      damping_(i, i) = (1.0 - blend_factor) * admittance_damping + 
-                       blend_factor * impedance_damping;
-    }
   }
+  
+  // Convert parameter vectors to arrays for utility function
+  std::array<double, 6> mass_array, stiffness_array, damping_ratio_array;
+  for (size_t i = 0; i < 6; ++i) {
+    mass_array[i] = params_.admittance.mass[i];
+    stiffness_array[i] = params_.admittance.stiffness[i]; 
+    damping_ratio_array[i] = params_.admittance.damping_ratio[i];
+  }
+  
+  // Use centralized damping matrix computation
+  damping_ = utils::computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
   
   // Load real joint limits from URDF
   if (!loadJointLimitsFromURDF(get_node(), params_.joints, joint_limits_)) {
@@ -273,11 +272,11 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   // Create publishers for monitoring - store in both working and holder variables
   current_pose_pub_holder_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
     "~/current_pose", 10);
-  current_pose_pub_ = current_pose_pub_holder_;
+  // Publisher stored in holder
     
   desired_pose_pub_holder_ = get_node()->create_publisher<geometry_msgs::msg::PoseStamped>(
     "~/desired_pose", 10);
-  desired_pose_pub_ = desired_pose_pub_holder_;
+  // Publisher stored in holder
   
   // Add safe movement service for impedance mode
   move_to_pose_service_holder_ = get_node()->create_service<std_srvs::srv::Trigger>(
@@ -314,34 +313,79 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
   }
   
   // Reset all integrator states
-  pose_error_.setZero();
+  error_tip_base_.setZero();
   velocity_error_.setZero(); 
   desired_accel_.setZero();
   desired_vel_.setZero();
-  cart_twist_.setZero();
-  wrench_.setZero();
+  V_base_tip_base_.setZero();
+  F_sensor_base_.setZero();
+  
+  // States initialized
   
   // Initialize pose tracking with current robot pose
-  desired_pose_ = Eigen::Isometry3d::Identity();
-  current_pose_ = Eigen::Isometry3d::Identity();
+  X_base_tip_desired_ = Eigen::Isometry3d::Identity();
+  X_base_tip_current_ = Eigen::Isometry3d::Identity();
   
   // When activating, set desired pose to current pose to avoid initial jumps
   // Use our real-time safe transform cache instead of direct TF lookups
-  if (ee_transform_cache_.isValid()) {
+  if (transform_base_tip_.isValid()) {
     // The transform cache should already be initialized by waitForTransforms()
-    current_pose_ = tf2::transformToEigen(ee_transform_cache_.getTransform().transform);
-    desired_pose_ = current_pose_;
+    X_base_tip_current_ = tf2::transformToEigen(transform_base_tip_.getTransform().transform);
+    X_base_tip_desired_ = X_base_tip_current_;
     RCLCPP_INFO(get_node()->get_logger(), "Initialized desired pose from cached transform");
+  // No legacy fallback needed
   } else {
     RCLCPP_WARN(get_node()->get_logger(), "No valid transform cache for initial pose - using identity");
     // Use identity as fallback
-    current_pose_ = Eigen::Isometry3d::Identity();
-    desired_pose_ = current_pose_;
+    X_base_tip_current_ = Eigen::Isometry3d::Identity();
+    X_base_tip_desired_ = X_base_tip_current_;
   }
+  
+  // Update legacy variables
+    // Poses tracked in X_base_tip_current_ and X_base_tip_desired_
+  
   wrench_filtered_.setZero();
   
   // Cache interface indices for RT performance
   cacheInterfaceIndices();
+  
+  // Create mapping between command interfaces and joint indices if using downstream controller
+  if (!params_.downstream_controller_name.empty() && !command_interfaces_.empty()) {
+    cmd_interface_to_joint_index_.clear();
+    cmd_interface_to_joint_index_.resize(command_interfaces_.size(), 0);
+    
+    // Map command interfaces to joint indices for proper controller chaining
+    for (size_t i = 0; i < command_interfaces_.size(); ++i) {
+      const std::string& interface_name = command_interfaces_[i].get_interface_name();
+      const std::string& prefix_name = command_interfaces_[i].get_prefix_name();
+      
+      // Extract joint name from the full interface name
+      // Format is: <downstream_controller>/<joint_name>/position
+      std::string joint_name;
+      size_t last_slash = prefix_name.find_last_of('/');
+      if (last_slash != std::string::npos) {
+        joint_name = prefix_name.substr(last_slash + 1);
+      } else {
+        RCLCPP_ERROR(get_node()->get_logger(), 
+          "Invalid command interface format: %s", prefix_name.c_str());
+        return controller_interface::CallbackReturn::ERROR;
+      }
+      
+      // Find the matching joint index
+      auto it = std::find(params_.joints.begin(), params_.joints.end(), joint_name);
+      if (it != params_.joints.end()) {
+        size_t joint_idx = std::distance(params_.joints.begin(), it);
+        cmd_interface_to_joint_index_[i] = joint_idx;
+        RCLCPP_DEBUG(get_node()->get_logger(), 
+          "Mapped command interface %s to joint index %zu", 
+          (prefix_name + "/" + interface_name).c_str(), joint_idx);
+      } else {
+        RCLCPP_ERROR(get_node()->get_logger(), 
+          "Joint %s not found in controller joints", joint_name.c_str());
+        return controller_interface::CallbackReturn::ERROR;
+      }
+    }
+  }
   
   // Initialize joint positions from state
   for (size_t i = 0; i < params_.joints.size(); ++i) {
@@ -358,11 +402,13 @@ controller_interface::CallbackReturn AdmittanceController::on_deactivate(
 {
   // Clear ALL integrator states to avoid jerk on restart
   desired_vel_.setZero();
-  pose_error_.setZero();
-  cart_twist_.setZero();
+  error_tip_base_.setZero();
+  V_base_tip_base_.setZero();
   wrench_filtered_.setZero();
   desired_accel_.setZero();
-  wrench_.setZero();
+  F_sensor_base_.setZero();
+  
+  // States initialized
   
   // Note: For tf_listener, we don't fully reset it during deactivation
   // as that would lose configuration, but we do want to minimize its
@@ -384,8 +430,7 @@ controller_interface::CallbackReturn AdmittanceController::on_cleanup(
   
   // Clean up subscribers and publishers
   set_pose_sub_.reset();
-  current_pose_pub_.reset();
-  desired_pose_pub_.reset();
+  // Publishers reset handled by holder
   
   // Clean up real-time publishers
   rt_cart_vel_pub_.reset();
@@ -401,8 +446,9 @@ controller_interface::CallbackReturn AdmittanceController::on_cleanup(
   tf_buffer_.reset();
   
   // Clear transform caches
-  ft_transform_cache_.reset();
-  ee_transform_cache_.reset();
+  transform_base_ft_.reset();
+  transform_base_tip_.reset();
+  // Transform caches already cleared above
   
   // Clean up parameter buffer
   param_buffer_.writeFromNonRT(ur_admittance_controller::Params());
@@ -441,154 +487,5 @@ void AdmittanceController::cacheInterfaceIndices()
   }
 }
 
-bool AdmittanceController::loadKinematics()
-{
-  try {
-    // Store the class loader in a member variable so it doesn't get destroyed
-    kinematics_loader_ = std::make_shared<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>>(
-      params_.kinematics_plugin_package, "kinematics_interface::KinematicsInterface");
-    
-    // Get the plugin instance with the correct unique_ptr type
-    auto plugin_instance = kinematics_loader_->createUniqueInstance(params_.kinematics_plugin_name);
-    kinematics_ = std::move(plugin_instance);
-    
-    if (!kinematics_.has_value()) {
-      RCLCPP_ERROR(get_node()->get_logger(), "Failed to create kinematics instance");
-      return false;
-    }
-    
-    RCLCPP_INFO(get_node()->get_logger(), "Loaded kinematics: %s", 
-      params_.kinematics_plugin_name.c_str());
-    return true;
-    
-  } catch (const std::exception & e) {
-    RCLCPP_ERROR(get_node()->get_logger(), "Exception loading kinematics: %s", e.what());
-    return false;
-  }
-}
-
-bool AdmittanceController::waitForTransforms()
-{
-  const auto timeout = rclcpp::Duration::from_seconds(5.0);
-  std::string error;
-  auto now = get_node()->get_clock()->now();
-  
-  // Always check world->base and base->tip transforms
-  bool transforms_available = 
-    tf_buffer_->canTransform(params_.world_frame, params_.base_link, 
-                            rclcpp::Time(0), timeout, &error) &&
-    tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
-                            rclcpp::Time(0), timeout, &error);
-  
-  // Only check F/T transform if sensor frame differs from control frame
-  if (params_.ft_frame != params_.base_link) {
-    transforms_available = transforms_available && 
-      tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
-                              rclcpp::Time(0), timeout, &error);
-  }
-  
-  if (!transforms_available) {
-    RCLCPP_ERROR(get_node()->get_logger(), "Required transforms not available: %s", error.c_str());
-    return false;
-  }
-  
-  // Initialize transform cache frame names and reset the cache
-  ft_transform_cache_.reset();
-  ee_transform_cache_.reset();
-  
-  // Set frame names for later lookups
-  ft_transform_cache_.target_frame = params_.base_link;
-  ft_transform_cache_.source_frame = params_.ft_frame;
-  
-  ee_transform_cache_.target_frame = params_.base_link;
-  ee_transform_cache_.source_frame = params_.tip_link;
-  
-  // Explicitly request the first transform update
-  transform_update_needed_.store(true);
-  
-  // Do an initial transform update to populate the caches
-  try {
-    updateTransformCaches();
-    
-    // Verify the transforms were cached properly
-    // For Scenario B (ft_frame == base_link), F/T transform cache might not be valid
-    bool ee_valid = ee_transform_cache_.isValid();
-    bool ft_valid = (params_.ft_frame == params_.base_link) || ft_transform_cache_.isValid();
-    
-    if (!ee_valid || !ft_valid) {
-      RCLCPP_ERROR(get_node()->get_logger(), 
-        "Failed to initialize transform caches - EE: %s, F/T: %s", 
-        ee_valid ? "OK" : "FAILED", 
-        ft_valid ? "OK" : "FAILED");
-      return false;
-    }
-    
-    return true;
-  } catch (const std::exception& ex) {
-    RCLCPP_ERROR(get_node()->get_logger(), "Exception during transform cache initialization: %s", ex.what());
-    return false;
-  }
-}
-
-bool AdmittanceController::loadJointLimitsFromURDF(
-  const std::shared_ptr<rclcpp_lifecycle::LifecycleNode> & node,
-  const std::vector<std::string> & joint_names,
-  std::vector<JointLimits> & limits)
-{
-  try {
-    // Get robot description parameter
-    std::string robot_description;
-    if (!node->get_parameter("robot_description", robot_description)) {
-      RCLCPP_ERROR(node->get_logger(), 
-        "Failed to get robot_description parameter");
-      return false;
-    }
-    
-    // Parse URDF
-    urdf::Model model;
-    if (!model.initString(robot_description)) {
-      RCLCPP_ERROR(node->get_logger(), "Failed to parse URDF");
-      return false;
-    }
-    
-    limits.resize(joint_names.size());
-    
-    // Extract limits for each joint
-    for (size_t i = 0; i < joint_names.size(); ++i) {
-      auto joint = model.getJoint(joint_names[i]);
-      if (!joint) {
-        RCLCPP_ERROR(node->get_logger(), 
-          "Joint '%s' not found in URDF", joint_names[i].c_str());
-        return false;
-      }
-      
-      if (!joint->limits) {
-        RCLCPP_ERROR(node->get_logger(), 
-          "No limits defined for joint '%s'", joint_names[i].c_str());
-        return false;
-      }
-      
-      // CRITICAL: Use real UR limits from URDF
-      limits[i].min_position = joint->limits->lower;
-      limits[i].max_position = joint->limits->upper;
-      limits[i].max_velocity = joint->limits->velocity;
-      limits[i].max_acceleration = joint->limits->effort / 10.0; // Rough estimate
-      
-      RCLCPP_INFO(node->get_logger(),
-        "Joint %s limits: pos[%.3f, %.3f], vel[%.3f]",
-        joint_names[i].c_str(),
-        limits[i].min_position,
-        limits[i].max_position, 
-        limits[i].max_velocity);
-    }
-    
-    return true;
-    
-  } catch (const std::exception & e) {
-    RCLCPP_ERROR(node->get_logger(), 
-      "Exception loading joint limits: %s", e.what());
-    return false;
-  }
-}
 
 } // namespace ur_admittance_controller
