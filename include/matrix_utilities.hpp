@@ -95,3 +95,4 @@ inline bool areEqual(double a, double b, double epsilon = constants::PARAMETER_E
 }
 
 #endif
+

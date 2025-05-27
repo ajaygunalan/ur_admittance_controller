@@ -13,6 +13,7 @@ using namespace constants;
 
 
 controller_interface::return_type AdmittanceController::update_reference_from_subscribers(
+  const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
 {
   checkParameterUpdates();
   
@@ -51,6 +52,12 @@ controller_interface::return_type AdmittanceController::update_reference_from_su
   processNonRTErrors();
   
   return controller_interface::return_type::OK; 
+}
+
+controller_interface::return_type AdmittanceController::update_and_write_commands(
+  const rclcpp::Time & time, const rclcpp::Duration & period)
+{
+  return update_reference_from_subscribers(time, period);
 }
 
 

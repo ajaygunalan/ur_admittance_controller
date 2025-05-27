@@ -81,6 +81,67 @@ public:
 protected:
   std::vector<hardware_interface::CommandInterface> on_export_reference_interfaces() override;
 
+  bool on_set_chained_mode(bool /*chained_mode*/) override { return true; }
+
+  struct ParameterChange {
+    bool mass_changed{false};
+    bool stiffness_changed{false};
+    bool damping_changed{false};
+  };
+  
+  std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
+  ur_admittance_controller::Params params_;
+  
+  realtime_tools::RealtimeBuffer<ur_admittance_controller::Params> param_buffer_;
+  std::atomic<bool> parameter_update_needed_{false};
+  std::unique_ptr<ParameterChange> pending_parameter_change_;
+
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
+
+  std::shared_ptr<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>> kinematics_loader_;
+  std::optional<pluginlib::UniquePtr<kinematics_interface::KinematicsInterface>> kinematics_;
+
+  std::vector<double> joint_positions_;
+  std::vector<double> joint_position_references_;
+  
+  std::vector<double> current_pos_;
+  std::vector<double> joint_deltas_;
+  std::vector<double> cart_displacement_deltas_;
+  std::vector<JointLimits> joint_limits_;
+
+  Matrix6d mass_;
+  Matrix6d mass_inverse_;
+  Matrix6d damping_;
+  Matrix6d stiffness_;
+
+  enum class RTErrorType {
+    NONE = 0,
+    UPDATE_ERROR,
+    SENSOR_ERROR,
+    TRANSFORM_ERROR,
+    CONTROL_ERROR,
+    KINEMATICS_ERROR,
+    JOINT_LIMITS_ERROR
+  };
+  std::atomic<RTErrorType> last_rt_error_{RTErrorType::NONE};
+  
+  Vector6d F_sensor_base_ = Vector6d::Zero();
+  Vector6d V_base_tip_base_ = Vector6d::Zero();
+  Vector6d wrench_filtered_ = Vector6d::Zero();
+  Vector6d error_tip_base_;
+  Vector6d velocity_error_;
+  Vector6d desired_accel_;
+  Vector6d desired_vel_;
+  
+  Eigen::Isometry3d X_base_tip_desired_;
+  Eigen::Isometry3d X_base_tip_current_;
+
+  std::vector<size_t> pos_state_indices_;
+  std::vector<long> ft_indices_;
+  
+  std::vector<size_t> cmd_interface_to_joint_index_;
+
   std::unique_ptr<realtime_tools::RealtimePublisher<geometry_msgs::msg::Twist>> rt_cart_vel_pub_;
   
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cart_vel_pub_;

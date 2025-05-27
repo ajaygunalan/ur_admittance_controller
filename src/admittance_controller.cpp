@@ -97,6 +97,7 @@ controller_interface::CallbackReturn AdmittanceController::on_init()
 }
 
 controller_interface::CallbackReturn AdmittanceController::on_configure(
+  const rclcpp_lifecycle::State & /*previous_state*/)
 {
   if (!waitForTransforms()) {
     RCLCPP_ERROR(get_node()->get_logger(), "Failed to get transforms");
@@ -172,6 +173,7 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
 }
 
 controller_interface::CallbackReturn AdmittanceController::on_deactivate(
+  const rclcpp_lifecycle::State & /*previous_state*/)
 {
   RCLCPP_INFO(get_node()->get_logger(), "Starting cleanup...");
   
@@ -227,3 +229,4 @@ void AdmittanceController::cacheInterfaceIndices()
 
 
 }
+
