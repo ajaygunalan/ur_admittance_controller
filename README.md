@@ -2,6 +2,20 @@
 
 > **Force-compliant motion control for Universal Robots - push the robot and it moves!**
 
+## 📚 Table of Contents
+
+- [🚀 Installation](#-installation)
+- [🎮 Quick Start - Simulation](#-quick-start---simulation)
+- [🤖 Real Robot Setup](#-real-robot-setup)
+- [🎯 Control Modes](#-control-modes)
+- [⚡ Safe Impedance Transition](#-safe-impedance-transition)
+- [⚙️ Key Parameters](#️-key-parameters)
+- [🧪 Testing](#-testing)
+- [📍 Common Issues](#-common-issues)
+- [🔧 Services & Topics](#-services--topics)
+- [📐 Technical Documentation](#-technical-documentation)
+- [📝 Additional Resources](#-additional-resources)
+
 ## 🚀 Installation
 
 ```bash
@@ -15,16 +29,12 @@ colcon build && source install/setup.bash
 
 ## 🎮 Quick Start - Simulation
 
-
+```bash
 # Terminal 1: Gazebo with UR5e + F/T sensor 
-```
 ros2 launch ur_simulation_gz ur_sim_control.launch.py
-```
-
-[see docs/GZ_SIMULATION_SETUP.md](docs/GZ_SIMULATION_SETUP.md)
 
 # Terminal 2: Launch admittance controller
-ros2 launch ur_admittance_controller ur_admittance_system.launch.py
+ros2 launch ur_admittance_controller ur_admittance.launch.py
 
 # Terminal 3: Apply force and watch robot move
 ros2 topic pub /ft_sensor_readings geometry_msgs/WrenchStamped \
@@ -47,7 +57,7 @@ ros2 controller list  # Should show "scaled_joint_trajectory_controller: active"
 # ros2 controller set_state scaled_joint_trajectory_controller active
 
 # Terminal 2: Launch admittance controller
-ros2 launch ur_admittance_controller ur_admittance_system.launch.py \
+ros2 launch ur_admittance_controller ur_admittance.launch.py \
   use_sim:=false
 
 # Terminal 3: On teach pendant
@@ -160,15 +170,60 @@ ros2 param set /ur_admittance_controller admittance.mass [15,15,15,1.5,1.5,1.5]
 **Subscribed Topics:**
 - `/ur_admittance_controller/set_desired_pose` - Set target pose
 
-## 📐 Technical Details
+## 📐 Technical Documentation
 
-- **Controller Type**: ChainableControllerInterface
-- **Update Rate**: Set by controller_manager 
-- **Force Transform**: Applied only when `ft_frame != base_link`
-- **Real-time Safe**: Pre-allocated memory, cached indices, lock-free publishing
+### Core Architecture
+- **Controller Type**: ChainableControllerInterface (ROS2 Control)
+- **Update Rate**: Determined by controller_manager (typically 200-500 Hz)
+- **Force Processing**: Transforms sensor data from any frame to base frame
+- **Real-time Safe**: Pre-allocated memory, cached transforms, lock-free publishing
+- **Kinematics**: Plugin-based (supports KDL, MoveIt, custom implementations)
 
-See [Architecture Document](ur_admittance_architecture.md) for implementation details.
+### Key Features
+- **6-DOF Admittance Control**: Independent control for each Cartesian axis
+- **Smooth Transitions**: Gradual stiffness engagement prevents sudden movements
+- **Drift Prevention**: Automatic integrator reset when stationary
+- **Safety Limits**: Configurable velocity and acceleration bounds
 
+### Documentation Links
+- [**Architecture Overview**](docs/ARCHITECTURE.md) - Detailed system design and implementation
+- [**Notation Guide**](docs/NOTATION_GUIDE.md) - Coordinate frame conventions and naming
+- [**Setup Guide**](docs/SETUP_GUIDE.md) - Controller selection rationale and configuration
+- [**API Reference**](docs/API_REFERENCE.md) - Complete API documentation and examples
 
+## 📝 Additional Resources
 
-The UR5e has a built-in force/torque sensor that measures forces and torques at the tool flange (where the end-effector attaches), and the get_tcp_force() function returns these measurements expressed in the BASE frame.
+### Code Structure
+```
+ur_admittance_controller/
+├── include/               # Header files
+│   ├── admittance_controller.hpp
+│   ├── admittance_types.hpp
+│   ├── admittance_constants.hpp
+│   └── matrix_utilities.hpp
+├── src/                   # Implementation files
+│   ├── admittance_controller.cpp    # Main controller logic
+│   ├── realtime_computations.cpp    # RT-safe calculations
+│   ├── sensor_interface.cpp         # F/T sensor handling
+│   ├── controller_integration.cpp   # ROS2 Control interface
+│   └── utilities.cpp                # Helper functions
+├── config/                # Configuration
+│   └── admittance_config.yaml       # Parameter definitions
+├── launch/                # Launch files
+│   └── ur_admittance.launch.py
+└── scripts/               # Testing utilities
+    ├── ur_admittance_tests.py
+    ├── ur_admittance_utils.py
+    └── validate_notation.py
+```
+
+### Theory Background
+The UR5e has a built-in force/torque sensor at the tool flange. This controller implements the admittance control law:
+```
+M·ẍ + D·ẋ + K·(x - x_desired) = F_external
+```
+Where:
+- M: Virtual mass matrix
+- D: Damping matrix (computed from mass and damping ratio)
+- K: Stiffness matrix (0 for pure admittance)
+- F_external: Measured external forces/torques

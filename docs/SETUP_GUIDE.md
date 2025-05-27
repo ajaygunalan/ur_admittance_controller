@@ -32,7 +32,7 @@ The `/controller_manager/*` services let you:
 
 ## Available Controllers Reference
 
-List of all the commanding controllers is found [here](https://docs.universal-robots.com/Universal_Robots_ROS2_Documentation/doc/ur_robot_driver/ur_robot_driver/doc/usage/controllers.html)
+The following controllers are available for Universal Robots in ROS2. Each controller has specific use cases and limitations when implementing admittance control. Details on all commanding controllers can be found in the [official UR ROS2 documentation](https://docs.universal-robots.com/Universal_Robots_ROS2_Documentation/doc/ur_robot_driver/ur_robot_driver/doc/usage/controllers.html).
 
 ### Default `scaled_joint_trajectory_controller`
 `ScaledJointTrajectoryController` streams position set-points every control cycle and "warps" their timestamps with the robot's live speed-scaling value (teach-pendant slider, safeguard stop) so the path stays geometrically correct while it slows, pauses, or resumes; the velocity and acceleration fields in each point act only as feed-forward cues—no true velocity or torque commands ever reach the robot. 
@@ -60,13 +60,41 @@ Activates gravity-compensated **Freedrive** so an operator can hand-guide the ar
 
 ## Controller Selection for Admittance Control
 
-For the UR5e, we implement admittance control instead of impedance control since the robot cannot accept joint torque commands. We have two choices to implement the admittance: in joint space or task space (cartesian-space). 
+### Why Admittance Control?
 
-We choose cartesian space over joint space because:
-- We only get indirect estimates of joint torques which are not reliable due to high gear ratios
-- We get accurate and precise 6D wrench at the TCP from the force sensor
+The UR5e robots cannot accept direct joint torque commands due to their hardware design. This limitation makes traditional impedance control impossible. Instead, we implement admittance control, which:
+- Converts measured forces into desired motions
+- Works with position-controlled robots
+- Provides compliant behavior through velocity commands
 
-While `forward_velocity_controller` might seem like a good choice for cartesian-based admittance control compared to the robot's proprietary `force_mode_controller` (which offers coarser control and only one set-point wrench at a time), we use the default `scaled_joint_trajectory_controller` because it offers better safety features, which is important for our applications.
+### Joint Space vs Cartesian Space
+
+We implement admittance control in **Cartesian space** rather than joint space for several reasons:
+
+1. **Force Measurement Accuracy**
+   - The built-in F/T sensor provides accurate 6D wrench measurements at the TCP
+   - Joint torque estimates are unreliable due to high gear ratios (50:1 to 100:1)
+   - Direct force measurement eliminates the need for complex joint torque estimation
+
+2. **Intuitive Control**
+   - Forces and motions are naturally understood in Cartesian space
+   - Task-specific behaviors (e.g., maintain Z height, free XY motion) are straightforward
+   - Easier to implement safety limits and constraints
+
+### Controller Choice: `scaled_joint_trajectory_controller`
+
+While several controllers could theoretically support admittance control, we use the `scaled_joint_trajectory_controller` for these reasons:
+
+**Advantages:**
+- **Safety**: Built-in trajectory validation and smooth motion profiles
+- **Speed Scaling**: Automatic adjustment based on teach pendant safety settings
+- **Reliability**: Well-tested default controller with extensive safety features
+- **Integration**: Works seamlessly with existing UR safety systems
+
+**Why not other controllers?**
+- `forward_velocity_controller`: No trajectory validation or smoothing
+- `force_mode_controller`: Limited to static force setpoints, not dynamic control
+- `forward_position_controller`: Risk of jerky motion without proper interpolation
 
 ## Force/Torque Sensor Processing
 

@@ -1,5 +1,9 @@
 # UR Admittance Controller Architecture
 
+**Last Updated**: January 2025  
+**Package Version**: 1.0.0  
+**ROS2 Version**: Humble/Iron/Rolling
+
 ## Why This Controller Exists
 
 Universal Robots only accept **position commands**, not force/torque commands. But many tasks require force control:
@@ -285,6 +289,19 @@ The controller must complete within the control period (e.g., 5ms @ 200Hz):
 
 Total: ~1ms typical, well within 5ms budget.
 
+## Dependencies and Integration
+
+### ROS2 Dependencies
+- **ros2_control**: Controller interface and real-time tools
+- **kinematics_interface**: Plugin-based kinematics (KDL default)
+- **tf2**: Coordinate frame transformations
+- **generate_parameter_library**: Type-safe parameter handling
+
+### Hardware Requirements
+- Universal Robots arm (UR3/UR5/UR10/UR16 series)
+- Force/Torque sensor (built-in or external)
+- Real-time kernel recommended for <1ms control loops
+
 ## Summary
 
 This controller enables force-sensitive tasks on position-controlled robots by implementing a virtual mass-spring-damper system. Key insights:
@@ -295,3 +312,8 @@ This controller enables force-sensitive tasks on position-controlled robots by i
 4. **Safety first**: Multiple layers of limits and checks
 
 The result: A UR robot that can "feel" and respond to forces naturally.
+
+## See Also
+- [Notation Guide](NOTATION_GUIDE.md) - Coordinate frame conventions
+- [Setup Guide](SETUP_GUIDE.md) - Installation and configuration
+- [API Reference](https://github.com/ajaygunalan/ur_admittance_controller) - Code documentation
