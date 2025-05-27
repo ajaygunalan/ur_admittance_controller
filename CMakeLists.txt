@@ -131,6 +131,7 @@ install(
     scripts/ur_admittance_tests.py
     scripts/ur_admittance_utils.py
     scripts/validate_notation.py
+    scripts/safe_startup_test.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
 Frame Notation Validation Script
-
 This script verifies that the UR Admittance Controller implementation follows
 Drake's coordinate frame notation principles consistently.
 """
-
 import os
 import re
 import sys
 from pathlib import Path
-
 def check_file_for_violations(filepath, patterns):
     """Check a single file for notation violations."""
     violations = []
@@ -36,7 +33,6 @@ def check_file_for_violations(filepath, patterns):
         print(f"Error reading {filepath}: {e}")
     
     return violations
-
 def validate_frame_notation():
     """Main validation function."""
     
@@ -148,7 +144,6 @@ def validate_frame_notation():
         print("   • All required patterns found")
         print("   • Frame notation implementation is complete!")
         return True
-
 if __name__ == "__main__":
     success = validate_frame_notation()
     sys.exit(0 if success else 1)

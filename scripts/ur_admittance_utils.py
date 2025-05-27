@@ -3,7 +3,6 @@
 Shared utilities and base classes for UR Admittance Controller testing and monitoring.
 Consolidates common functionality to reduce code duplication.
 """
-
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -18,16 +17,12 @@ import sys
 from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass
 from enum import Enum
-
-
 class TestMode(Enum):
     """Test modes for the unified test system"""
     IMPEDANCE = "impedance"
     SAFE_STARTUP = "safe_startup"
     SYSTEM_STATUS = "system_status"
     CONTINUOUS_MONITOR = "continuous_monitor"
-
-
 @dataclass
 class TestConfig:
     """Configuration for test execution"""
@@ -50,8 +45,6 @@ class TestConfig:
     check_period: float = 5.0
     focus_controller: str = ""
     realtime_logging: bool = False
-
-
 class URAdmittanceTestBase(Node):
     """Base class for all UR Admittance tests with shared functionality"""
     
@@ -174,8 +167,6 @@ class URAdmittanceTestBase(Node):
         self._publishers.clear()
         self._subscribers.clear()
         self._service_clients.clear()
-
-
 class ForceTestMixin:
     """Mixin for force-based testing functionality"""
     
@@ -230,8 +221,6 @@ class ForceTestMixin:
         thread.start()
         
         return True
-
-
 class StiffnessControlMixin:
     """Mixin for stiffness parameter control"""
     
@@ -261,8 +250,6 @@ class StiffnessControlMixin:
                 error_msg = result.results[0].reason
             self.log_error(f"Failed to set stiffness: {error_msg}")
             return False
-
-
 class SystemMonitorMixin:
     """Mixin for system monitoring functionality"""
     
@@ -299,8 +286,6 @@ class SystemMonitorMixin:
         """Update data reception status"""
         with self._lock:
             self._data_received[topic] = received
-
-
 class TestRunner:
     """Unified test runner that can execute different test modes"""
     

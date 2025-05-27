@@ -3,7 +3,7 @@
 Unified test implementations for UR Admittance Controller.
 All test modes are consolidated here using the shared utilities.
 """
-
+import sys
 import time
 import threading
 from typing import Dict, List, Optional
@@ -12,13 +12,10 @@ from sensor_msgs.msg import JointState
 from controller_manager_msgs.srv import ListControllers
 from rcl_interfaces.srv import SetParameters
 from std_srvs.srv import Trigger
-
 from ur_admittance_utils import (
     URAdmittanceTestBase, ForceTestMixin, StiffnessControlMixin, 
     SystemMonitorMixin, TestConfig, TestMode
 )
-
-
 class ImpedanceTest(URAdmittanceTestBase, ForceTestMixin, StiffnessControlMixin):
     """Test impedance vs admittance modes"""
     
@@ -89,8 +86,6 @@ class ImpedanceTest(URAdmittanceTestBase, ForceTestMixin, StiffnessControlMixin)
         
         self.log_info("\n✅ All impedance tests completed successfully!")
         return True
-
-
 class SafeStartupTest(URAdmittanceTestBase):
     """Test safe startup sequence with pose error monitoring"""
     
@@ -185,8 +180,6 @@ class SafeStartupTest(URAdmittanceTestBase):
         else:
             self.log_info(f"PASSED: Max error {self.max_error:.4f}m < {self.config.max_error_threshold}m")
             return True
-
-
 class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
     """System status monitoring and diagnostics"""
     
@@ -310,8 +303,6 @@ class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
                 self.print_status_report()
                 
             return True
-
-
 def main():
     """Main entry point with command-line interface"""
     import argparse
@@ -356,7 +347,5 @@ def main():
     from ur_admittance_utils import TestRunner
     runner = TestRunner(config)
     return runner.run(mode_map[args.mode])
-
-
 if __name__ == '__main__':
     sys.exit(main())
