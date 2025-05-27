@@ -26,22 +26,18 @@ class TestMode(Enum):
 @dataclass
 class TestConfig:
     """Configuration for test execution"""
-    # Common parameters
     controller_name: str = "ur_admittance_controller"
     service_timeout: float = 5.0
     progress_update_rate: float = 2.0
     
-    # Force test parameters
     force_topic: str = "/ft_sensor_readings"
     test_force: float = 20.0
     test_duration: float = 2.0
     
-    # Safe startup parameters
     pose_error_topic: str = "/ur_admittance_controller/pose_error"
     max_error_threshold: float = 0.15
     test_timeout: float = 15.0
     
-    # System status parameters
     check_period: float = 5.0
     focus_controller: str = ""
     realtime_logging: bool = False
@@ -52,18 +48,15 @@ class URAdmittanceTestBase(Node):
         super().__init__(node_name)
         self.config = config
         
-        # Common state
         self._lock = threading.Lock()
         self._shutdown_event = threading.Event()
         self._test_active = False
         self._errors: List[str] = []
         
-        # Common clients
         self._service_clients: Dict[str, Any] = {}
         self._publishers: Dict[str, Any] = {}
         self._subscribers: Dict[str, Any] = {}
         
-        # Setup logging
         self._setup_logging()
         
     def _setup_logging(self):
@@ -156,7 +149,6 @@ class URAdmittanceTestBase(Node):
         """Clean shutdown of the node"""
         self._shutdown_event.set()
         
-        # Clean up publishers, subscribers, and clients
         for pub in self._publishers.values():
             self.destroy_publisher(pub)
         for sub in self._subscribers.values():
@@ -193,7 +185,6 @@ class ForceTestMixin:
             self.log_error("Force publisher not initialized")
             return False
             
-        # Wait for subscribers
         start_time = self.get_clock().now()
         while force_pub.get_subscription_count() == 0:
             if (self.get_clock().now() - start_time).nanoseconds > 5e9:
@@ -201,7 +192,6 @@ class ForceTestMixin:
                 break
             time.sleep(0.1)
         
-        # Apply force
         force_values = {'x': 0.0, 'y': 0.0, 'z': 0.0}
         force_values[axis] = force_magnitude
         
@@ -209,7 +199,6 @@ class ForceTestMixin:
         force_pub.publish(msg)
         self.log_info(f"Applied {force_magnitude}N force in {axis} direction")
         
-        # Non-blocking wait
         def remove_force():
             time.sleep(duration)
             if not self._shutdown_event.is_set():
@@ -231,12 +220,10 @@ class StiffnessControlMixin:
             self.log_error("Parameter service client not initialized")
             return False
             
-        # Create parameter
         param = Parameter()
         param.name = 'admittance.stiffness'
         param.value = ParameterValue(type=7, double_array_value=stiffness_values)
         
-        # Create and send request
         request = SetParameters.Request()
         request.parameters = [param]
         
@@ -299,7 +286,6 @@ class TestRunner:
         try:
             rclpy.init()
             
-            # Create appropriate test node based on mode
             if mode == TestMode.IMPEDANCE:
                 from ur_admittance_tests import ImpedanceTest
                 self.node = ImpedanceTest(self.config)
@@ -312,15 +298,12 @@ class TestRunner:
             else:
                 raise ValueError(f"Unknown test mode: {mode}")
             
-            # Setup executor
             self.executor = MultiThreadedExecutor()
             self.executor.add_node(self.node)
             
-            # Run in separate thread
             executor_thread = threading.Thread(target=self.executor.spin, daemon=True)
             executor_thread.start()
             
-            # Execute the test
             result = self.node.execute()
             
             return 0 if result else 1

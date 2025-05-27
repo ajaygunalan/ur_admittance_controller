@@ -17,8 +17,7 @@ def check_file_for_violations(filepath, patterns):
             lines = content.split('\n')
             
             for i, line in enumerate(lines, 1):
-                # Skip include lines to avoid false positives
-                if line.strip().startswith('#include'):
+                if line.strip().startswith('
                     continue
                     
                 for pattern_name, pattern in patterns.items():
@@ -36,7 +35,6 @@ def check_file_for_violations(filepath, patterns):
 def validate_frame_notation():
     """Main validation function."""
     
-    # Define patterns for old notation that should not exist
     violation_patterns = {
         'old_transform_cache_ft': r'\bft_transform_cache_\b',
         'old_transform_cache_ee': r'\bee_transform_cache_\b', 
@@ -44,12 +42,11 @@ def validate_frame_notation():
         'old_desired_pose': r'\bdesired_pose_\b',
         'old_cart_twist': r'\bcart_twist_\b',
         'old_pose_error': r'\bpose_error_\b',
-        'old_wrench_raw': r'\bwrench_\s*[^f]',  # wrench_ but not wrench_filtered_
+        'old_wrench_raw': r'\bwrench_\s*[^f]',
         'old_method_computePoseError': r'\bcomputePoseError\(\)',
-        'ambiguous_transform': r'transform_[^_\s]+$',  # transform_X without specifying A_B
+        'ambiguous_transform': r'transform_[^_\s]+$',
     }
     
-    # Define patterns for correct notation that should exist
     required_patterns = {
         'new_transform_base_ft': r'\btransform_base_ft_\b',
         'new_transform_base_tip': r'\btransform_base_tip_\b',
@@ -61,7 +58,6 @@ def validate_frame_notation():
         'new_method_computePoseError_tip_base': r'\bcomputePoseError_tip_base\b',
     }
     
-    # Get the source directory
     script_dir = Path(__file__).parent
     src_dir = script_dir.parent / 'src'
     include_dir = script_dir.parent / 'include'
@@ -72,7 +68,6 @@ def validate_frame_notation():
     violations_found = []
     patterns_found = {pattern: False for pattern in required_patterns.keys()}
     
-    # Check all C++ source and header files
     file_patterns = ['*.cpp', '*.hpp']
     search_dirs = [src_dir, include_dir]
     
@@ -85,11 +80,9 @@ def validate_frame_notation():
             for filepath in search_dir.glob(pattern):
                 print(f"Checking {filepath.name}...", end=' ')
                 
-                # Check for violations
                 file_violations = check_file_for_violations(filepath, violation_patterns)
                 violations_found.extend(file_violations)
                 
-                # Check for required patterns
                 try:
                     with open(filepath, 'r', encoding='utf-8') as f:
                         content = f.read()
@@ -109,7 +102,6 @@ def validate_frame_notation():
     print("📊 VALIDATION RESULTS")
     print("=" * 60)
     
-    # Report violations
     if violations_found:
         print(f"❌ VIOLATIONS FOUND: {len(violations_found)}")
         print("\nViolation Details:")
@@ -120,7 +112,6 @@ def validate_frame_notation():
     else:
         print("✅ NO VIOLATIONS FOUND - All old notation removed!")
     
-    # Report required patterns
     print("\n📋 Required Pattern Coverage:")
     missing_patterns = []
     for pattern_name, found in patterns_found.items():
@@ -129,7 +120,6 @@ def validate_frame_notation():
         if not found:
             missing_patterns.append(pattern_name)
     
-    # Overall assessment
     print("\n" + "=" * 60)
     if violations_found or missing_patterns:
         print("❌ VALIDATION FAILED")

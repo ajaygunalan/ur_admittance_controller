@@ -22,7 +22,6 @@ class ImpedanceTest(URAdmittanceTestBase, ForceTestMixin, StiffnessControlMixin)
     def __init__(self, config: TestConfig = TestConfig()):
         super().__init__('impedance_test_node', config)
         
-        # Setup publishers and service clients
         self.create_publisher('force', WrenchStamped, config.force_topic)
         self.create_service_client('parameters', SetParameters, 
                                   f'/{config.controller_name}/set_parameters')
@@ -33,52 +32,46 @@ class ImpedanceTest(URAdmittanceTestBase, ForceTestMixin, StiffnessControlMixin)
         """Execute the impedance test sequence"""
         self.log_info("=== Starting Impedance Mode Test ===")
         
-        # Wait for parameter service
         if not self.wait_for_service('parameters'):
             return False
             
-        # Test 1: Pure Admittance Mode (K=0)
         self.log_info("\n--- Testing Pure Admittance Mode (K=0) ---")
         if not self.set_stiffness_parameters([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]):
             return False
             
-        time.sleep(0.5)  # Let parameters settle
+        time.sleep(0.5)
         
         if not self.apply_force_sequence(self.config.test_force, 
                                         self.config.test_duration, 'x'):
             return False
             
         self.log_info("Expected: Robot should STAY at new position after force removal")
-        time.sleep(self.config.test_duration + 1.0)  # Wait for observation
+        time.sleep(self.config.test_duration + 1.0)
         
-        # Test 2: Impedance Mode (K>0)
         self.log_info("\n--- Testing Impedance Mode (K>0) ---")
         if not self.set_stiffness_parameters([100.0, 100.0, 100.0, 10.0, 10.0, 10.0]):
             return False
             
-        time.sleep(0.5)  # Let parameters settle
+        time.sleep(0.5)
         
         if not self.apply_force_sequence(self.config.test_force, 
                                         self.config.test_duration, 'x'):
             return False
             
         self.log_info("Expected: Robot should RETURN to original position after force removal")
-        time.sleep(self.config.test_duration + 1.0)  # Wait for observation
+        time.sleep(self.config.test_duration + 1.0)
         
-        # Test 3: Mixed Mode (different stiffness per axis)
         self.log_info("\n--- Testing Mixed Mode (XY compliant, Z stiff) ---")
         if not self.set_stiffness_parameters([0.0, 0.0, 200.0, 0.0, 0.0, 0.0]):
             return False
             
-        time.sleep(0.5)  # Let parameters settle
+        time.sleep(0.5)
         
-        # Test X axis (should stay)
         if not self.apply_force_sequence(self.config.test_force, 
                                         self.config.test_duration, 'x'):
             return False
         time.sleep(self.config.test_duration + 1.0)
         
-        # Test Z axis (should return)
         if not self.apply_force_sequence(self.config.test_force, 
                                         self.config.test_duration, 'z'):
             return False
@@ -92,12 +85,10 @@ class SafeStartupTest(URAdmittanceTestBase):
     def __init__(self, config: TestConfig = TestConfig()):
         super().__init__('safe_startup_test_node', config)
         
-        # Test state
         self.max_error = 0.0
         self.error_samples = []
         self.test_started = False
         
-        # Setup subscriber and service
         self.create_subscriber('pose_error', Twist, self._pose_error_callback)
         self.create_service_client('move_to_start', Trigger,
                                   f'/{config.controller_name}/move_to_start_pose')
@@ -122,20 +113,16 @@ class SafeStartupTest(URAdmittanceTestBase):
         """Execute the safe startup test"""
         self.log_info("=== Starting Safe Startup Test ===")
         
-        # Reset state
         self.max_error = 0.0
         self.error_samples.clear()
         self.test_started = False
         
-        # Wait for service
         if not self.wait_for_service('move_to_start'):
             return False
             
-        # Start monitoring
         self.test_started = True
         self.log_info("Started error monitoring")
         
-        # Call startup service
         request = Trigger.Request()
         result = self.call_service_async('move_to_start', request)
         
@@ -145,7 +132,6 @@ class SafeStartupTest(URAdmittanceTestBase):
             
         self.log_info(f"Startup initiated: {result.message}")
         
-        # Monitor for test duration with progress updates
         start_time = self.get_clock().now()
         last_update = start_time
         
@@ -153,7 +139,6 @@ class SafeStartupTest(URAdmittanceTestBase):
             if self._shutdown_event.wait(0.1):
                 break
                 
-            # Progress update
             current_time = self.get_clock().now()
             if (current_time - last_update).nanoseconds > self.config.progress_update_rate * 1e9:
                 elapsed = (current_time - start_time).nanoseconds / 1e9
@@ -161,13 +146,11 @@ class SafeStartupTest(URAdmittanceTestBase):
                     self.log_info(f"Progress: {elapsed:.1f}s, max error: {self.max_error:.4f}m")
                 last_update = current_time
                 
-            # Check for early failure
             with self._lock:
                 if self.max_error > self.config.max_error_threshold:
                     self.log_error(f"Error threshold exceeded: {self.max_error:.4f}m")
                     return False
         
-        # Final evaluation
         self.test_started = False
         with self._lock:
             num_samples = len(self.error_samples)
@@ -186,7 +169,6 @@ class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
     def __init__(self, config: TestConfig = TestConfig()):
         super().__init__('system_status_monitor', config)
         
-        # Expected controllers
         if config.focus_controller:
             self._expected_controllers = [config.focus_controller]
         else:
@@ -197,18 +179,15 @@ class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
                 'ur_admittance_controller'
             ]
         
-        # Setup service client
         self.create_service_client('list_controllers', ListControllers,
                                   '/controller_manager/list_controllers')
         
-        # Setup data monitoring
         self._data_received = {
             'joint_states': False,
             'ft_sensor': False,
             'admittance_velocity': False
         }
         
-        # Create subscribers
         self.create_subscriber('joint_states', JointState,
                               lambda msg: self.update_data_status('joint_states'), 10)
         self.create_subscriber('ft_sensor', WrenchStamped,
@@ -240,7 +219,6 @@ class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
         """Print formatted status report"""
         self.log_info("\n========== STATUS CHECK ==========")
         
-        # Check controllers
         if not self.wait_for_service('list_controllers', timeout=2.0):
             self.log_error("❌ Controller Manager not available!")
             self.log_info("💡 Start robot/simulation first")
@@ -249,7 +227,6 @@ class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
         controller_states = self.check_controllers()
         data_status = self.check_data_flow()
         
-        # Print controller status
         self.log_info("\n🎮 Controllers:")
         all_controllers_ok = True
         
@@ -265,7 +242,6 @@ class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
                 self.log_error(f"  ❌ {controller} [NOT FOUND]")
                 all_controllers_ok = False
                 
-        # Print data flow status
         self.log_info("\n📡 Data flow:")
         all_data_ok = True
         
@@ -276,13 +252,11 @@ class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
                 self.log_warn(f"  ❌ {topic}")
                 all_data_ok = False
                 
-        # Overall status
         if all_controllers_ok and all_data_ok:
             self.log_info("\n✅ SYSTEM READY")
         else:
             self.log_error("\n❌ SYSTEM NOT READY")
             
-        # Quick commands
         self.log_info("\n📋 Quick commands:")
         self.log_info("  • ros2 control list_controllers")
         self.log_info("  • ros2 topic echo /ft_sensor_readings --once")
@@ -293,10 +267,8 @@ class SystemStatusMonitor(URAdmittanceTestBase, SystemMonitorMixin):
     def execute(self) -> bool:
         """Execute system monitoring"""
         if self.config.check_period <= 0:
-            # Single check mode
             return self.print_status_report()
         else:
-            # Continuous monitoring mode
             self.log_info(f"Starting continuous monitoring (period: {self.config.check_period}s)")
             
             while not self._shutdown_event.wait(self.config.check_period):
@@ -325,7 +297,6 @@ def main():
     
     args = parser.parse_args()
     
-    # Create configuration
     config = TestConfig(
         controller_name=args.controller,
         test_force=args.force,
@@ -335,7 +306,6 @@ def main():
         realtime_logging=args.realtime_log
     )
     
-    # Map command line mode to TestMode enum
     mode_map = {
         'impedance': TestMode.IMPEDANCE,
         'safe_startup': TestMode.SAFE_STARTUP,
@@ -343,7 +313,6 @@ def main():
         'monitor': TestMode.CONTINUOUS_MONITOR
     }
     
-    # Create and run test
     from ur_admittance_utils import TestRunner
     runner = TestRunner(config)
     return runner.run(mode_map[args.mode])

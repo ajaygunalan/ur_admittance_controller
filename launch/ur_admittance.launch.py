@@ -4,23 +4,19 @@ UR Admittance Controller - MASTER Launch File
 This is the ONLY launch file you need! Handles everything.
 
 BASIC USAGE:
-  # Start everything (simulation)
   ros2 launch ur_admittance_controller ur_admittance.launch.py
 
-  # Real robot  
   ros2 launch ur_admittance_controller ur_admittance.launch.py use_sim:=false
 
-  # Just F/T sensor
   ros2 launch ur_admittance_controller ur_admittance.launch.py mode:=ft_only
 
-  # Demo mode (with impedance presets)
   ros2 launch ur_admittance_controller ur_admittance.launch.py mode:=demo
 
 ADVANCED OPTIONS:
-  ur_type:=ur10e                    # Robot type
-  start_active:=false               # Load but don't activate
-  demo_preset:=soft_impedance       # Demo configuration
-  controller_name:=my_controller    # Custom controller name
+  ur_type:=ur10e
+  start_active:=false
+  demo_preset:=soft_impedance
+  controller_name:=my_controller
 """
 
 from launch import LaunchDescription
@@ -32,9 +28,6 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    # ==========================================================================
-    # LAUNCH ARGUMENTS
-    # ==========================================================================
     declared_arguments = [
         DeclareLaunchArgument(
             "mode",
@@ -75,7 +68,6 @@ def generate_launch_description():
         ),
     ]
 
-    # Configuration
     mode = LaunchConfiguration("mode")
     use_sim = LaunchConfiguration("use_sim")
     ur_type = LaunchConfiguration("ur_type")
@@ -84,16 +76,12 @@ def generate_launch_description():
     demo_preset = LaunchConfiguration("demo_preset")
     ft_sensor_name = LaunchConfiguration("ft_sensor_name")
 
-    # Config file path - FIXED to use our single config
     config_file = PathJoinSubstitution([
         FindPackageShare("ur_admittance_controller"),
         "config", 
         "admittance_config.yaml"
     ])
 
-    # ==========================================================================
-    # F/T SENSOR BROADCASTER (for modes: full, ft_only, demo)
-    # ==========================================================================
     ft_sensor_broadcaster = Node(
         package="controller_manager",
         executable="spawner", 
@@ -107,13 +95,9 @@ def generate_launch_description():
         condition=UnlessCondition(LaunchConfiguration("mode").__eq__(TextSubstitution(text="controller_only")))
     )
 
-    # ==========================================================================
-    # ADMITTANCE CONTROLLER (for modes: full, controller_only, demo) 
-    # ==========================================================================
     
-    # Load controller (inactive first)
     load_admittance_controller = TimerAction(
-        period=2.0,  # Wait for F/T sensor if needed
+        period=2.0,
         actions=[
             Node(
                 package="controller_manager",
@@ -135,7 +119,6 @@ def generate_launch_description():
         condition=UnlessCondition(TextSubstitution(text="ft_only").__eq__(mode))
     )
 
-    # Activate controller (if requested)
     activate_admittance_controller = TimerAction(
         period=4.0,
         actions=[
@@ -154,11 +137,7 @@ def generate_launch_description():
         condition=IfCondition(start_active).__and__(UnlessCondition(TextSubstitution(text="ft_only").__eq__(mode)))
     )
 
-    # ==========================================================================
-    # DEMO MODE PRESETS (only for mode: demo)
-    # ==========================================================================
     
-    # Demo preset configurations
     demo_configs = {
         "pure_admittance": [
             "admittance.stiffness", "[0.0,0.0,0.0,0.0,0.0,0.0]",
@@ -183,7 +162,6 @@ def generate_launch_description():
         ]
     }
 
-    # Apply demo preset
     demo_preset_actions = []
     for preset_name, params in demo_configs.items():
         for i in range(0, len(params), 2):
@@ -196,14 +174,11 @@ def generate_launch_description():
             )
 
     apply_demo_preset = TimerAction(
-        period=6.0,  # After controller is loaded and active
+        period=6.0,
         actions=demo_preset_actions,
         condition=IfCondition(TextSubstitution(text="demo").__eq__(mode))
     )
 
-    # ==========================================================================
-    # SYSTEM STATUS & INSTRUCTIONS
-    # ==========================================================================
     
     system_status = TimerAction(
         period=8.0,
@@ -222,7 +197,6 @@ def generate_launch_description():
         ]
     )
 
-    # Usage instructions based on mode
     instructions = TimerAction(
         period=10.0,
         actions=[
@@ -261,20 +235,14 @@ def generate_launch_description():
         ]
     )
 
-    # ==========================================================================
-    # LAUNCH DESCRIPTION
-    # ==========================================================================
     
     return LaunchDescription(declared_arguments + [
-        # Core components
         ft_sensor_broadcaster,
         load_admittance_controller, 
         activate_admittance_controller,
         
-        # Demo mode
         apply_demo_preset,
         
-        # Monitoring
         system_status,
         instructions
     ])

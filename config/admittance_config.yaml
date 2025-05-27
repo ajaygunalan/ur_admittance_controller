@@ -1,20 +1,6 @@
-# Complete UR Admittance Controller Configuration
-# This is the ONLY config file you need - everything is here!
 
-# System-wide controller manager (optional - uncomment if running full system)
-# controller_manager:
-#   ros__parameters:
-#     update_rate: 1000  # Hz
-#     ur_admittance_controller:
-#       type: ur_admittance_controller/URAdmittanceController
-#     joint_state_broadcaster:
-#       type: joint_state_broadcaster/JointStateBroadcaster
-#     ft_sensor_broadcaster:
-#       type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
 
-# Main controller configuration
 ur_admittance_controller:
-  # Controller chaining configuration
   downstream_controller_name:
     type: string
     default_value: "scaled_joint_trajectory_controller"
@@ -33,15 +19,12 @@ ur_admittance_controller:
     default_value: ["position", "velocity"]
     description: "State interface types to claim from hardware"
 
-  # F/T sensor configuration
   ft_sensor_name:
     type: string
     default_value: "wrist_ft_sensor"
     description: "Name of the F/T sensor hardware interface"
 
-  # Add admittance namespace for better organization
   admittance:
-    # Pure admittance control parameters
     mass:
       type: double_array
       default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
@@ -51,8 +34,6 @@ ur_admittance_controller:
         Range: (0.1, 100.0] for translations, (0.01, 10.0] for rotations
         Higher values = slower response, more stable
         Lower values = faster response, less stable
-      # Comments describing valid ranges instead of validation block
-      # Translations: 0.1 to 100.0, Rotations: 0.01 to 10.0
 
     stiffness:
       type: double_array
@@ -76,7 +57,6 @@ ur_admittance_controller:
         50-200 N/m: Moderate stiffness
         200-500 N/m: Firm return
         500-2000 N/m: Very stiff
-      # Valid range: [0.0, 2000.0] for translations, [0.0, 200.0] for rotations
 
     damping_ratio:
       type: double_array
@@ -89,9 +69,7 @@ ur_admittance_controller:
         Values = 1.0: Critically damped (no oscillation, optimal response)
         Values > 1.0: Overdamped (no oscillation, slower response)
         Used to compute D matrix based on M and K: D = 2ζ√(MK) if K>0
-      # Valid range: 0.0 to 10.0 for all axes
 
-    # Control behavior
     enabled_axes:
       type: bool_array
       default_value: [true, true, true, true, true, true]
@@ -113,7 +91,6 @@ ur_admittance_controller:
         Smaller values: More sensitive to forces/torques (may detect noise)
         Larger values: Less sensitive (requires more deliberate force)
         Used to filter out sensor noise and unintentional contacts
-      # Valid range: 0.01 to 20.0
 
     filter_coefficient:
       type: double
@@ -125,7 +102,6 @@ ur_admittance_controller:
         Formula: filtered = (1-coeff)*previous + coeff*current
         Smaller values: More filtering, smoother motion, more lag
         Larger values: Less filtering, more responsive, may amplify noise
-      # Valid range: 0.0 to 1.0
 
     drift_reset_threshold:
       type: double
@@ -138,9 +114,7 @@ ur_admittance_controller:
         will automatically update reference position to prevent drift.
         Smaller values: More accurate positioning, may detect noise
         Larger values: Less sensitive, more motion required to reset
-      # Valid range: 0.0 to 0.1
 
-  # Cartesian velocity safety limits
   max_linear_velocity:
     type: double
     default_value: 0.5
@@ -151,7 +125,6 @@ ur_admittance_controller:
       Critical safety parameter that limits the maximum translational
       velocity regardless of external forces. Should be set based on
       workspace constraints and safety requirements.
-    # Valid range: 0.01 to 2.0
 
   max_angular_velocity:
     type: double
@@ -163,14 +136,12 @@ ur_admittance_controller:
       Critical safety parameter that limits the maximum rotational
       velocity regardless of external torques. Should be set based on
       workspace constraints and safety requirements.
-    # Valid range: 0.01 to 3.14 rad/s
 
   dynamic_parameters:
     type: bool
     default_value: true
     description: "Enable live parameter tuning"
 
-  # Frame configuration
   world_frame:
     type: string
     default_value: "world"
@@ -191,7 +162,6 @@ ur_admittance_controller:
     default_value: "tool0"
     description: "F/T sensor frame"
 
-  # Joint limits
   joint_limits_position_min:
     type: double_array
     default_value: [-6.283, -6.283, -3.142, -6.283, -6.283, -6.283]
@@ -207,7 +177,6 @@ ur_admittance_controller:
     default_value: [3.14, 3.14, 3.14, 6.28, 6.28, 6.28]
     description: "Maximum joint velocity limits (rad/s)"
 
-  # Kinematics plugin
   kinematics_plugin_package:
     type: string
     default_value: "ur_kinematics"
@@ -218,7 +187,4 @@ ur_admittance_controller:
     default_value: "ur_kinematics/URKinematicsPlugin"
     description: "Name of the kinematics plugin to use"
 
-# ==============================================================================
-# EXAMPLE CONFIGURATIONS - Copy these values to override defaults above
-# ==============================================================================
 

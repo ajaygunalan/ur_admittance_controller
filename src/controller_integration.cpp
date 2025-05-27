@@ -1,10 +1,3 @@
-/**
- * @file controller_integration.cpp
- * @brief External system integration for UR Admittance Controller
- * 
- * Handles integration with TF2 transforms, kinematics plugins,
- * URDF parsing, and hardware interface validation.
- */
 
 #include "admittance_controller.hpp"
 
@@ -16,14 +9,12 @@ bool AdmittanceController::waitForTransforms()
   std::string error;
   auto now = get_node()->get_clock()->now();
   
-  // Always check world->base and base->tip transforms
   bool transforms_available = 
     tf_buffer_->canTransform(params_.world_frame, params_.base_link, 
                             rclcpp::Time(0), timeout, &error) &&
     tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
                             rclcpp::Time(0), timeout, &error);
   
-  // Always check F/T transform, regardless of frame configuration
   transforms_available = transforms_available && 
     tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
                             rclcpp::Time(0), timeout, &error);
@@ -33,26 +24,20 @@ bool AdmittanceController::waitForTransforms()
     return false;
   }
   
-  // Initialize transform cache frame names and reset the cache
   transform_base_ft_.reset();
   transform_base_tip_.reset();
   
-  // Set frame names for later lookups
   transform_base_ft_.target_frame = params_.base_link;
   transform_base_ft_.source_frame = params_.ft_frame;
   
   transform_base_tip_.target_frame = params_.base_link;
   transform_base_tip_.source_frame = params_.tip_link;
   
-  // Explicitly request the first transform update
   transform_update_needed_.store(true);
   
-  // Do an initial transform update to populate the caches
   try {
     updateTransformCaches();
     
-    // Verify the transforms were cached properly
-    // For Scenario B (ft_frame == base_link), F/T transform cache might not be valid
     bool ee_valid = transform_base_tip_.isValid();
     bool ft_valid = (params_.ft_frame == params_.base_link) || transform_base_ft_.isValid();
     
@@ -74,11 +59,9 @@ bool AdmittanceController::waitForTransforms()
 bool AdmittanceController::loadKinematics()
 {
   try {
-    // Store the class loader in a member variable so it doesn't get destroyed
     kinematics_loader_ = std::make_shared<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>>(
       params_.kinematics_plugin_package, "kinematics_interface::KinematicsInterface");
     
-    // Get the plugin instance with the correct unique_ptr type
     auto plugin_instance = kinematics_loader_->createUniqueInstance(params_.kinematics_plugin_name);
     kinematics_ = std::move(plugin_instance);
     
@@ -103,7 +86,6 @@ bool AdmittanceController::loadJointLimitsFromURDF(
   std::vector<JointLimits> & limits)
 {
   try {
-    // Get robot description parameter
     std::string robot_description;
     if (!node->get_parameter("robot_description", robot_description)) {
       RCLCPP_ERROR(node->get_logger(), 
@@ -111,7 +93,6 @@ bool AdmittanceController::loadJointLimitsFromURDF(
       return false;
     }
     
-    // Parse URDF
     urdf::Model model;
     if (!model.initString(robot_description)) {
       RCLCPP_ERROR(node->get_logger(), "Failed to parse URDF");
@@ -120,7 +101,6 @@ bool AdmittanceController::loadJointLimitsFromURDF(
     
     limits.resize(joint_names.size());
     
-    // Extract limits for each joint
     for (size_t i = 0; i < joint_names.size(); ++i) {
       auto joint = model.getJoint(joint_names[i]);
       if (!joint) {
@@ -135,11 +115,10 @@ bool AdmittanceController::loadJointLimitsFromURDF(
         return false;
       }
       
-      // CRITICAL: Use real UR limits from URDF
       limits[i].min_position = joint->limits->lower;
       limits[i].max_position = joint->limits->upper;
       limits[i].max_velocity = joint->limits->velocity;
-      limits[i].max_acceleration = joint->limits->effort / 10.0; // Rough estimate
+      limits[i].max_acceleration = joint->limits->effort / 10.0;
       
       RCLCPP_INFO(node->get_logger(),
         "Joint %s limits: pos[%.3f, %.3f], vel[%.3f]",
@@ -158,4 +137,4 @@ bool AdmittanceController::loadJointLimitsFromURDF(
   }
 }
 
-} // namespace ur_admittance_controller
+}

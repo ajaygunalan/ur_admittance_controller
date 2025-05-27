@@ -17,10 +17,9 @@ class SafeStartupTest(Node):
     def __init__(self):
         super().__init__('safe_startup_test')
         
-        # Parameters
-        self.declare_parameter('max_error_threshold', 0.15)  # meters
-        self.declare_parameter('test_timeout', 15.0)  # seconds
-        self.declare_parameter('service_timeout', 5.0)  # seconds
+        self.declare_parameter('max_error_threshold', 0.15)
+        self.declare_parameter('test_timeout', 15.0)
+        self.declare_parameter('service_timeout', 5.0)
         self.declare_parameter('error_topic', '/ur_admittance_controller/pose_error')
         self.declare_parameter('service_name', '/ur_admittance_controller/move_to_start_pose')
         
@@ -30,18 +29,15 @@ class SafeStartupTest(Node):
         error_topic = self.get_parameter('error_topic').get_parameter_value().string_value
         service_name = self.get_parameter('service_name').get_parameter_value().string_value
         
-        # State tracking
         self.max_error = 0.0
         self.error_samples = []
         self.test_started = False
         self.service_completed = False
         self.lock = threading.Lock()
         
-        # Set up subscription
         self.pose_error_sub = self.create_subscription(
             Twist, error_topic, self.pose_error_callback, 10)
             
-        # Service client
         self.service_client = self.create_client(Trigger, service_name)
         
         self.get_logger().info(f"Safe Startup Test initialized. Error threshold: {self.max_error_threshold}m")
@@ -56,8 +52,7 @@ class SafeStartupTest(Node):
             self.max_error = max(self.max_error, error)
             self.error_samples.append((self.get_clock().now(), error))
             
-            # Log significant errors
-            if error > self.max_error_threshold * 0.8:  # Warn at 80% of threshold
+            if error > self.max_error_threshold * 0.8:
                 self.get_logger().warn(f"High error detected: {error:.4f}m (threshold: {self.max_error_threshold}m)")
             else:
                 self.get_logger().debug(f"Current error: {error:.4f}m, Max error: {self.max_error:.4f}m")
@@ -108,34 +103,27 @@ class SafeStartupTest(Node):
         """Execute the safe startup test"""
         self.get_logger().info("=== Starting Safe Startup Test ===")
         
-        # Reset state
         self.reset_test_state()
         
-        # Check service availability
         if not self.wait_for_service_ready():
             return False
         
-        # Start monitoring errors
         self.test_started = True
         self.get_logger().info("Started error monitoring")
         
-        # Call the service
         if not self.call_move_to_start_pose():
             return False
         
         self.service_completed = True
         
-        # Wait for movement to complete (non-blocking with progress updates)
         self.get_logger().info(f"Waiting up to {self.test_timeout}s for startup sequence to complete...")
         
         start_time = self.get_clock().now()
         last_progress_time = start_time
         
         while (self.get_clock().now() - start_time).nanoseconds < self.test_timeout * 1e9:
-            # Spin to process callbacks
             rclpy.spin_once(self, timeout_sec=0.1)
             
-            # Progress update every 2 seconds
             current_time = self.get_clock().now()
             if (current_time - last_progress_time).nanoseconds > 2e9:
                 elapsed = (current_time - start_time).nanoseconds / 1e9
@@ -143,13 +131,11 @@ class SafeStartupTest(Node):
                     self.get_logger().info(f"Progress: {elapsed:.1f}s elapsed, max error so far: {self.max_error:.4f}m")
                 last_progress_time = current_time
             
-            # Check for early failure
             with self.lock:
                 if self.max_error > self.max_error_threshold:
                     self.get_logger().error(f"Test failed early: error {self.max_error:.4f}m > threshold {self.max_error_threshold}m")
                     return False
         
-        # Final evaluation
         with self.lock:
             final_max_error = self.max_error
             num_samples = len(self.error_samples)
@@ -167,20 +153,16 @@ class SafeStartupTest(Node):
 def main(args=None):
     rclpy.init(args=args)
     
-    # Use MultiThreadedExecutor for better callback handling
     executor = MultiThreadedExecutor()
     test_node = SafeStartupTest()
     executor.add_node(test_node)
     
-    # Run executor in separate thread
     executor_thread = threading.Thread(target=executor.spin, daemon=True)
     executor_thread.start()
     
     try:
-        # Run the test
         result = test_node.test_startup()
         
-        # Print final results
         if result:
             print("\n✅ TEST PASSED: Safe startup sequence completed successfully!")
             exit_code = 0
@@ -190,12 +172,11 @@ def main(args=None):
     
     except KeyboardInterrupt:
         test_node.get_logger().info("Test interrupted by user")
-        exit_code = 130  # Standard exit code for SIGINT
+        exit_code = 130
     except Exception as e:
         test_node.get_logger().error(f"Test failed with exception: {str(e)}")
         exit_code = 2
     finally:
-        # Cleanup
         test_node.get_logger().info("Cleaning up...")
         executor.shutdown()
         test_node.destroy_node()
