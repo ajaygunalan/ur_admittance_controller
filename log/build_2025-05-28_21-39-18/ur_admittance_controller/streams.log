@@ -1,0 +1,63 @@
+[0.006s] Invoking command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller -- -j32 -l32
+[0.064s] [ 22%] Built target ur_admittance_controller_parameters
+[0.111s] [ 33%] Building CXX object CMakeFiles/ur_admittance_controller.dir/src/realtime_computations.cpp.o
+[0.112s] [ 44%] Building CXX object CMakeFiles/ur_admittance_controller.dir/src/sensor_interface.cpp.o
+[4.483s] [ 55%] Linking CXX shared library libur_admittance_controller.so
+[4.750s] [100%] Built target ur_admittance_controller
+[4.759s] Invoked command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller -- -j32 -l32
+[4.768s] Invoking command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller
+[4.776s] -- Install configuration: ""
+[4.776s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/ur_admittance_controller
+[4.776s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/ur_admittance_controller/ur_admittance_controller_parameters.hpp
+[4.776s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/ur_admittance_controller.xml
+[4.776s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/libur_admittance_controller.so
+[4.781s] -- Set non-toolchain portion of runtime path of "/home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/libur_admittance_controller.so" to ""
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/matrix_utilities.hpp
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/admittance_controller.hpp
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/admittance_types.hpp
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/admittance_constants.hpp
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/config
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/config/admittance_config.yaml
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/launch
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/launch/ur_admittance.launch.py
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/launch/__pycache__
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/launch/__pycache__/ur_admittance.launch.cpython-312.pyc
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/system_status.py
+[4.782s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/ur_admittance_tests.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/ur_admittance_utils.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/validate_notation.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/safe_startup_test.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/test_impedance_modes.cpython-312.pyc
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/test_safe_startup.cpython-312.pyc
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/system_status.cpython-312.pyc
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/ur_admittance_tests.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/ur_admittance_utils.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/validate_notation.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/safe_startup_test.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/system_status.py
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/library_path.sh
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/library_path.dsv
+[4.783s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ament_index/resource_index/package_run_dependencies/ur_admittance_controller
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ament_index/resource_index/parent_prefix_path/ur_admittance_controller
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/ament_prefix_path.sh
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/ament_prefix_path.dsv
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/path.sh
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/path.dsv
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.bash
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.sh
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.zsh
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.dsv
+[4.784s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/package.dsv
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ament_index/resource_index/packages/ur_admittance_controller
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ament_index/resource_index/controller_interface__pluginlib__plugin/ur_admittance_controller
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/export_ur_admittance_controllerExport.cmake
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/export_ur_admittance_controllerExport-noconfig.cmake
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ament_cmake_export_dependencies-extras.cmake
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ament_cmake_export_targets-extras.cmake
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ur_admittance_controllerConfig.cmake
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ur_admittance_controllerConfig-version.cmake
+[4.784s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/package.xml
+[4.785s] Invoked command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller

@@ -1,0 +1,154 @@
+[0.005s] Invoking command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/ajay/ros2_ws/src/ur_admittance_controller -DCMAKE_INSTALL_PREFIX=/home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller
+[0.054s] -- The CXX compiler identification is GNU 13.3.0
+[0.069s] -- Detecting CXX compiler ABI info
+[0.175s] -- Detecting CXX compiler ABI info - done
+[0.186s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.187s] -- Detecting CXX compile features
+[0.188s] -- Detecting CXX compile features - done
+[0.203s] -- Found ament_cmake: 2.5.4 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.367s] -- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+[0.440s] -- Found controller_interface: 4.29.0 (/opt/ros/jazzy/share/controller_interface/cmake)
+[0.473s] -- Found rosidl_generator_c: 4.6.5 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+[0.482s] -- Found rosidl_generator_cpp: 4.6.5 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+[0.493s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.505s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.638s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.668s] -- Found rmw_implementation_cmake: 7.3.2 (/opt/ros/jazzy/share/rmw_implementation_cmake/cmake)
+[0.670s] -- Found rmw_fastrtps_cpp: 8.4.2 (/opt/ros/jazzy/share/rmw_fastrtps_cpp/cmake)
+[0.686s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.768s] -- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.13")  
+[0.772s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.790s] -- Found FastRTPS: /opt/ros/jazzy/include (Required is at least version "2.13") 
+[0.792s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.796s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.804s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[1.006s] -- Found generate_parameter_library: 0.4.0 (/opt/ros/jazzy/share/generate_parameter_library/cmake)
+[1.009s] -- Found parameter_traits: 0.4.0 (/opt/ros/jazzy/share/parameter_traits/cmake)
+[1.022s] -- Found std_srvs: 5.3.6 (/opt/ros/jazzy/share/std_srvs/cmake)
+[1.034s] -- Found tf2: 0.36.11 (/opt/ros/jazzy/share/tf2/cmake)
+[1.037s] -- Found tf2_ros: 0.36.11 (/opt/ros/jazzy/share/tf2_ros/cmake)
+[1.077s] -- Found tf2_geometry_msgs: 0.36.11 (/opt/ros/jazzy/share/tf2_geometry_msgs/cmake)
+[1.083s] -- Found eigen3_cmake_module: 0.3.0 (/opt/ros/jazzy/share/eigen3_cmake_module/cmake)
+[1.084s] -- Found Eigen3: TRUE (found version "3.4.0") 
+[1.084s] -- Ensuring Eigen3 include directory is part of orocos-kdl CMake target
+[1.087s] -- Found tf2_eigen: 0.36.11 (/opt/ros/jazzy/share/tf2_eigen/cmake)
+[1.091s] -- Found kinematics_interface: 1.3.0 (/opt/ros/jazzy/share/kinematics_interface/cmake)
+[1.093s] -- Found kdl_parser: 2.11.0 (/opt/ros/jazzy/share/kdl_parser/cmake)
+[1.099s] -- Found ament_cmake_gmock: 2.5.4 (/opt/ros/jazzy/share/ament_cmake_gmock/cmake)
+[1.101s] -- Found controller_manager: 4.29.0 (/opt/ros/jazzy/share/controller_manager/cmake)
+[1.142s] -- Found ros2_control_test_assets: 4.29.0 (/opt/ros/jazzy/share/ros2_control_test_assets/cmake)
+[1.191s] -- Configuring done (1.2s)
+[1.203s] -- Generating done (0.0s)
+[1.206s] -- Build files have been written to: /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller
+[1.213s] Invoked command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/ajay/ros2_ws/src/ur_admittance_controller -DCMAKE_INSTALL_PREFIX=/home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller
+[1.213s] Invoking command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller -- -j32 -l32
+[1.269s] [ 11%] Running `/opt/ros/jazzy/bin/generate_parameter_library_cpp /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller/include/ur_admittance_controller/ur_admittance_controller_parameters.hpp /home/ajay/ros2_ws/src/ur_admittance_controller/config/admittance_config.yaml `
+[1.750s] [ 22%] Creating deprecated header file /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller/include/ur_admittance_controller_parameters.hpp
+[1.802s] [ 22%] Built target ur_admittance_controller_parameters
+[1.830s] [ 44%] Building CXX object CMakeFiles/ur_admittance_controller.dir/src/sensor_interface.cpp.o
+[1.830s] [ 44%] Building CXX object CMakeFiles/ur_admittance_controller.dir/src/realtime_computations.cpp.o
+[1.830s] [ 55%] Building CXX object CMakeFiles/ur_admittance_controller.dir/src/controller_integration.cpp.o
+[1.831s] [ 66%] Building CXX object CMakeFiles/ur_admittance_controller.dir/src/admittance_controller.cpp.o
+[1.832s] [ 77%] Building CXX object CMakeFiles/ur_admittance_controller.dir/src/plugin_export.cpp.o
+[1.832s] [ 88%] Building CXX object CMakeFiles/ur_admittance_controller.dir/src/utilities.cpp.o
+[4.242s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/sensor_interface.cpp: In member function ‘bool ur_admittance_controller::AdmittanceController::updateSensorData()’:
+[4.242s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/sensor_interface.cpp:34:30: warning: ‘double hardware_interface::LoanedStateInterface::get_value() const’ is deprecated: Use std::optional<T> get_optional() instead to retrieve the value. This method will be removed by the ROS 2 Kilted Kaiju release. [-Wdeprecated-declarations]
+[4.242s]    34 |       if (interface.get_value() != std::numeric_limits<double>::quiet_NaN()) {
+[4.242s]       |           ~~~~~~~~~~~~~~~~~~~^~
+[4.242s] In file included from /opt/ros/jazzy/include/controller_interface/controller_interface/controller_interface_base.hpp:28,
+[4.242s]                  from /opt/ros/jazzy/include/controller_interface/controller_interface/chainable_controller_interface.hpp:23,
+[4.242s]                  from /home/ajay/ros2_ws/src/ur_admittance_controller/include/admittance_controller.hpp:27,
+[4.242s]                  from /home/ajay/ros2_ws/src/ur_admittance_controller/src/sensor_interface.cpp:9:
+[4.242s] /opt/ros/jazzy/include/hardware_interface/hardware_interface/loaned_state_interface.hpp:94:10: note: declared here
+[4.242s]    94 |   double get_value() const
+[4.243s]       |          ^~~~~~~~~
+[4.243s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/sensor_interface.cpp:35:44: warning: ‘double hardware_interface::LoanedStateInterface::get_value() const’ is deprecated: Use std::optional<T> get_optional() instead to retrieve the value. This method will be removed by the ROS 2 Kilted Kaiju release. [-Wdeprecated-declarations]
+[4.243s]    35 |         raw_wrench(i) = interface.get_value();
+[4.243s]       |                         ~~~~~~~~~~~~~~~~~~~^~
+[4.243s] /opt/ros/jazzy/include/hardware_interface/hardware_interface/loaned_state_interface.hpp:94:10: note: declared here
+[4.243s]    94 |   double get_value() const
+[4.243s]       |          ^~~~~~~~~
+[4.285s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/sensor_interface.cpp: In member function ‘bool ur_admittance_controller::AdmittanceController::checkDeadband()’:
+[4.285s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/sensor_interface.cpp:231:73: warning: ‘double hardware_interface::LoanedStateInterface::get_value() const’ is deprecated: Use std::optional<T> get_optional() instead to retrieve the value. This method will be removed by the ROS 2 Kilted Kaiju release. [-Wdeprecated-declarations]
+[4.285s]   231 |         joint_position_references_[i] = state_interfaces_[idx].get_value();
+[4.285s]       |                                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+[4.285s] /opt/ros/jazzy/include/hardware_interface/hardware_interface/loaned_state_interface.hpp:94:10: note: declared here
+[4.285s]    94 |   double get_value() const
+[4.286s]       |          ^~~~~~~~~
+[4.341s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/realtime_computations.cpp: In member function ‘bool ur_admittance_controller::AdmittanceController::convertToJointSpace(const ur_admittance_controller::Vector6d&, const rclcpp::Duration&)’:
+[4.341s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/realtime_computations.cpp:474:55: warning: ‘double hardware_interface::LoanedStateInterface::get_value() const’ is deprecated: Use std::optional<T> get_optional() instead to retrieve the value. This method will be removed by the ROS 2 Kilted Kaiju release. [-Wdeprecated-declarations]
+[4.341s]   474 |     current_pos_[i] = state_interfaces_[idx].get_value();
+[4.341s]       |                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+[4.341s] In file included from /opt/ros/jazzy/include/controller_interface/controller_interface/controller_interface_base.hpp:28,
+[4.341s]                  from /opt/ros/jazzy/include/controller_interface/controller_interface/chainable_controller_interface.hpp:23,
+[4.342s]                  from /home/ajay/ros2_ws/src/ur_admittance_controller/include/admittance_controller.hpp:27,
+[4.342s]                  from /home/ajay/ros2_ws/src/ur_admittance_controller/src/realtime_computations.cpp:10:
+[4.342s] /opt/ros/jazzy/include/hardware_interface/hardware_interface/loaned_state_interface.hpp:94:10: note: declared here
+[4.342s]    94 |   double get_value() const
+[4.342s]       |          ^~~~~~~~~
+[4.342s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/realtime_computations.cpp: In member function ‘bool ur_admittance_controller::AdmittanceController::handleDriftReset()’:
+[4.342s] /home/ajay/ros2_ws/src/ur_admittance_controller/src/realtime_computations.cpp:559:65: warning: ‘double hardware_interface::LoanedStateInterface::get_value() const’ is deprecated: Use std::optional<T> get_optional() instead to retrieve the value. This method will be removed by the ROS 2 Kilted Kaiju release. [-Wdeprecated-declarations]
+[4.342s]   559 |       joint_positions_[i++] = state_interfaces_[index].get_value();
+[4.342s]       |                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+[4.342s] /opt/ros/jazzy/include/hardware_interface/hardware_interface/loaned_state_interface.hpp:94:10: note: declared here
+[4.343s]    94 |   double get_value() const
+[4.343s]       |          ^~~~~~~~~
+[7.607s] [100%] Linking CXX shared library libur_admittance_controller.so
+[7.856s] [100%] Built target ur_admittance_controller
+[7.863s] Invoked command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller -- -j32 -l32
+[7.873s] Invoking command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller
+[7.880s] -- Install configuration: ""
+[7.881s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/ur_admittance_controller
+[7.881s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/ur_admittance_controller/ur_admittance_controller_parameters.hpp
+[7.881s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/ur_admittance_controller.xml
+[7.881s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/libur_admittance_controller.so
+[7.886s] -- Set non-toolchain portion of runtime path of "/home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/libur_admittance_controller.so" to ""
+[7.886s] -- Up-to-date: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include
+[7.886s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/matrix_utilities.hpp
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/admittance_controller.hpp
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/admittance_types.hpp
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/include/admittance_constants.hpp
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/config
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/config/admittance_config.yaml
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/launch
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/launch/ur_admittance.launch.py
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/launch/__pycache__
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/launch/__pycache__/ur_admittance.launch.cpython-312.pyc
+[7.887s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/system_status.py
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/ur_admittance_tests.py
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/ur_admittance_utils.py
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/validate_notation.py
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/safe_startup_test.py
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/test_impedance_modes.cpython-312.pyc
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/test_safe_startup.cpython-312.pyc
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/system_status.cpython-312.pyc
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/ur_admittance_tests.py
+[7.888s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/ur_admittance_utils.py
+[7.889s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/validate_notation.py
+[7.889s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/safe_startup_test.py
+[7.889s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/lib/ur_admittance_controller/system_status.py
+[7.889s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/library_path.sh
+[7.889s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/library_path.dsv
+[7.889s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ament_index/resource_index/package_run_dependencies/ur_admittance_controller
+[7.889s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ament_index/resource_index/parent_prefix_path/ur_admittance_controller
+[7.889s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/ament_prefix_path.sh
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/ament_prefix_path.dsv
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/path.sh
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/environment/path.dsv
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.bash
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.sh
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.zsh
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.dsv
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/package.dsv
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ament_index/resource_index/packages/ur_admittance_controller
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ament_index/resource_index/controller_interface__pluginlib__plugin/ur_admittance_controller
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/export_ur_admittance_controllerExport.cmake
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/export_ur_admittance_controllerExport-noconfig.cmake
+[7.890s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ament_cmake_export_dependencies-extras.cmake
+[7.891s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ament_cmake_export_targets-extras.cmake
+[7.891s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ur_admittance_controllerConfig.cmake
+[7.891s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ur_admittance_controllerConfig-version.cmake
+[7.891s] -- Installing: /home/ajay/ros2_ws/src/ur_admittance_controller/install/ur_admittance_controller/share/ur_admittance_controller/package.xml
+[7.891s] Invoked command in '/home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/ajay/ros2_ws/src/ur_admittance_controller/build/ur_admittance_controller

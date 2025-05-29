@@ -1,0 +1,85 @@
+[0.007s] Invoking command in '/home/ajay/ros2_ws/build/ur_admittance_controller': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/ajay/ros2_ws/build/ur_admittance_controller -- -j32 -l32
+[0.025s] -- Found ament_cmake: 2.5.4 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.159s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[0.162s] -- Found controller_interface: 4.29.0 (/opt/ros/jazzy/share/controller_interface/cmake)
+[0.177s] -- Found rosidl_generator_c: 4.6.5 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+[0.182s] -- Found rosidl_generator_cpp: 4.6.5 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+[0.187s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.194s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.290s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.307s] -- Found rmw_implementation_cmake: 7.3.2 (/opt/ros/jazzy/share/rmw_implementation_cmake/cmake)
+[0.308s] -- Found rmw_fastrtps_cpp: 8.4.2 (/opt/ros/jazzy/share/rmw_fastrtps_cpp/cmake)
+[0.317s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.322s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.335s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.343s] -- Found TinyXML2 via Config file: /usr/lib/x86_64-linux-gnu/cmake/tinyxml2
+[0.359s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.428s] -- Found generate_parameter_library: 0.4.0 (/opt/ros/jazzy/share/generate_parameter_library/cmake)
+[0.428s] -- Found parameter_traits: 0.4.0 (/opt/ros/jazzy/share/parameter_traits/cmake)
+[0.432s] -- Found std_srvs: 5.3.6 (/opt/ros/jazzy/share/std_srvs/cmake)
+[0.440s] -- Found tf2: 0.36.11 (/opt/ros/jazzy/share/tf2/cmake)
+[0.442s] -- Found tf2_ros: 0.36.11 (/opt/ros/jazzy/share/tf2_ros/cmake)
+[0.476s] -- Found tf2_geometry_msgs: 0.36.11 (/opt/ros/jazzy/share/tf2_geometry_msgs/cmake)
+[0.477s] -- Found eigen3_cmake_module: 0.3.0 (/opt/ros/jazzy/share/eigen3_cmake_module/cmake)
+[0.478s] -- Ensuring Eigen3 include directory is part of orocos-kdl CMake target
+[0.479s] -- Found tf2_eigen: 0.36.11 (/opt/ros/jazzy/share/tf2_eigen/cmake)
+[0.481s] -- Found kinematics_interface: 1.3.0 (/opt/ros/jazzy/share/kinematics_interface/cmake)
+[0.482s] -- Found kdl_parser: 2.11.0 (/opt/ros/jazzy/share/kdl_parser/cmake)
+[0.487s] -- Found ament_cmake_gmock: 2.5.4 (/opt/ros/jazzy/share/ament_cmake_gmock/cmake)
+[0.487s] -- Found controller_manager: 4.29.0 (/opt/ros/jazzy/share/controller_manager/cmake)
+[0.523s] -- Found ros2_control_test_assets: 4.29.0 (/opt/ros/jazzy/share/ros2_control_test_assets/cmake)
+[0.570s] -- Configuring done (0.5s)
+[0.582s] -- Generating done (0.0s)
+[0.585s] -- Build files have been written to: /home/ajay/ros2_ws/build/ur_admittance_controller
+[0.618s] [ 22%] Built target ur_admittance_controller_parameters
+[0.667s] [100%] Built target ur_admittance_controller
+[0.674s] Invoked command in '/home/ajay/ros2_ws/build/ur_admittance_controller' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/ajay/ros2_ws/build/ur_admittance_controller -- -j32 -l32
+[0.684s] Invoking command in '/home/ajay/ros2_ws/build/ur_admittance_controller': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/ajay/ros2_ws/build/ur_admittance_controller
+[0.693s] -- Install configuration: ""
+[0.693s] -- Execute custom install script
+[0.693s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/include/ur_admittance_controller/ur_admittance_controller_parameters.hpp
+[0.694s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller//ur_admittance_controller.xml
+[0.694s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/include/admittance_constants.hpp
+[0.694s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/include/admittance_controller.hpp
+[0.694s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/include/admittance_types.hpp
+[0.695s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/include/matrix_utilities.hpp
+[0.695s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/config/admittance_config.yaml
+[0.695s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/launch/__pycache__/ur_admittance.launch.cpython-312.pyc
+[0.695s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/launch/ur_admittance.launch.py
+[0.695s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/system_status.cpython-312.pyc
+[0.696s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/test_impedance_modes.cpython-312.pyc
+[0.696s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/scripts/__pycache__/test_safe_startup.cpython-312.pyc
+[0.696s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/scripts/safe_startup_test.py
+[0.696s] -- Symlinking: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/scripts/system_status.py
+[0.708s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/scripts/ur_admittance_tests.py
+[0.708s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/scripts/ur_admittance_utils.py
+[0.708s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/scripts/validate_notation.py
+[0.709s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/lib/ur_admittance_controller/ur_admittance_tests.py
+[0.709s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/lib/ur_admittance_controller/ur_admittance_utils.py
+[0.709s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/lib/ur_admittance_controller/validate_notation.py
+[0.709s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/lib/ur_admittance_controller/safe_startup_test.py
+[0.709s] -- Symlinking: /home/ajay/ros2_ws/install/ur_admittance_controller/lib/ur_admittance_controller/system_status.py
+[0.724s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/environment/library_path.sh
+[0.724s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/environment/library_path.dsv
+[0.725s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ament_index/resource_index/package_run_dependencies/ur_admittance_controller
+[0.725s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ament_index/resource_index/parent_prefix_path/ur_admittance_controller
+[0.725s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/environment/ament_prefix_path.sh
+[0.725s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/environment/ament_prefix_path.dsv
+[0.725s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/environment/path.sh
+[0.725s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/environment/path.dsv
+[0.726s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.bash
+[0.726s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.sh
+[0.726s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.zsh
+[0.726s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/local_setup.dsv
+[0.726s] -- Symlinking: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/package.dsv
+[0.738s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ament_index/resource_index/packages/ur_admittance_controller
+[0.738s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ament_index/resource_index/controller_interface__pluginlib__plugin/ur_admittance_controller
+[0.738s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ament_cmake_export_dependencies-extras.cmake
+[0.738s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ament_cmake_export_targets-extras.cmake
+[0.738s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ur_admittance_controllerConfig.cmake
+[0.738s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/cmake/ur_admittance_controllerConfig-version.cmake
+[0.738s] -- Up-to-date symlink: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/package.xml
+[0.738s] -- Up-to-date: /home/ajay/ros2_ws/install/ur_admittance_controller/lib/libur_admittance_controller.so
+[0.739s] -- Up-to-date: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/cmake/export_ur_admittance_controllerExport.cmake
+[0.739s] -- Up-to-date: /home/ajay/ros2_ws/install/ur_admittance_controller/share/ur_admittance_controller/cmake/export_ur_admittance_controllerExport-noconfig.cmake
+[0.741s] Invoked command in '/home/ajay/ros2_ws/build/ur_admittance_controller' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/ajay/ros2_ws/build/ur_admittance_controller

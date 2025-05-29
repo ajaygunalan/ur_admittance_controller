@@ -1,3 +1,10 @@
+/**
+ * @file sensor_interface.cpp
+ * @brief Force/torque sensor and transform management implementation
+ *
+ * This file handles sensor data acquisition, filtering, and coordinate
+ * frame transformations for the admittance controller.
+ */
 
 #include "admittance_controller.hpp"
 #include <memory>
@@ -6,15 +13,27 @@ namespace ur_admittance_controller {
 
 constexpr double CACHE_VALIDITY_WARNING_TIME = 0.5;
 
+/**
+ * @brief Update force/torque sensor data with filtering and transform
+ *
+ * This method:
+ * 1. Reads raw F/T sensor data from hardware interfaces
+ * 2. Transforms the wrench to base frame if transform available
+ * 3. Applies low-pass filtering
+ * 4. Checks deadband
+ *
+ * @return true if sensor update successful
+ */
 bool AdmittanceController::updateSensorData()
 {
-  
+  // Read raw sensor data
   Vector6d raw_wrench = Vector6d::Zero();
   for (size_t i = 0; i < 6; ++i) {
     if (ft_indices_[i] >= 0 && static_cast<size_t>(ft_indices_[i]) < state_interfaces_.size()) {
       const auto& interface = state_interfaces_[ft_indices_[i]];
-      if (interface.get_value() != std::numeric_limits<double>::quiet_NaN()) {
-        raw_wrench(i) = interface.get_value();
+      auto value = interface.get_optional();
+      if (value.has_value() && value.value() != std::numeric_limits<double>::quiet_NaN()) {
+        raw_wrench(i) = value.value();
         if (std::isnan(raw_wrench(i))) {
           reportRTError(RTErrorType::SENSOR_ERROR);
           return false;
@@ -23,11 +42,14 @@ bool AdmittanceController::updateSensorData()
     }
   }
   
+  // Try to update transforms
   if (!updateTransforms()) {
+    // Use raw wrench if transforms not available
     F_sensor_base_ = raw_wrench;
     return checkDeadband();
   }
   
+  // Transform wrench to base frame
   if (transform_base_ft_.isValid()) {
     const auto& transform_data = transform_base_ft_.getTransform();
     F_sensor_base_ = transform_data.adjoint * raw_wrench;
@@ -35,9 +57,11 @@ bool AdmittanceController::updateSensorData()
     F_sensor_base_ = raw_wrench;
   }
   
+  // Apply low-pass filter: y[n] = α*x[n] + (1-α)*y[n-1]
   wrench_filtered_ = params_.admittance.filter_coefficient * F_sensor_base_ + 
     (1.0 - params_.admittance.filter_coefficient) * wrench_filtered_;
   
+  // Check for NaN
   if (wrench_filtered_.hasNaN()) {
     reportRTError(RTErrorType::SENSOR_ERROR);
     return false;
@@ -180,26 +204,46 @@ void AdmittanceController::updateEETransformOnly()
 }
 
 
+/**
+ * @brief Check if forces exceed deadband threshold
+ *
+ * If all force/torque components are below the threshold,
+ * the controller stops motion and holds position.
+ *
+ * @return true if any force component exceeds threshold
+ */
 bool AdmittanceController::checkDeadband()
 {
+  // Check if any force/torque exceeds threshold
   for (size_t i = 0; i < 6; ++i) {
     if (std::abs(wrench_filtered_(i)) > params_.admittance.min_motion_threshold) {
       return true;
     }
   }
   
+  // All forces below threshold - stop motion
   V_base_tip_base_.setZero();
+  
+  // Update references to hold current position
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     if (i < pos_state_indices_.size() && i < joint_position_references_.size()) {
       size_t idx = pos_state_indices_[i];
       if (idx < state_interfaces_.size()) {
-        joint_position_references_[i] = state_interfaces_[idx].get_value();
+        auto value = state_interfaces_[idx].get_optional();
+        if (value.has_value()) {
+          joint_position_references_[i] = value.value();
+        }
       }
     }
   }
   return false;
 }
 
+/**
+ * @brief Publish Cartesian velocity for monitoring
+ *
+ * Uses real-time safe publisher to avoid blocking RT thread
+ */
 void AdmittanceController::publishCartesianVelocity()
 {
   if (rt_cart_vel_pub_->trylock()) {
@@ -214,4 +258,4 @@ void AdmittanceController::publishCartesianVelocity()
   }
 }
 
-}
+}  // namespace ur_admittance_controller

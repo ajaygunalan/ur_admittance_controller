@@ -1,3 +1,11 @@
+/**
+ * @file admittance_controller.cpp
+ * @brief Core implementation of the UR admittance controller
+ *
+ * This file contains the main lifecycle methods and interface configurations
+ * for the admittance controller. It handles initialization, configuration,
+ * activation, and cleanup of the controller resources.
+ */
 
 #include "admittance_controller.hpp"
 #include "admittance_constants.hpp"
@@ -14,6 +22,7 @@ AdmittanceController::AdmittanceController()
 : controller_interface::ChainableControllerInterface(),
   rt_logger_(rclcpp::get_logger("admittance_controller").get_child("realtime"))
 {
+  // Initialize in constructor body if needed
 }
 
 controller_interface::InterfaceConfiguration AdmittanceController::command_interface_configuration() const
@@ -21,6 +30,7 @@ controller_interface::InterfaceConfiguration AdmittanceController::command_inter
   controller_interface::InterfaceConfiguration config;
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
   
+  // Configure command interfaces for downstream controller
   if (!params_.downstream_controller_name.empty()) {
     for (const auto & joint : params_.joints) {
       config.names.push_back(
@@ -36,12 +46,14 @@ controller_interface::InterfaceConfiguration AdmittanceController::state_interfa
   controller_interface::InterfaceConfiguration config;
   config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
   
+  // Configure joint state interfaces
   for (const auto & joint : params_.joints) {
     for (const auto & interface : params_.state_interfaces) {
       config.names.push_back(joint + "/" + interface);
     }
   }
   
+  // Configure force/torque sensor interfaces
   if (!params_.ft_sensor_name.empty()) {
     static const char* axes[] = {"force.x", "force.y", "force.z", "torque.x", "torque.y", "torque.z"};
     for (const auto & axis : axes) {
@@ -56,6 +68,7 @@ std::vector<hardware_interface::CommandInterface> AdmittanceController::on_expor
 {
   std::vector<hardware_interface::CommandInterface> reference_interfaces;
   
+  // Export joint position references for chaining
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     reference_interfaces.emplace_back(
       params_.joints[i], "position", &joint_position_references_[i]);
@@ -67,26 +80,29 @@ std::vector<hardware_interface::CommandInterface> AdmittanceController::on_expor
 controller_interface::CallbackReturn AdmittanceController::on_init()
 {
   try {
+    // Initialize parameter listener
     param_listener_ = std::make_shared<ur_admittance_controller::ParamListener>(get_node());
     params_ = param_listener_->get_params();
     
+    // Initialize transform infrastructure
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_node()->get_clock());
     tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
     
+    // Initialize control matrices
     mass_ = Matrix6d::Identity();
     mass_inverse_ = mass_.inverse();
     damping_ = Matrix6d::Identity();
     stiffness_ = Matrix6d::Zero();
     
+    // Initialize control variables
     F_sensor_base_ = wrench_filtered_ = Vector6d::Zero();
     error_tip_base_ = velocity_error_ = Vector6d::Zero();
     desired_accel_ = desired_vel_ = Vector6d::Zero();
     V_base_tip_base_ = Vector6d::Zero();
     
-    
+    // Initialize poses
     X_base_tip_desired_ = Eigen::Isometry3d::Identity();
     X_base_tip_current_ = Eigen::Isometry3d::Identity();
-    
     
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "Exception in on_init: %s", e.what());
@@ -184,35 +200,41 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
 controller_interface::CallbackReturn AdmittanceController::on_deactivate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
-  RCLCPP_INFO(get_node()->get_logger(), "Starting cleanup...");
+  RCLCPP_INFO(get_node()->get_logger(), "Starting deactivation cleanup...");
   
+  // Reset services
   reset_pose_service_holder_.reset();
   move_to_pose_service_holder_.reset();
   
+  // Reset subscriptions
   set_pose_sub_.reset();
   
+  // Reset real-time publishers
   rt_cart_vel_pub_.reset();
   rt_pose_error_pub_.reset();
   
+  // Clean up transform infrastructure
   RCLCPP_INFO(get_node()->get_logger(), "Cleaning up transform listeners...");
-  
   tf_listener_.reset();
-  
   tf_buffer_.reset();
   
+  // Reset transform caches
   transform_base_ft_.reset();
   transform_base_tip_.reset();
   
+  // Reset parameter buffer
   param_buffer_.writeFromNonRT(ur_admittance_controller::Params());
   
+  // Reset kinematics
   kinematics_.reset();
   
-  RCLCPP_INFO(get_node()->get_logger(), "Cleanup complete");
+  RCLCPP_INFO(get_node()->get_logger(), "Deactivation cleanup complete");
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
 void AdmittanceController::cacheInterfaceIndices()
 {
+  // Cache joint position state interface indices
   pos_state_indices_.resize(params_.joints.size());
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     const auto name = params_.joints[i] + "/position";
@@ -221,6 +243,7 @@ void AdmittanceController::cacheInterfaceIndices()
     pos_state_indices_[i] = std::distance(state_interfaces_.cbegin(), it);
   }
   
+  // Cache force/torque sensor interface indices
   ft_indices_.resize(DOF, -1);
   if (!params_.ft_sensor_name.empty()) {
     static constexpr std::array<const char*, DOF> axes = {"force.x", "force.y", "force.z", "torque.x", "torque.y", "torque.z"};
@@ -237,5 +260,5 @@ void AdmittanceController::cacheInterfaceIndices()
 }
 
 
-}
+}  // namespace ur_admittance_controller
 

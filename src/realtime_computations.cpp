@@ -1,3 +1,11 @@
+/**
+ * @file realtime_computations.cpp
+ * @brief Real-time control loop implementation for admittance control
+ *
+ * This file contains the real-time safe implementations of the admittance
+ * control algorithm, including force/torque processing, admittance computation,
+ * and joint space conversion.
+ */
 
 #include "admittance_controller.hpp"
 #include "admittance_constants.hpp"
@@ -11,44 +19,67 @@ namespace ur_admittance_controller {
 
 using namespace constants;
 
-
+/**
+ * @brief Main real-time update loop
+ * 
+ * This method is called at the control rate and performs:
+ * 1. Parameter updates
+ * 2. Sensor data acquisition
+ * 3. Transform updates
+ * 4. Deadband checking
+ * 5. Admittance control computation
+ * 6. Joint space conversion
+ * 7. Joint limit enforcement
+ * 8. Reference interface updates
+ * 9. Monitoring data publication
+ */
 controller_interface::return_type AdmittanceController::update_reference_from_subscribers(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
 {
+  // Check for parameter updates from ROS
   checkParameterUpdates();
   
+  // Update force/torque sensor data
   if (!updateSensorData()) {
     return controller_interface::return_type::OK;
   }
   
+  // Update transform caches if needed
   if (!updateTransforms()) {
     return controller_interface::return_type::OK;
   }
   
+  // Check if forces are within deadband
   if (!checkDeadband()) {
     return controller_interface::return_type::OK;
   }
   
+  // Compute admittance control law
   Vector6d cmd_vel;
   if (!computeAdmittanceControl(period, cmd_vel)) {
     reportRTError(RTErrorType::CONTROL_ERROR);
     return safeStop();
   }
   
+  // Convert Cartesian velocity to joint space
   if (!convertToJointSpace(cmd_vel, period)) {
     reportRTError(RTErrorType::KINEMATICS_ERROR);
     return safeStop();
   }
   
+  // Apply joint position and velocity limits
   if (!applyJointLimits(period)) {
     reportRTError(RTErrorType::JOINT_LIMITS_ERROR);
     return safeStop();
   }
   
+  // Update command interfaces
   updateReferenceInterfaces();
   
+  // Publish monitoring data
   publishMonitoringData();
   
+  // Process any errors in non-RT context
   processNonRTErrors();
   
   return controller_interface::return_type::OK; 
@@ -60,25 +91,45 @@ controller_interface::return_type AdmittanceController::update_and_write_command
   return update_reference_from_subscribers(time, period);
 }
 
-
+/**
+ * @brief Compute admittance control law using Runge-Kutta 4th order integration
+ *
+ * The admittance control law is:
+ * M*a + D*v + K*x = F_external
+ *
+ * Where:
+ * - M: Virtual mass matrix
+ * - D: Damping matrix
+ * - K: Stiffness matrix (scaled by engagement factor)
+ * - F_external: Measured external force/torque
+ *
+ * @param period Control loop period
+ * @param cmd_vel_out Output Cartesian velocity command
+ * @return true if computation successful
+ */
 bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {
+  // Compute pose error between desired and current poses
   error_tip_base_ = computePoseError_tip_base();
   if (error_tip_base_.hasNaN()) {
     return false;
   }
   
+  // Update stiffness engagement factor for safe ramping
   if (!updateStiffnessEngagement(period)) {
     return false;
   }
   
+  // Validate time step
   double dt = period.seconds();
   if (dt <= 0.0 || dt > 0.1) {
     return false;
   }
   
+  // Runge-Kutta 4th order integration
   Vector6d v0 = desired_vel_;
   
+  // k1 = f(t_n, v_n)
   Vector6d stiffness_force1 = stiffness_engagement_factor_ * (stiffness_ * error_tip_base_);
   Vector6d k1 = mass_inverse_ * (wrench_filtered_ - damping_ * v0 - stiffness_force1);
   
@@ -86,6 +137,7 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
     return false;
   }
   
+  // k2 = f(t_n + dt/2, v_n + k1*dt/2)
   Vector6d v1 = v0 + k1 * (dt / 2.0);
   Vector6d k2 = mass_inverse_ * (wrench_filtered_ - damping_ * v1 - stiffness_force1);
   
@@ -93,6 +145,7 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
     return false;
   }
   
+  // k3 = f(t_n + dt/2, v_n + k2*dt/2)
   Vector6d v2 = v0 + k2 * (dt / 2.0);
   Vector6d k3 = mass_inverse_ * (wrench_filtered_ - damping_ * v2 - stiffness_force1);
   
@@ -100,6 +153,7 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
     return false;
   }
   
+  // k4 = f(t_n + dt, v_n + k3*dt)
   Vector6d v3 = v0 + k3 * dt;
   Vector6d k4 = mass_inverse_ * (wrench_filtered_ - damping_ * v3 - stiffness_force1);
   
@@ -107,22 +161,26 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
     return false;
   }
   
+  // v_{n+1} = v_n + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
   desired_vel_ = v0 + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
   
   if (desired_vel_.hasNaN()) {
     return false;
   }
   
+  // Apply axis enable/disable mask
   for (size_t i = 0; i < 6; ++i) {
     if (!params_.admittance.enabled_axes[i]) {
       desired_vel_(i) = 0.0;
     }
   }
   
+  // Apply velocity limits
   if (!applyCartesianVelocityLimits()) {
     return false;
   }
   
+  // Check for drift and reset if velocity is near zero
   if (desired_vel_.norm() < params_.admittance.drift_reset_threshold) {
     if (!handleDriftReset()) {
       return false;
@@ -131,40 +189,59 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
     return true;
   }
   
+  // Output commanded velocity
   V_base_tip_base_ = desired_vel_;
   cmd_vel_out = V_base_tip_base_;
   return true;
 }
 
+/**
+ * @brief Compute pose error between desired and current end-effector poses
+ *
+ * This method computes the error in the tip frame:
+ * - Position error: simple difference
+ * - Orientation error: axis-angle representation of rotation error
+ *
+ * @return 6D error vector [position_error; orientation_error]
+ */
 Vector6d AdmittanceController::computePoseError_tip_base()
 {
   Vector6d error = Vector6d::Zero();
   
+  // Position error (simple difference)
   error.head<3>() = X_base_tip_desired_.translation() - X_base_tip_current_.translation();
   
+  // Extract rotation matrices
   Eigen::Matrix3d R_current = X_base_tip_current_.rotation();
   Eigen::Matrix3d R_desired = X_base_tip_desired_.rotation();
   
+  // Convert to quaternions and normalize
   Eigen::Quaterniond q_current(R_current);
   q_current.normalize();
   
   Eigen::Quaterniond q_desired(R_desired);
   q_desired.normalize();
   
+  // Ensure quaternions are in the same hemisphere
   if (q_current.dot(q_desired) < 0) {
     q_current.coeffs() = -q_current.coeffs();
   }
   
+  // Compute error quaternion: q_error = q_desired * q_current^{-1}
   Eigen::Quaterniond q_error = q_desired * q_current.inverse();
   q_error.normalize();
   
+  // Convert to axis-angle representation
   Eigen::AngleAxisd aa_error(q_error);
   
+  // Handle near-zero rotation
   if (aa_error.angle() < QUATERNION_EPSILON) {
     error.tail<3>().setZero();
   } else {
+    // Orientation error as axis * angle
     error.tail<3>() = aa_error.axis() * aa_error.angle();
     
+    // Clamp orientation error to maximum allowed
     double error_norm = error.tail<3>().norm();
     if (error_norm > MAX_ORIENTATION_ERROR) {
       error.tail<3>() *= MAX_ORIENTATION_ERROR / error_norm;
@@ -365,41 +442,58 @@ bool AdmittanceController::applyCartesianVelocityLimits()
   return !desired_vel_.hasNaN();
 }
 
+/**
+ * @brief Convert Cartesian velocity to joint space using inverse kinematics
+ *
+ * @param cart_vel Cartesian velocity command (6D)
+ * @param period Control loop period
+ * @return true if conversion successful
+ */
 bool AdmittanceController::convertToJointSpace(
     const Vector6d& cart_vel, 
     const rclcpp::Duration& period)
 {
+  // Validate inputs
   if (period.seconds() <= 0.0 || cart_vel.hasNaN()) {
     return false;
   }
   
+  // Check array sizes
   if (params_.joints.size() == 0 || 
       pos_state_indices_.size() < params_.joints.size() ||
       current_pos_.size() < params_.joints.size()) {
     return false;
   }
   
+  // Get current joint positions
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     size_t idx = pos_state_indices_[i];
     if (idx >= state_interfaces_.size()) {
       return false;
     }
-    current_pos_[i] = state_interfaces_[idx].get_value();
+    auto value = state_interfaces_[idx].get_optional();
+    if (!value.has_value()) {
+      return false;
+    }
+    current_pos_[i] = value.value();
     if (std::isnan(current_pos_[i])) {
       return false;
     }
   }
   
+  // Convert velocity to displacement
   for (size_t i = 0; i < 6 && i < cart_displacement_deltas_.size(); ++i) {
     cart_displacement_deltas_[i] = cart_vel(i) * period.seconds();
   }
   
+  // Call inverse kinematics
   if (!kinematics_ || !(*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
         current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) {
     reportRTError(RTErrorType::KINEMATICS_ERROR);
     return false;
   }
   
+  // Update joint positions
   for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
     joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
     if (std::isnan(joint_positions_[i])) {
@@ -410,12 +504,20 @@ bool AdmittanceController::convertToJointSpace(
   return true;
 }
 
+/**
+ * @brief Apply joint position and velocity limits
+ *
+ * @param period Control loop period
+ * @return true if limits applied successfully
+ */
 bool AdmittanceController::applyJointLimits(const rclcpp::Duration& period)
 {
+  // Validate period
   if (period.seconds() <= 0.0) {
     return false;
   }
   
+  // Validate array sizes
   if (params_.joints.size() == 0 || joint_deltas_.size() == 0 ||
       params_.joints.size() > joint_positions_.size() || 
       joint_deltas_.size() > joint_positions_.size() ||
@@ -423,16 +525,21 @@ bool AdmittanceController::applyJointLimits(const rclcpp::Duration& period)
     return false;
   }
   
+  // Apply limits to each joint
   for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
+    // Check velocity limit
     double velocity = joint_deltas_[i] / period.seconds();
     if (std::abs(velocity) > joint_limits_[i].max_velocity) {
+      // Scale down movement to respect velocity limit
       double scale = joint_limits_[i].max_velocity / std::abs(velocity);
       joint_positions_[i] = current_pos_[i] + joint_deltas_[i] * scale;
     }
     
+    // Apply position limits
     joint_positions_[i] = std::max(joint_limits_[i].min_position, 
                           std::min(joint_positions_[i], joint_limits_[i].max_position));
     
+    // Check for NaN
     if (std::isnan(joint_positions_[i])) {
       return false;
     }
@@ -453,7 +560,12 @@ bool AdmittanceController::handleDriftReset()
       if (index >= state_interfaces_.size()) {
         return false;
       }
-      joint_positions_[i++] = state_interfaces_[index].get_value();
+      auto value = state_interfaces_[index].get_optional();
+      if (value.has_value()) {
+        joint_positions_[i++] = value.value();
+      } else {
+        return false;
+      }
     }
   } catch (...) {
     reportRTError(RTErrorType::CONTROL_ERROR);
@@ -518,12 +630,17 @@ void AdmittanceController::processNonRTErrors()
   }
 }
 
+/**
+ * @brief Update command interfaces with computed joint positions
+ */
 void AdmittanceController::updateReferenceInterfaces()
 {
+  // Update reference positions
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     joint_position_references_[i] = joint_positions_[i];
   }
   
+  // Write to command interfaces
   for (size_t i = 0; i < command_interfaces_.size(); ++i) {
     const size_t joint_idx = cmd_interface_to_joint_index_[i];
     
@@ -538,12 +655,19 @@ void AdmittanceController::publishMonitoringData()
   publishCartesianVelocity();
 }
 
+/**
+ * @brief Emergency stop with position hold
+ *
+ * @return Controller return status
+ */
 controller_interface::return_type AdmittanceController::safeStop()
 {
   try {
+    // Zero all velocities
     V_base_tip_base_.setZero();
     desired_vel_.setZero();
     
+    // Hold current position
     for (size_t i = 0; i < params_.joints.size(); ++i) {
       joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
     }
@@ -556,4 +680,4 @@ controller_interface::return_type AdmittanceController::safeStop()
   }
 }
 
-}
+}  // namespace ur_admittance_controller
