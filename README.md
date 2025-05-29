@@ -29,14 +29,18 @@ colcon build && source install/setup.bash
 
 ## 🎮 Quick Start - Simulation
 
-```bash
-# Terminal 1: Gazebo with UR5e + F/T sensor 
+Launch UR5e + F/T sensor in Gazebo:
+```
 ros2 launch ur_simulation_gz ur_sim_control.launch.py
+```
 
-# Terminal 2: Launch admittance controller
+Launch admittance controller:
+```
 ros2 launch ur_admittance_controller ur_admittance.launch.py
+```
 
-# Terminal 3: Apply force and watch robot move
+Apply force and watch robot move:
+```
 ros2 topic pub /ft_sensor_readings geometry_msgs/WrenchStamped \
   "{header: {frame_id: 'tool0'}, wrench: {force: {x: 10.0}}}" --once
 ```
