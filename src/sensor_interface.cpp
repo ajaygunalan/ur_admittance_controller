@@ -190,7 +190,12 @@ bool AdmittanceController::checkDeadband()
   
   V_base_tip_base_.setZero();
   for (size_t i = 0; i < params_.joints.size(); ++i) {
-    joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_value();
+    if (i < pos_state_indices_.size() && i < joint_position_references_.size()) {
+      size_t idx = pos_state_indices_[i];
+      if (idx < state_interfaces_.size()) {
+        joint_position_references_[i] = state_interfaces_[idx].get_value();
+      }
+    }
   }
   return false;
 }

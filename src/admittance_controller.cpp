@@ -164,8 +164,17 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   }
   
   for (size_t i = 0; i < params_.joints.size(); ++i) {
-    joint_positions_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
-    joint_position_references_[i] = joint_positions_[i];
+    if (i >= pos_state_indices_.size()) {
+      RCLCPP_ERROR(get_node()->get_logger(), "Position state index out of bounds");
+      return controller_interface::CallbackReturn::ERROR;
+    }
+    size_t idx = pos_state_indices_[i];
+    if (idx >= state_interfaces_.size()) {
+      RCLCPP_ERROR(get_node()->get_logger(), "State interface index out of bounds");
+      return controller_interface::CallbackReturn::ERROR;
+    }
+    joint_positions_.at(i) = state_interfaces_[idx].get_optional().value();
+    joint_position_references_.at(i) = joint_positions_.at(i);
   }
   
   RCLCPP_INFO(get_node()->get_logger(), "AdmittanceController activated");
