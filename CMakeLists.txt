@@ -38,7 +38,7 @@ pluginlib_export_plugin_description_file(controller_interface ur_admittance_cont
 install(TARGETS ${PROJECT_NAME} ur_admittance_controller_parameters EXPORT export_${PROJECT_NAME} RUNTIME DESTINATION lib LIBRARY DESTINATION lib ARCHIVE DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config launch scripts DESTINATION share/${PROJECT_NAME})
-install(PROGRAMS scripts/ur_admittance_tests.py scripts/ur_admittance_utils.py scripts/validate_notation.py scripts/safe_startup_test.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/ur_admittance_tests.py scripts/ur_admittance_utils.py scripts/validate_notation.py scripts/safe_startup_test.py scripts/system_status.py DESTINATION lib/${PROJECT_NAME})
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(${DEPENDENCIES})
 if(BUILD_TESTING)
