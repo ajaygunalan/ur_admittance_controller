@@ -179,12 +179,12 @@ ur_admittance_controller:
 
   kinematics_plugin_package:
     type: string
-    default_value: "ur_kinematics"
+    default_value: "kinematics_interface"
     description: "Package containing the kinematics plugin"
 
   kinematics_plugin_name:
     type: string
-    default_value: "ur_kinematics/URKinematicsPlugin"
+    default_value: "kinematics_interface_kdl/KinematicsInterfaceKDL"
     description: "Name of the kinematics plugin to use"
 
 
