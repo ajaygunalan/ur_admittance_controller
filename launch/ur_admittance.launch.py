@@ -223,11 +223,11 @@ def generate_launch_description():
             ExecuteProcess(
                 cmd=[
                     "bash", "-c",
-                    "echo '🎯 Demo Mode Active!' && "
-                    "echo f'Preset: {demo_preset}' && "
-                    "echo '' && "
-                    "echo 'Try pushing the robot - it will react based on the preset!' && "
-                    "echo ''"
+                    f"echo '🎯 Demo Mode Active!' && "
+                    f"echo 'Preset: {demo_preset}' && "
+                    f"echo '' && "
+                    f"echo 'Try pushing the robot - it will react based on the preset!' && "
+                    f"echo ''"
                 ],
                 output="screen", 
                 condition=IfCondition(TextSubstitution(text="demo").__eq__(mode))
