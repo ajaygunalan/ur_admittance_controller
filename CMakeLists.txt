@@ -131,10 +131,8 @@ install(
 
 # Install Python scripts as executables
 install(PROGRAMS
-  scripts/ur_admittance_tests.py
-  scripts/ur_admittance_utils.py
-  scripts/validate_notation.py
-  scripts/validate_node_transition.py
+  scripts/test_suite.py
+  scripts/validate.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

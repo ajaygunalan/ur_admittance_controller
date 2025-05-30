@@ -1,127 +1,54 @@
 ur_admittance_controller:
-  # ============================================================================
-  # ROBOT CONFIGURATION
-  # ============================================================================
   joints:
     type: string_array
     default_value: ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
-    description: "List of joint names for UR5e robot"
+    description: "UR5e joint names"
 
-  # ============================================================================
-  # ADMITTANCE CONTROL PARAMETERS
-  # ============================================================================  
   admittance:
     mass:
       type: double_array
       default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
-      description: |
-        Virtual inertia matrix diagonal elements [X,Y,Z,Rx,Ry,Rz]
-        Units: [kg, kg, kg, kg⋅m², kg⋅m², kg⋅m²]
-        Range: (0.1, 100.0] for translations, (0.01, 10.0] for rotations
-        Higher values = slower response, more stable
-        Lower values = faster response, less stable
+      description: "Virtual inertia [X,Y,Z,Rx,Ry,Rz] in [kg,kg,kg,kg⋅m²,kg⋅m²,kg⋅m²]"
 
     stiffness:
       type: double_array
       default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-      description: |
-        Position stiffness matrix diagonal elements [X,Y,Z,Rx,Ry,Rz]
-        Units: [N/m, N/m, N/m, Nm/rad, Nm/rad, Nm/rad]
-        Range: [0.0, 2000.0] for translations, [0.0, 200.0] for rotations
-        Zero values = pure admittance control (force-to-motion)
-        Positive values = impedance control (position+force regulation)
-        
-        PRESET CONFIGURATIONS:
-        Pure Admittance (default): [0, 0, 0, 0, 0, 0]
-        Full Impedance: [100, 100, 100, 10, 10, 10]
-        XY-Compliant/Z-Stiff: [0, 0, 200, 0, 0, 0]
-        Position Control Only: [150, 150, 150, 0, 0, 0]
-        
-        TUNING GUIDE:
-        0 N/m: Pure compliance (no return)
-        10-50 N/m: Very soft return
-        50-200 N/m: Moderate stiffness
-        200-500 N/m: Firm return
-        500-2000 N/m: Very stiff
+      description: "Position stiffness [X,Y,Z,Rx,Ry,Rz] in [N/m,N/m,N/m,Nm/rad,Nm/rad,Nm/rad]"
 
     damping_ratio:
       type: double_array
       default_value: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
-      description: |
-        Damping ratio coefficients [X,Y,Z,Rx,Ry,Rz]
-        Units: [dimensionless]
-        Range: [0.1, 2.0] (typical)
-        Values < 1.0: Underdamped (some oscillation, faster response)
-        Values = 1.0: Critically damped (no oscillation, optimal response)
-        Values > 1.0: Overdamped (no oscillation, slower response)
-        Used to compute D matrix based on M and K: D = 2ζ√(MK) if K>0
+      description: "Damping ratios [X,Y,Z,Rx,Ry,Rz]"
 
     enabled_axes:
       type: bool_array
       default_value: [true, true, true, true, true, true]
-      description: |
-        Enable/disable admittance control for each axis [X,Y,Z,Rx,Ry,Rz]
-        When disabled, the controller will maintain position in that axis
-        Common configurations:
-        - [true, true, true, false, false, false]: XYZ translation only
-        - [false, false, true, false, false, false]: Z-axis (vertical) compliance only
-        - [true, true, false, false, false, true]: Horizontal plane + rotation around Z
+      description: "Enable admittance per axis [X,Y,Z,Rx,Ry,Rz]"
 
     min_motion_threshold:
       type: double
       default_value: 1.5
-      description: |
-        Minimum force/torque magnitude to trigger motion (deadband)
-        Units: Newtons (for forces) / Nm (for torques)
-        Range: [0.1, 10.0] (typical)
-        Smaller values: More sensitive to forces/torques (may detect noise)
-        Larger values: Less sensitive (requires more deliberate force)
-        Used to filter out sensor noise and unintentional contacts
+      description: "Minimum force/torque to trigger motion [N/Nm]"
 
     filter_coefficient:
       type: double
       default_value: 0.15
-      description: |
-        Low-pass filter coefficient for wrench signals
-        Units: [dimensionless]
-        Range: [0.01, 0.9] (typical)
-        Formula: filtered = (1-coeff)*previous + coeff*current
-        Smaller values: More filtering, smoother motion, more lag
-        Larger values: Less filtering, more responsive, may amplify noise
+      description: "Low-pass filter coefficient for wrench signals"
 
     drift_reset_threshold:
       type: double
       default_value: 0.001
-      description: |
-        Velocity threshold for position drift prevention
-        Units: meters/second
-        Range: [0.0001, 0.01] (typical)
-        When Cartesian velocity falls below this threshold, the controller
-        will automatically update reference position to prevent drift.
-        Smaller values: More accurate positioning, may detect noise
-        Larger values: Less sensitive, more motion required to reset
+      description: "Velocity threshold for drift reset [m/s]"
 
   max_linear_velocity:
     type: double
     default_value: 0.5
-    description: |
-      Maximum linear velocity in Cartesian space
-      Units: meters/second
-      Range: [0.1, 1.0] (typical, robot-dependent)
-      Critical safety parameter that limits the maximum translational
-      velocity regardless of external forces. Should be set based on
-      workspace constraints and safety requirements.
+    description: "Maximum linear velocity [m/s]"
 
   max_angular_velocity:
     type: double
     default_value: 1.0
-    description: |
-      Maximum angular velocity in Cartesian space
-      Units: radians/second
-      Range: [0.2, 2.0] (typical, robot-dependent)
-      Critical safety parameter that limits the maximum rotational
-      velocity regardless of external torques. Should be set based on
-      workspace constraints and safety requirements.
+    description: "Maximum angular velocity [rad/s]"
 
   dynamic_parameters:
     type: bool
@@ -157,33 +84,3 @@ ur_admittance_controller:
     type: string
     default_value: "kinematics_interface_kdl/KinematicsInterfaceKDL"
     description: "Name of the kinematics plugin to use"
-
-# ==============================================================================
-# HARDCODED VALUES (Not Configurable)
-# ==============================================================================
-# The following values are hardcoded in the C++ implementation:
-#
-# Sensor Topics:
-#   - F/T Sensor: /wrist_ft_sensor (from ur_simulation_gz)
-#   - Robot Description: /robot_description (from ur_description)
-#   - Joint States: /joint_states (standard ROS2)
-#
-# Control Outputs:
-#   - Trajectory Commands: /scaled_joint_trajectory_controller/joint_trajectory
-#   - Monitoring: /admittance_cartesian_velocity, /admittance_pose_error
-#
-# Frame Names:
-#   - Base Frame: base_link
-#   - Tool Frame: tool0  
-#   - F/T Frame: ft_sensor_link
-#
-# Safe Startup Parameters (hardcoded in admittance_node.hpp):
-#   - max_position_error: 0.1 m
-#   - max_orientation_error: 0.1 rad
-#   - stiffness_ramp_time: 1.0 s
-#
-# Control Loop:
-#   - Frequency: 500 Hz (2ms period)
-#   - Trajectory Duration: 20ms (0.02s)
-
-
