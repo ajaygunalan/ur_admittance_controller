@@ -9,8 +9,6 @@
 #include "admittance_node.hpp"
 #include "admittance_constants.hpp"
 #include "matrix_utilities.hpp"
-#include <cstring>
-#include <memory>
 #include <algorithm>
 #include <cmath>
 
@@ -336,14 +334,19 @@ void AdmittanceNode::updateStiffnessMatrix()
 
 void AdmittanceNode::updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes)
 {
+  // Use the robust damping computation from matrix utilities
+  std::array<double, 6> mass_array, stiffness_array, damping_ratio_array;
   for (size_t i = 0; i < 6; ++i) {
-    double critical_damping = 2.0 * std::sqrt(params.admittance.stiffness[i] * params.admittance.mass[i]);
-    damping_(i, i) = params.admittance.damping_ratio[i] * critical_damping;
+    mass_array[i] = params.admittance.mass[i];
+    stiffness_array[i] = params.admittance.stiffness[i];
+    damping_ratio_array[i] = params.admittance.damping_ratio[i];
   }
+  
+  damping_ = utils::computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
   
   if (log_changes) {
     RCLCPP_INFO(get_logger(), 
-      "Damping parameters updated with simplified critical damping formula");
+      "Damping parameters updated using robust matrix utilities (with virtual stiffness blending)");
   }
 }
 

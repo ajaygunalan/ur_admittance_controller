@@ -41,7 +41,6 @@ find_package(trajectory_msgs REQUIRED)
 # Transform packages
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_eigen REQUIRED)
 
 # Math and kinematics packages
@@ -70,10 +69,10 @@ set(NODE_DEPENDENCIES
   tf2
   tf2_ros
   tf2_eigen
-  tf2_geometry_msgs
   kinematics_interface
   pluginlib
   urdf
+  kdl_parser
 )
 
 # ==============================================================================
@@ -135,8 +134,7 @@ install(PROGRAMS
   scripts/ur_admittance_tests.py
   scripts/ur_admittance_utils.py
   scripts/validate_notation.py
-  scripts/safe_startup_test.py
-  scripts/system_status.py
+  scripts/validate_node_transition.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

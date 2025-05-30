@@ -7,7 +7,6 @@
  */
 
 #include "admittance_node.hpp"
-#include <memory>
 
 namespace ur_admittance_controller {
 

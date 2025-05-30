@@ -17,7 +17,7 @@ def check_file_for_violations(filepath, patterns):
             lines = content.split('\n')
             
             for i, line in enumerate(lines, 1):
-                if line.strip().startswith('
+                if line.strip().startswith('#') or not line.strip():
                     continue
                     
                 for pattern_name, pattern in patterns.items():
