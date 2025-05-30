@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/wrench_stamped.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -45,10 +46,13 @@ private:
   // Callback functions
   void wrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
   void jointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
+  void robotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   
   // Initialize components
   bool initializeTransforms();
   bool loadKinematics();
+  bool loadJointLimitsFromURDF();
+  bool loadJointLimitsFromParameters();  // Fallback method
   
   // Core algorithm functions (from admittance_computations.cpp)
   bool computeAdmittanceStep(const rclcpp::Duration& period);
@@ -85,6 +89,7 @@ private:
   // Subscriptions
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robot_description_sub_;
   
   // Publishers
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
@@ -113,10 +118,14 @@ private:
   std::vector<double> current_pos_;
   std::vector<double> joint_deltas_;
   std::vector<double> cart_displacement_deltas_;
-  std::vector<double> previous_joint_velocities_;  // Track previous velocities for acceleration checking
   geometry_msgs::msg::WrenchStamped current_wrench_;
   std::mutex wrench_mutex_;
   std::mutex joint_state_mutex_;
+  
+  // Robot description data
+  std::string robot_description_;
+  std::mutex robot_description_mutex_;
+  std::atomic<bool> robot_description_received_{false};
   
   // Parameter update tracking
   std::atomic<bool> params_updated_{false};

@@ -33,6 +33,7 @@ find_package(pluginlib REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 
 # Message packages
+find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
@@ -62,6 +63,7 @@ generate_parameter_library(
 # ==============================================================================
 set(NODE_DEPENDENCIES
   rclcpp
+  std_msgs
   geometry_msgs
   sensor_msgs
   trajectory_msgs

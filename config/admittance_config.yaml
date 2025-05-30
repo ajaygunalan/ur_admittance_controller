@@ -177,21 +177,6 @@ ur_admittance_controller:
     default_value: "ft_sensor_link"
     description: "F/T sensor frame"
 
-  joint_limits_position_min:
-    type: double_array
-    default_value: [-6.283, -6.283, -3.142, -6.283, -6.283, -6.283]
-    description: "Minimum joint position limits (radians)"
-    
-  joint_limits_position_max:
-    type: double_array
-    default_value: [6.283, 6.283, 3.142, 6.283, 6.283, 6.283]
-    description: "Maximum joint position limits (radians)"
-    
-  joint_limits_velocity_max:
-    type: double_array
-    default_value: [3.14, 3.14, 3.14, 6.28, 6.28, 6.28]
-    description: "Maximum joint velocity limits (rad/s)"
-
   kinematics_plugin_package:
     type: string
     default_value: "kinematics_interface"

@@ -40,14 +40,19 @@ using Vector6d = Eigen::Matrix<double, 6, 1>;
 
 
 /**
- * @brief Joint physical limits structure
+ * @brief Joint physical limits structure for UR5e
+ * 
+ * This structure contains only the officially published joint limits from UR.
+ * Acceleration limits are intentionally omitted as:
+ * 1. UR5e has no official acceleration limits (per ur_description package)
+ * 2. Smoothness is achieved through position+velocity continuity
+ * 3. scaled_joint_trajectory_controller handles trajectory interpolation
  */
 struct JointLimits
 {
   double min_position;      ///< Minimum joint position (radians)
-  double max_position;      ///< Maximum joint position (radians)
+  double max_position;      ///< Maximum joint position (radians)  
   double max_velocity;      ///< Maximum joint velocity (rad/s)
-  double max_acceleration;  ///< Maximum joint acceleration (rad/s²)
 };
 
 /**

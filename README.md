@@ -2,7 +2,7 @@
 
 > **Standalone force-compliant motion control node for Universal Robots - push the robot and it moves!**
 >
-> **Note**: This package has been refactored from a ROS2 Control controller to a standalone ROS2 node that interfaces directly with trajectory controllers.
+> **Note**: This package is a standalone ROS2 node that uses official UR5e specifications and integrates seamlessly with the UR ecosystem via `scaled_joint_trajectory_controller`.
 
 ## 📚 Table of Contents
 
@@ -27,6 +27,22 @@ git clone https://github.com/ajaygunalan/ur_admittance_controller.git
 
 cd ~/ur_ws && rosdep install --from-paths src --ignore-src -r -y
 colcon build && source install/setup.bash
+```
+
+## 🏗️ Architecture Overview
+
+This package leverages the official UR ecosystem for optimal integration:
+
+- **✅ Official UR5e specifications**: Joint limits loaded from system `ur_description` package via `/robot_description` topic
+- **✅ Optimized trajectory control**: Sends position+velocity commands to `scaled_joint_trajectory_controller` for smooth motion
+- **✅ No acceleration limiting**: Trusts UR's designed trajectory scaling system (as UR5e has no published acceleration limits)
+- **✅ Seamless ecosystem integration**: Works with `ur_simulation_gz` and real UR drivers without configuration changes
+
+**Data Flow:**
+```
+Force/Torque Sensor → Admittance Control → Position+Velocity → scaled_joint_trajectory_controller → Robot
+                                                ↑
+                                    Official UR5e Limits from ur_description
 ```
 
 ## 🎮 Quick Start - Simulation

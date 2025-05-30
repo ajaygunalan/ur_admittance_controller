@@ -449,30 +449,7 @@ bool AdmittanceNode::applyJointLimits(const rclcpp::Duration& period)
   for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
     double current_velocity = joint_deltas_[i] / period.seconds();
     
-    // Check acceleration limit (requires previous velocity)
-    double acceleration = (current_velocity - previous_joint_velocities_[i]) / period.seconds();
-    
-    if (std::abs(acceleration) > joint_limits_[i].max_acceleration) {
-      // Limit velocity change to respect acceleration constraint
-      double max_velocity_change = joint_limits_[i].max_acceleration * period.seconds();
-      double limited_velocity;
-      
-      if (current_velocity > previous_joint_velocities_[i]) {
-        limited_velocity = previous_joint_velocities_[i] + max_velocity_change;
-      } else {
-        limited_velocity = previous_joint_velocities_[i] - max_velocity_change;
-      }
-      
-      // Update joint delta based on limited velocity
-      joint_deltas_[i] = limited_velocity * period.seconds();
-      current_velocity = limited_velocity;
-      
-      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
-        "Joint %zu acceleration limited: %.3f -> %.3f rad/s²", 
-        i, acceleration, joint_limits_[i].max_acceleration);
-    }
-    
-    // Check velocity limit
+    // Check velocity limit (position + velocity continuity ensures smoothness)
     if (std::abs(current_velocity) > joint_limits_[i].max_velocity) {
       // Scale down movement to respect velocity limit
       double scale = joint_limits_[i].max_velocity / std::abs(current_velocity);
@@ -491,9 +468,8 @@ bool AdmittanceNode::applyJointLimits(const rclcpp::Duration& period)
     joint_positions_[i] = std::max(joint_limits_[i].min_position, 
                           std::min(joint_positions_[i], joint_limits_[i].max_position));
     
-    // Store velocity for next iteration and output
+    // Store velocity for output to trajectory controller
     joint_velocities_[i] = current_velocity;
-    previous_joint_velocities_[i] = current_velocity;
     
     // Check for NaN
     if (std::isnan(joint_positions_[i]) || std::isnan(joint_velocities_[i])) {

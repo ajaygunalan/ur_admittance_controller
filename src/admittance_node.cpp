@@ -20,7 +20,6 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   current_pos_.resize(params_.joints.size(), 0.0);
   joint_deltas_.resize(params_.joints.size(), 0.0);
   cart_displacement_deltas_.resize(6, 0.0);
-  previous_joint_velocities_.resize(params_.joints.size(), 0.0);
   
   // Initialize control matrices
   mass_ = Matrix6d::Identity();
@@ -51,6 +50,12 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
     "/joint_states",
     10,
     std::bind(&AdmittanceNode::jointStateCallback, this, std::placeholders::_1));
+    
+  // Subscribe to robot description from ur_simulation_gz
+  robot_description_sub_ = create_subscription<std_msgs::msg::String>(
+    "/robot_description",
+    rclcpp::QoS(1).transient_local(),
+    std::bind(&AdmittanceNode::robotDescriptionCallback, this, std::placeholders::_1));
   
   // Create publisher
   trajectory_pub_ = create_publisher<trajectory_msgs::msg::JointTrajectory>(
@@ -164,6 +169,16 @@ void AdmittanceNode::jointStateCallback(const sensor_msgs::msg::JointState::Cons
   }
 }
 
+void AdmittanceNode::robotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg)
+{
+  std::lock_guard<std::mutex> lock(robot_description_mutex_);
+  robot_description_ = msg->data;
+  robot_description_received_.store(true);
+  
+  RCLCPP_INFO(get_logger(), "Received robot description from ur_simulation_gz (length: %zu)", 
+    robot_description_.length());
+}
+
 void AdmittanceNode::controlLoop()
 {
   // Calculate control period
@@ -207,6 +222,92 @@ bool AdmittanceNode::initializeTransforms()
   return waitForTransforms();
 }
 
+bool AdmittanceNode::loadJointLimitsFromURDF()
+{
+  // Check if robot description has been received
+  if (!robot_description_received_.load()) {
+    RCLCPP_WARN(get_logger(), "Robot description not yet received from /robot_description topic");
+    return false;
+  }
+  
+  std::string urdf_string;
+  {
+    std::lock_guard<std::mutex> lock(robot_description_mutex_);
+    urdf_string = robot_description_;
+  }
+  
+  if (urdf_string.empty()) {
+    RCLCPP_ERROR(get_logger(), "Robot description is empty");
+    return false;
+  }
+  
+  // Parse URDF
+  urdf::Model model;
+  if (!model.initString(urdf_string)) {
+    RCLCPP_ERROR(get_logger(), "Failed to parse robot description URDF");
+    return false;
+  }
+  
+  joint_limits_.resize(params_.joints.size());
+  
+  // Load official UR5e limits from URDF
+  for (size_t i = 0; i < params_.joints.size(); ++i) {
+    auto joint = model.getJoint(params_.joints[i]);
+    if (!joint) {
+      RCLCPP_ERROR(get_logger(), 
+        "Joint '%s' not found in robot description URDF", params_.joints[i].c_str());
+      return false;
+    }
+    
+    if (!joint->limits) {
+      RCLCPP_ERROR(get_logger(), 
+        "No limits defined for joint '%s' in URDF", params_.joints[i].c_str());
+      return false;
+    }
+    
+    // Extract official UR5e limits
+    joint_limits_[i].min_position = joint->limits->lower;
+    joint_limits_[i].max_position = joint->limits->upper;
+    joint_limits_[i].max_velocity = joint->limits->velocity;
+    
+    // UR5e has no published acceleration limits (confirmed by official ur_description)
+    // Acceleration smoothing is handled by scaled_joint_trajectory_controller
+    
+    RCLCPP_INFO(get_logger(),
+      "Joint %s limits from official UR5e URDF: pos[%.3f, %.3f], vel[%.3f]",
+      params_.joints[i].c_str(),
+      joint_limits_[i].min_position,
+      joint_limits_[i].max_position, 
+      joint_limits_[i].max_velocity);
+  }
+  
+  RCLCPP_INFO(get_logger(), "Successfully loaded joint limits from official UR5e robot description");
+  return true;
+}
+
+// Fallback method with temporary hardcoded limits
+bool AdmittanceNode::loadJointLimitsFromParameters()
+{
+  joint_limits_.resize(params_.joints.size());
+  
+  // Fallback hardcoded UR5e limits
+  for (size_t i = 0; i < params_.joints.size(); ++i) {
+    // Default UR5e limits
+    joint_limits_[i].min_position = -6.283;  // ±360°
+    joint_limits_[i].max_position = 6.283;
+    joint_limits_[i].max_velocity = 3.14;    // 180°/s
+    
+    // Special case for elbow joint (limited to ±180° for planning)
+    if (params_.joints[i] == "elbow_joint") {
+      joint_limits_[i].min_position = -3.142;  // ±180°
+      joint_limits_[i].max_position = 3.142;
+    }
+  }
+  
+  RCLCPP_WARN(get_logger(), "Using fallback joint limits - robot description not available");
+  return true;
+}
+
 bool AdmittanceNode::loadKinematics()
 {
   try {
@@ -225,54 +326,13 @@ bool AdmittanceNode::loadKinematics()
     RCLCPP_INFO(get_logger(), "Loaded kinematics: %s", 
       params_.kinematics_plugin_name.c_str());
     
-    // Load joint limits from URDF
-    // We need to get robot_description parameter here directly
-    std::string robot_description;
-    if (!get_parameter("robot_description", robot_description)) {
-      RCLCPP_ERROR(get_logger(), "Failed to get robot_description parameter");
-      return false;
-    }
-    
-    urdf::Model model;
-    if (!model.initString(robot_description)) {
-      RCLCPP_ERROR(get_logger(), "Failed to parse URDF");
-      return false;
-    }
-    
-    joint_limits_.resize(params_.joints.size());
-    
-    for (size_t i = 0; i < params_.joints.size(); ++i) {
-      auto joint = model.getJoint(params_.joints[i]);
-      if (!joint) {
-        RCLCPP_ERROR(get_logger(), 
-          "Joint '%s' not found in URDF", params_.joints[i].c_str());
+    // Load joint limits from robot_description topic first, fallback to hardcoded
+    if (!loadJointLimitsFromURDF()) {
+      RCLCPP_WARN(get_logger(), "Could not load joint limits from robot_description, using fallback");
+      if (!loadJointLimitsFromParameters()) {
+        RCLCPP_ERROR(get_logger(), "Failed to load joint limits");
         return false;
       }
-      
-      if (!joint->limits) {
-        RCLCPP_ERROR(get_logger(), 
-          "No limits defined for joint '%s'", params_.joints[i].c_str());
-        return false;
-      }
-      
-      joint_limits_[i].min_position = joint->limits->lower;
-      joint_limits_[i].max_position = joint->limits->upper;
-      joint_limits_[i].max_velocity = joint->limits->velocity;
-      // Use appropriate default acceleration limits for UR5e joints
-      static const std::array<double, 6> default_acceleration_limits = {15.0, 15.0, 15.0, 25.0, 25.0, 25.0};
-      if (i < default_acceleration_limits.size()) {
-        joint_limits_[i].max_acceleration = default_acceleration_limits[i];
-      } else {
-        joint_limits_[i].max_acceleration = 15.0; // conservative default
-      }
-      
-      RCLCPP_INFO(get_logger(),
-        "Joint %s limits: pos[%.3f, %.3f], vel[%.3f], accel[%.3f]",
-        params_.joints[i].c_str(),
-        joint_limits_[i].min_position,
-        joint_limits_[i].max_position, 
-        joint_limits_[i].max_velocity,
-        joint_limits_[i].max_acceleration);
     }
     
     return true;
