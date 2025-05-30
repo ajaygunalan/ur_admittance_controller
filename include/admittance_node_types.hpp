@@ -1,14 +1,4 @@
-/**
- * @file admittance_types.hpp
- * @brief Type definitions and data structures for the UR admittance controller
- *
- * This file contains custom types, enumerations, and data structures used
- * throughout the admittance controller. It includes transform caching 
- * mechanisms and parameter structures.
- *
- * @author UR Robotics Team
- * @date 2024
- */
+// Type definitions and data structures for the UR admittance controller
 
 #ifndef UR_ADMITTANCE_CONTROLLER__ADMITTANCE_TYPES_HPP_
 #define UR_ADMITTANCE_CONTROLLER__ADMITTANCE_TYPES_HPP_

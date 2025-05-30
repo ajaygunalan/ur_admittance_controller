@@ -81,7 +81,6 @@ set(NODE_DEPENDENCIES
 add_executable(admittance_node
   src/admittance_node.cpp
   src/admittance_computations.cpp
-  src/node_integration.cpp
   src/sensor_handling.cpp
 )
 

@@ -1,14 +1,7 @@
-/**
- * @file admittance_computations.cpp
- * @brief Core admittance control algorithm implementation
- *
- * This file contains the pure algorithmic implementations of the admittance
- * control law, independent of any control framework.
- */
+// Core admittance control algorithm implementation
 
 #include "admittance_node.hpp"
 #include "admittance_constants.hpp"
-#include "matrix_utilities.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -16,22 +9,76 @@ namespace ur_admittance_controller {
 
 using namespace constants;
 
-/**
- * @brief Main real-time update loop
- * 
- * This method is called at the control rate and performs:
- * 1. Parameter updates
- * 2. Sensor data acquisition
- * 3. Transform updates
- * 4. Deadband checking
- * 5. Admittance control computation
- * 6. Joint space conversion
- * 7. Joint limit enforcement
- * 8. Reference interface updates
- * 9. Monitoring data publication
- */
-// Main control loop has been moved to controlLoop() in admittance_node.cpp
-// The following functions are the core algorithm implementations
+// Inlined matrix utility functions
+namespace {
+
+inline Matrix6d computeDampingMatrix(
+    const std::array<double, 6>& mass,
+    const std::array<double, 6>& stiffness, 
+    const std::array<double, 6>& damping_ratio)
+{
+    using namespace constants;
+    
+    Matrix6d damping = Matrix6d::Zero();
+    
+    for (size_t i = 0; i < 6; ++i) {
+        const double mass_value = mass[i];
+        const double stiffness_value = stiffness[i];
+        const double damping_ratio_value = damping_ratio[i];
+        
+        if (stiffness_value <= 0.0) {
+            damping(i, i) = 2.0 * damping_ratio_value * 
+                           std::sqrt(mass_value * VIRTUAL_STIFFNESS);
+        } 
+        else if (stiffness_value >= STIFFNESS_BLEND_THRESHOLD) {
+            damping(i, i) = 2.0 * damping_ratio_value * 
+                           std::sqrt(mass_value * stiffness_value);
+        }
+        else {
+            const double blend_factor = stiffness_value / STIFFNESS_BLEND_THRESHOLD;
+            const double admittance_damping = 2.0 * damping_ratio_value * 
+                                             std::sqrt(mass_value * VIRTUAL_STIFFNESS);
+            const double impedance_damping = 2.0 * damping_ratio_value * 
+                                            std::sqrt(mass_value * stiffness_value);
+            damping(i, i) = (1.0 - blend_factor) * admittance_damping + 
+                           blend_factor * impedance_damping;
+        }
+    }
+    
+    return damping;
+}
+
+inline Matrix6d computeMassInverse(const std::array<double, 6>& mass)
+{
+    using namespace constants;
+    
+    Matrix6d mass_matrix = Matrix6d::Zero();
+    Matrix6d mass_inverse = Matrix6d::Zero();
+    
+    for (size_t i = 0; i < 6; ++i) {
+        mass_matrix(i, i) = mass[i];
+    }
+    
+    const double max_mass = mass_matrix.diagonal().maxCoeff();
+    const double min_mass = mass_matrix.diagonal().minCoeff();
+    const double condition_number = max_mass / min_mass;
+    
+    if (condition_number > MAX_CONDITION_NUMBER || min_mass <= 0.0) {
+        for (size_t i = 0; i < 6; ++i) {
+            mass_matrix(i, i) += REGULARIZATION_FACTOR;
+        }
+    }
+    
+    for (size_t i = 0; i < 6; ++i) {
+        mass_inverse(i, i) = 1.0 / mass_matrix(i, i);
+    }
+    
+    return mass_inverse;
+}
+
+}  // namespace
+
+// Main admittance control step
 
 bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
 {
@@ -78,22 +125,7 @@ bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
 
 // writeJointCommands removed - trajectory publishing handled in controlLoop()
 
-/**
- * @brief Compute admittance control law using Runge-Kutta 4th order integration
- *
- * The admittance control law is:
- * M*a + D*v + K*x = F_external
- *
- * Where:
- * - M: Virtual mass matrix
- * - D: Damping matrix
- * - K: Stiffness matrix (scaled by engagement factor)
- * - F_external: Measured external force/torque
- *
- * @param period Control loop period
- * @param cmd_vel_out Output Cartesian velocity command
- * @return true if computation successful
- */
+// Compute admittance control: M*a + D*v + K*x = F_external using RK4 integration
 bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {
   // Compute pose error between desired and current poses
@@ -182,15 +214,7 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
   return true;
 }
 
-/**
- * @brief Compute pose error between desired and current end-effector poses
- *
- * This method computes the error in the tip frame:
- * - Position error: simple difference
- * - Orientation error: axis-angle representation of rotation error
- *
- * @return 6D error vector [position_error; orientation_error]
- */
+// Compute pose error between desired and current end-effector poses
 Vector6d AdmittanceNode::computePoseError_tip_base()
 {
   Vector6d error = Vector6d::Zero();
@@ -293,7 +317,7 @@ void AdmittanceNode::updateMassMatrix(const ur_admittance_controller::Params& pa
     mass_(i, i) = mass_array[i];
   }
   
-  mass_inverse_ = utils::computeMassInverse(mass_array);
+  mass_inverse_ = computeMassInverse(mass_array);
   
   if (log_changes) {
     double max_mass = mass_.diagonal().maxCoeff();
@@ -342,7 +366,7 @@ void AdmittanceNode::updateDampingMatrix(const ur_admittance_controller::Params&
     damping_ratio_array[i] = params.admittance.damping_ratio[i];
   }
   
-  damping_ = utils::computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
+  damping_ = computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
   
   if (log_changes) {
     RCLCPP_INFO(get_logger(), 
@@ -376,27 +400,14 @@ bool AdmittanceNode::applyCartesianVelocityLimits()
   return !desired_vel_.hasNaN();
 }
 
-/**
- * @brief Convert Cartesian velocity to joint space using inverse kinematics
- *
- * @param cart_vel Cartesian velocity command (6D)
- * @param period Control loop period
- * @return true if conversion successful
- */
+// Convert Cartesian velocity to joint space using inverse kinematics
 bool AdmittanceNode::convertToJointSpace(
     const Vector6d& cart_vel, 
     const rclcpp::Duration& period)
 {
-  // Validate inputs
-  if (period.seconds() <= 0.0 || cart_vel.hasNaN()) {
-    return false;
-  }
-  
-  // Check array sizes
-  if (params_.joints.size() == 0 || 
-      current_pos_.size() < params_.joints.size()) {
-    return false;
-  }
+  // Validate inputs and sizes
+  if (period.seconds() <= 0.0 || cart_vel.hasNaN() || params_.joints.empty() || 
+      current_pos_.size() < params_.joints.size()) return false;
   
   // Get current joint positions from stored values
   {
@@ -411,42 +422,25 @@ bool AdmittanceNode::convertToJointSpace(
   
   // Call inverse kinematics
   if (!kinematics_ || !(*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
-        current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) {
-    RCLCPP_ERROR(get_logger(), "Inverse kinematics computation failed for tip_link '%s'", params_.tip_link.c_str());
-    return false;
-  }
+        current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) return false;
   
   // Update joint positions (velocities will be calculated in applyJointLimits)
   for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
     joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
-    if (std::isnan(joint_positions_[i])) {
-      return false;
-    }
+    if (std::isnan(joint_positions_[i])) return false;
   }
   
   return true;
 }
 
-/**
- * @brief Apply joint position and velocity limits
- *
- * @param period Control loop period
- * @return true if limits applied successfully
- */
+// Apply joint position and velocity limits
 bool AdmittanceNode::applyJointLimits(const rclcpp::Duration& period)
 {
-  // Validate period
-  if (period.seconds() <= 0.0) {
-    return false;
-  }
-  
-  // Validate array sizes
-  if (params_.joints.size() == 0 || joint_deltas_.size() == 0 ||
+  // Validate period and array sizes
+  if (period.seconds() <= 0.0 || params_.joints.empty() || joint_deltas_.empty() ||
       params_.joints.size() > joint_positions_.size() || 
       joint_deltas_.size() > joint_positions_.size() ||
-      joint_limits_.size() < params_.joints.size()) {
-    return false;
-  }
+      joint_limits_.size() < params_.joints.size()) return false;
   
   // Apply limits to each joint
   for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
@@ -475,9 +469,7 @@ bool AdmittanceNode::applyJointLimits(const rclcpp::Duration& period)
     joint_velocities_[i] = current_velocity;
     
     // Check for NaN
-    if (std::isnan(joint_positions_[i]) || std::isnan(joint_velocities_[i])) {
-      return false;
-    }
+    if (std::isnan(joint_positions_[i]) || std::isnan(joint_velocities_[i])) return false;
   }
   
   return true;
@@ -511,9 +503,7 @@ bool AdmittanceNode::publishPoseError()
 }
 
 
-/**
- * @brief Update command interfaces with computed joint positions
- */
+// Update command interfaces with computed joint positions
 void AdmittanceNode::updateJointReferences()
 {
   // In the node version, joint references are updated directly
@@ -528,11 +518,7 @@ void AdmittanceNode::publishMonitoringData()
   publishCartesianVelocity();
 }
 
-/**
- * @brief Emergency stop with position hold
- *
- * @return Controller return status
- */
+// Emergency stop with position hold
 bool AdmittanceNode::safeStop()
 {
   try {

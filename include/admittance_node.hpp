@@ -1,3 +1,4 @@
+// UR Admittance Controller Node Definition
 #ifndef UR_ADMITTANCE_NODE_HPP
 #define UR_ADMITTANCE_NODE_HPP
 

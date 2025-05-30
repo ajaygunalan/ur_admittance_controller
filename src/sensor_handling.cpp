@@ -1,28 +1,11 @@
-/**
- * @file sensor_interface.cpp
- * @brief Force/torque sensor and transform management implementation
- *
- * This file handles sensor data acquisition, filtering, and coordinate
- * frame transformations for the admittance controller.
- */
+// Force/torque sensor and transform management implementation
 
 #include "admittance_node.hpp"
 
 namespace ur_admittance_controller {
 
-constexpr double CACHE_VALIDITY_WARNING_TIME = 0.5;
 
-/**
- * @brief Update force/torque sensor data with filtering and transform
- *
- * This method:
- * 1. Reads raw F/T sensor data from hardware interfaces
- * 2. Transforms the wrench to base frame if transform available
- * 3. Applies low-pass filtering
- * 4. Checks deadband
- *
- * @return true if sensor update successful
- */
+// Update force/torque sensor data with filtering and transform
 bool AdmittanceNode::updateSensorData()
 {
   Vector6d raw_wrench = Vector6d::Zero();
@@ -117,14 +100,7 @@ bool AdmittanceNode::getCurrentEndEffectorPose(Eigen::Isometry3d& pose)
 }
 
 
-/**
- * @brief Check if forces exceed deadband threshold
- *
- * If all force/torque components are below the threshold,
- * the controller stops motion and holds position.
- *
- * @return true if any force component exceeds threshold
- */
+// Check if forces exceed deadband threshold
 bool AdmittanceNode::checkDeadband()
 {
   // Check if any force/torque exceeds threshold
@@ -145,9 +121,7 @@ bool AdmittanceNode::checkDeadband()
   return false;
 }
 
-/**
- * @brief Publish Cartesian velocity for monitoring
- */
+// Publish Cartesian velocity for monitoring
 void AdmittanceNode::publishCartesianVelocity()
 {
   // Use pre-allocated message for better performance
