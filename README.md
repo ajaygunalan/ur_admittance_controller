@@ -34,10 +34,12 @@ Launch UR5e + F/T sensor in Gazebo:
 ros2 launch ur_simulation_gz ur_sim_control.launch.py
 ```
 
-Launch admittance controller:
+Launch admittance controller (default is simulation mode):
 ```
 ros2 launch ur_admittance_controller ur_admittance.launch.py
 ```
+
+The controller automatically uses topic mode and subscribes to Gazebo's `/wrist_ft_sensor` topic.
 
 Apply force and watch robot move:
 ```
@@ -60,7 +62,7 @@ ros2 controller list  # Should show "scaled_joint_trajectory_controller: active"
 # If not active, activate it:
 # ros2 controller set_state scaled_joint_trajectory_controller active
 
-# Terminal 2: Launch admittance controller
+# Terminal 2: Launch admittance controller (hardware mode)
 ros2 launch ur_admittance_controller ur_admittance.launch.py \
   use_sim:=false
 
@@ -108,6 +110,16 @@ ros2 service call /ur_admittance_controller/move_to_start_pose std_srvs/srv/Trig
 # Now set stiffness - it engages gradually
 ros2 param set /ur_admittance_controller admittance.stiffness [100,100,100,10,10,10]
 ```
+
+## 🔄 F/T Sensor Modes
+
+The controller supports two F/T sensor modes:
+
+- **Simulation Mode (default)**: `ros2 launch ur_admittance_controller ur_admittance.launch.py`
+  - Automatically subscribes to `/wrist_ft_sensor` topic from Gazebo
+  
+- **Hardware Mode**: `ros2 launch ur_admittance_controller ur_admittance.launch.py use_sim:=false`
+  - Uses F/T sensor hardware interfaces from real robot
 
 ## ⚙️ Key Parameters
 

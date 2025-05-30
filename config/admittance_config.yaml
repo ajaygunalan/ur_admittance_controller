@@ -1,5 +1,3 @@
-
-
 ur_admittance_controller:
   downstream_controller_name:
     type: string
@@ -21,8 +19,50 @@ ur_admittance_controller:
 
   ft_sensor_name:
     type: string
-    default_value: "tcp_fts_sensor"
-    description: "Name of the F/T sensor hardware interface"
+    default_value: ""  # Empty by default for simulation compatibility
+    description: "Name of the F/T sensor hardware interface (empty for simulation)"
+
+  sensor_interface:
+    mode:
+      type: string
+      default_value: "hardware"
+      description: "Sensor data source: 'hardware' or 'topic'"
+      validation:
+        one_of<>: [["hardware", "topic"]]
+    
+    topic_config:
+      topic_name:
+        type: string
+        default_value: "/wrist_ft_sensor"
+        description: "Force/torque sensor topic name"
+      
+      data_timeout_ms:
+        type: double
+        default_value: 50.0
+        description: "Maximum age of sensor data before considered stale (ms)"
+      
+      frame_id_override:
+        type: string
+        default_value: ""
+        description: "Override frame_id from topic (empty = use topic's frame)"
+      
+      enable_transform_caching:
+        type: bool
+        default_value: true
+        description: "Cache transforms in non-RT callback"
+
+  fallback_strategy:
+    on_stale_data:
+      type: string
+      default_value: "hold_position"
+      description: "Action on stale data: 'hold_position', 'use_last', 'zero_force'"
+      validation:
+        one_of<>: [["hold_position", "use_last", "zero_force"]]
+    
+    max_missed_updates:
+      type: int
+      default_value: 10
+      description: "Maximum consecutive missed updates before safety stop"
 
   admittance:
     mass:
@@ -159,7 +199,7 @@ ur_admittance_controller:
 
   ft_frame:
     type: string
-    default_value: "tool0"
+    default_value: "ft_sensor_link"
     description: "F/T sensor frame"
 
   joint_limits_position_min:

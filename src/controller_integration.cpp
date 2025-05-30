@@ -5,24 +5,50 @@ namespace ur_admittance_controller {
 
 bool AdmittanceController::waitForTransforms()
 {
-  const auto timeout = rclcpp::Duration::from_seconds(5.0);
+  // Check transforms without timeout to avoid timer-related segfaults
+  // Following Nav2 pattern: use retry loop in on_activate() instead
   std::string error;
-  auto now = get_node()->get_clock()->now();
   
-  bool transforms_available = 
+  // Check base transforms
+  bool base_transforms_available = 
     tf_buffer_->canTransform(params_.world_frame, params_.base_link, 
-                            rclcpp::Time(0), timeout, &error) &&
-    tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
-                            rclcpp::Time(0), timeout, &error);
+                            tf2::TimePointZero, &error);
   
-  transforms_available = transforms_available && 
-    tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
-                            rclcpp::Time(0), timeout, &error);
-  
-  if (!transforms_available) {
-    RCLCPP_ERROR(get_node()->get_logger(), "Required transforms not available: %s", error.c_str());
+  if (!base_transforms_available) {
+    RCLCPP_WARN(get_node()->get_logger(), 
+      "Transform from %s to %s not yet available: %s", 
+      params_.world_frame.c_str(), params_.base_link.c_str(), error.c_str());
     return false;
   }
+  
+  // Check tip transform
+  error.clear();
+  bool tip_transform_available = 
+    tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
+                            tf2::TimePointZero, &error);
+  
+  if (!tip_transform_available) {
+    RCLCPP_WARN(get_node()->get_logger(), 
+      "Transform from %s to %s not yet available: %s", 
+      params_.base_link.c_str(), params_.tip_link.c_str(), error.c_str());
+    return false;
+  }
+  
+  // Check F/T sensor transform (may differ in simulation vs hardware)
+  error.clear();
+  bool ft_transform_available = 
+    (params_.ft_frame == params_.base_link) || 
+    tf_buffer_->canTransform(params_.base_link, params_.ft_frame, 
+                            tf2::TimePointZero, &error);
+  
+  if (!ft_transform_available) {
+    RCLCPP_WARN(get_node()->get_logger(), 
+      "Transform from %s to %s not yet available: %s", 
+      params_.base_link.c_str(), params_.ft_frame.c_str(), error.c_str());
+    return false;
+  }
+  
+  RCLCPP_INFO(get_node()->get_logger(), "All required transforms are available");
   
   transform_base_ft_.reset();
   transform_base_tip_.reset();

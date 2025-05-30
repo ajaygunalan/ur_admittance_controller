@@ -1,0 +1,25 @@
+ur_admittance_controller:
+  # Use topic mode for Gazebo simulation
+  sensor_interface:
+    mode:
+      type: string
+      default_value: "topic"
+      description: "Using topic mode for Gazebo F/T sensor"
+    
+    topic_config:
+      topic_name:
+        type: string
+        default_value: "/wrist_ft_sensor"
+        description: "Gazebo publishes F/T data here"
+      
+      frame_id_override:
+        type: string
+        default_value: ""
+        description: "Use frame_id from topic"
+      
+      data_timeout_ms:
+        type: double
+        default_value: 100.0
+        description: "Increased timeout for simulation"
+
+  # All other parameters inherit from admittance_config.yaml
