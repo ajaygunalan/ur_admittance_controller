@@ -20,6 +20,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   current_pos_.resize(params_.joints.size(), 0.0);
   joint_deltas_.resize(params_.joints.size(), 0.0);
   cart_displacement_deltas_.resize(6, 0.0);
+  previous_joint_velocities_.resize(params_.joints.size(), 0.0);
   
   // Initialize control matrices
   mass_ = Matrix6d::Identity();

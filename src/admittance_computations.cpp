@@ -413,14 +413,12 @@ bool AdmittanceNode::convertToJointSpace(
     return false;
   }
   
-  // Update joint positions and velocities
+  // Update joint positions (velocities will be calculated in applyJointLimits)
   for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
     joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
     if (std::isnan(joint_positions_[i])) {
       return false;
     }
-    // Calculate velocity from displacement
-    joint_velocities_[i] = joint_deltas_[i] / period.seconds();
   }
   
   return true;
@@ -449,20 +447,56 @@ bool AdmittanceNode::applyJointLimits(const rclcpp::Duration& period)
   
   // Apply limits to each joint
   for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
-    // Check velocity limit
-    double velocity = joint_deltas_[i] / period.seconds();
-    if (std::abs(velocity) > joint_limits_[i].max_velocity) {
-      // Scale down movement to respect velocity limit
-      double scale = joint_limits_[i].max_velocity / std::abs(velocity);
-      joint_positions_[i] = current_pos_[i] + joint_deltas_[i] * scale;
+    double current_velocity = joint_deltas_[i] / period.seconds();
+    
+    // Check acceleration limit (requires previous velocity)
+    double acceleration = (current_velocity - previous_joint_velocities_[i]) / period.seconds();
+    
+    if (std::abs(acceleration) > joint_limits_[i].max_acceleration) {
+      // Limit velocity change to respect acceleration constraint
+      double max_velocity_change = joint_limits_[i].max_acceleration * period.seconds();
+      double limited_velocity;
+      
+      if (current_velocity > previous_joint_velocities_[i]) {
+        limited_velocity = previous_joint_velocities_[i] + max_velocity_change;
+      } else {
+        limited_velocity = previous_joint_velocities_[i] - max_velocity_change;
+      }
+      
+      // Update joint delta based on limited velocity
+      joint_deltas_[i] = limited_velocity * period.seconds();
+      current_velocity = limited_velocity;
+      
+      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+        "Joint %zu acceleration limited: %.3f -> %.3f rad/s²", 
+        i, acceleration, joint_limits_[i].max_acceleration);
     }
+    
+    // Check velocity limit
+    if (std::abs(current_velocity) > joint_limits_[i].max_velocity) {
+      // Scale down movement to respect velocity limit
+      double scale = joint_limits_[i].max_velocity / std::abs(current_velocity);
+      joint_deltas_[i] *= scale;
+      current_velocity *= scale;
+      
+      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+        "Joint %zu velocity limited: %.3f -> %.3f rad/s", 
+        i, current_velocity / scale, current_velocity);
+    }
+    
+    // Update joint position
+    joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
     
     // Apply position limits
     joint_positions_[i] = std::max(joint_limits_[i].min_position, 
                           std::min(joint_positions_[i], joint_limits_[i].max_position));
     
+    // Store velocity for next iteration and output
+    joint_velocities_[i] = current_velocity;
+    previous_joint_velocities_[i] = current_velocity;
+    
     // Check for NaN
-    if (std::isnan(joint_positions_[i])) {
+    if (std::isnan(joint_positions_[i]) || std::isnan(joint_velocities_[i])) {
       return false;
     }
   }

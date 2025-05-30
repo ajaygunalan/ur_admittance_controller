@@ -113,6 +113,7 @@ private:
   std::vector<double> current_pos_;
   std::vector<double> joint_deltas_;
   std::vector<double> cart_displacement_deltas_;
+  std::vector<double> previous_joint_velocities_;  // Track previous velocities for acceleration checking
   geometry_msgs::msg::WrenchStamped current_wrench_;
   std::mutex wrench_mutex_;
   std::mutex joint_state_mutex_;
