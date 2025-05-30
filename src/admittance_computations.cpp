@@ -1,13 +1,12 @@
 /**
- * @file realtime_computations.cpp
- * @brief Real-time control loop implementation for admittance control
+ * @file admittance_computations.cpp
+ * @brief Core admittance control algorithm implementation
  *
- * This file contains the real-time safe implementations of the admittance
- * control algorithm, including force/torque processing, admittance computation,
- * and joint space conversion.
+ * This file contains the pure algorithmic implementations of the admittance
+ * control law, independent of any control framework.
  */
 
-#include "admittance_controller.hpp"
+#include "admittance_node.hpp"
 #include "admittance_constants.hpp"
 #include "matrix_utilities.hpp"
 #include <cstring>
@@ -33,63 +32,53 @@ using namespace constants;
  * 8. Reference interface updates
  * 9. Monitoring data publication
  */
-controller_interface::return_type AdmittanceController::update_reference_from_subscribers(
-  const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
+// Main control loop has been moved to controlLoop() in admittance_node.cpp
+// The following functions are the core algorithm implementations
+
+bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
 {
   // Check for parameter updates from ROS
   checkParameterUpdates();
   
-  // Update force/torque sensor data
-  if (!updateSensorData()) {
-    return controller_interface::return_type::OK;
-  }
-  
   // Update transform caches if needed
   if (!updateTransforms()) {
-    return controller_interface::return_type::OK;
+    return false;
   }
   
   // Check if forces are within deadband
   if (!checkDeadband()) {
-    return controller_interface::return_type::OK;
+    // Zero velocity when in deadband
+    V_base_tip_base_.setZero();
+    desired_vel_.setZero();
+    return true;
   }
   
   // Compute admittance control law
   Vector6d cmd_vel;
   if (!computeAdmittanceControl(period, cmd_vel)) {
-    reportRTError(RTErrorType::CONTROL_ERROR);
-    return safeStop();
+    RCLCPP_ERROR(get_logger(), "Failed to compute admittance control");
+    return false;
   }
+  
+  // Store computed velocity
+  V_base_tip_base_ = cmd_vel;
   
   // Convert Cartesian velocity to joint space
   if (!convertToJointSpace(cmd_vel, period)) {
-    reportRTError(RTErrorType::KINEMATICS_ERROR);
-    return safeStop();
+    RCLCPP_ERROR(get_logger(), "Failed to convert to joint space");
+    return false;
   }
   
   // Apply joint position and velocity limits
   if (!applyJointLimits(period)) {
-    reportRTError(RTErrorType::JOINT_LIMITS_ERROR);
-    return safeStop();
+    RCLCPP_ERROR(get_logger(), "Joint limits violated");
+    return false;
   }
   
-  // Update command interfaces
-  updateReferenceInterfaces();
-  
-  // Publish monitoring data
-  publishMonitoringData();
-  
-  // Process any errors in non-RT context
-  processNonRTErrors();
-  
-  return controller_interface::return_type::OK; 
+  return true;
 }
 
-controller_interface::return_type AdmittanceController::update_and_write_commands(
-  const rclcpp::Time & time, const rclcpp::Duration & period)
-{
-  return update_reference_from_subscribers(time, period);
-}
+// writeJointCommands removed - trajectory publishing handled in controlLoop()
 
 /**
  * @brief Compute admittance control law using Runge-Kutta 4th order integration
@@ -107,7 +96,7 @@ controller_interface::return_type AdmittanceController::update_and_write_command
  * @param cmd_vel_out Output Cartesian velocity command
  * @return true if computation successful
  */
-bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
+bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {
   // Compute pose error between desired and current poses
   error_tip_base_ = computePoseError_tip_base();
@@ -204,7 +193,7 @@ bool AdmittanceController::computeAdmittanceControl(const rclcpp::Duration& peri
  *
  * @return 6D error vector [position_error; orientation_error]
  */
-Vector6d AdmittanceController::computePoseError_tip_base()
+Vector6d AdmittanceNode::computePoseError_tip_base()
 {
   Vector6d error = Vector6d::Zero();
   
@@ -251,7 +240,7 @@ Vector6d AdmittanceController::computePoseError_tip_base()
   return error;
 }
 
-bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& period)
+bool AdmittanceNode::updateStiffnessEngagement(const rclcpp::Duration& period)
 {
   if (period.seconds() <= 0.0) {
     return false;
@@ -266,7 +255,7 @@ bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& per
        orientation_error_norm > safe_startup_params_.max_orientation_error)) {
     error_within_limits = false;
     
-    rtLogWarn(RTLogType::WARN_POSE_ERROR_LIMIT);
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Pose error exceeds safe startup limits");
     
     stiffness_recently_changed_ = true;
     stiffness_engagement_factor_ = STIFFNESS_REDUCTION_FACTOR;
@@ -277,7 +266,7 @@ bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& per
     if (stiffness_engagement_factor_ >= 1.0) {
       stiffness_engagement_factor_ = 1.0;
       stiffness_recently_changed_ = false;
-      rtLogInfo(RTLogType::INFO_STIFFNESS_ENGAGED);
+      RCLCPP_INFO(get_logger(), "Stiffness fully engaged");
     }
   }
   
@@ -285,22 +274,20 @@ bool AdmittanceController::updateStiffnessEngagement(const rclcpp::Duration& per
 }
 
 
-void AdmittanceController::checkParameterUpdates()
+void AdmittanceNode::checkParameterUpdates()
 {
   if (!params_.dynamic_parameters) return;
 
-  parameter_update_needed_.store(true);
-  
-  const auto* latest_params = param_buffer_.readFromRT();
-  
-  if (!latest_params) return;
-  
-  params_ = *latest_params;
+  // In the node version, check if parameters were updated
+  if (params_updated_.load()) {
+    params_ = param_listener_->get_params();
+    params_updated_.store(false);
+  }
 }
 
-void AdmittanceController::prepareParameterUpdate()
+void AdmittanceNode::prepareParameterUpdate()
 {
-  if (!parameter_update_needed_.load()) return;
+  // Parameters already updated in checkParameterUpdates
   
   auto new_params = param_listener_->get_params();
   
@@ -331,8 +318,7 @@ void AdmittanceController::prepareParameterUpdate()
   }
   
   if (!mass_changed && !stiffness_changed && !damping_changed) {
-    param_buffer_.writeFromNonRT(new_params);
-    parameter_update_needed_.store(false);
+    params_ = new_params;
     return;
   }
   
@@ -344,19 +330,18 @@ void AdmittanceController::prepareParameterUpdate()
     updateStiffnessMatrix(new_params, true);
     stiffness_recently_changed_ = true;
     stiffness_engagement_factor_ = 0.0;
-    RCLCPP_INFO(get_node()->get_logger(), "Starting gradual stiffness engagement");
+    RCLCPP_INFO(get_logger(), "Starting gradual stiffness engagement");
   }
   
   if (stiffness_changed || damping_changed) {
     updateDampingMatrix(new_params, true);
   }
   
-  param_buffer_.writeFromNonRT(new_params);
-  parameter_update_needed_.store(false);
+  params_ = new_params;
 }
 
 
-void AdmittanceController::updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes)
+void AdmittanceNode::updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes)
 {
   std::array<double, 6> mass_array;
   for (size_t i = 0; i < 6; ++i) {
@@ -372,38 +357,38 @@ void AdmittanceController::updateMassMatrix(const ur_admittance_controller::Para
     double condition_number = max_mass / min_mass;
     
     if (condition_number > MAX_CONDITION_NUMBER || min_mass <= 0.0) {
-      RCLCPP_WARN(get_node()->get_logger(), 
+      RCLCPP_WARN(get_logger(), 
         "Mass matrix regularized (condition number: %.2e, min mass: %.6f)", 
         condition_number, min_mass);
     } else {
-      RCLCPP_INFO(get_node()->get_logger(), 
+      RCLCPP_INFO(get_logger(), 
         "Mass parameters updated (condition number: %.2e)", condition_number);
     }
   }
 }
 
-void AdmittanceController::updateMassMatrix()
+void AdmittanceNode::updateMassMatrix()
 {
   updateMassMatrix(params_, false);
 }
 
-void AdmittanceController::updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes)
+void AdmittanceNode::updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes)
 {
   for (size_t i = 0; i < 6; ++i) {
     stiffness_(i, i) = params.admittance.stiffness[i];
   }
   
   if (log_changes) {
-    RCLCPP_INFO(get_node()->get_logger(), "Stiffness parameters updated");
+    RCLCPP_INFO(get_logger(), "Stiffness parameters updated");
   }
 }
 
-void AdmittanceController::updateStiffnessMatrix()
+void AdmittanceNode::updateStiffnessMatrix()
 {
   updateStiffnessMatrix(params_, false);
 }
 
-void AdmittanceController::updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes)
+void AdmittanceNode::updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes)
 {
   for (size_t i = 0; i < 6; ++i) {
     double critical_damping = 2.0 * std::sqrt(params.admittance.stiffness[i] * params.admittance.mass[i]);
@@ -411,18 +396,18 @@ void AdmittanceController::updateDampingMatrix(const ur_admittance_controller::P
   }
   
   if (log_changes) {
-    RCLCPP_INFO(get_node()->get_logger(), 
+    RCLCPP_INFO(get_logger(), 
       "Damping parameters updated with simplified critical damping formula");
   }
 }
 
-void AdmittanceController::updateDampingMatrix()
+void AdmittanceNode::updateDampingMatrix()
 {
   updateDampingMatrix(params_, false);
 }
 
 
-bool AdmittanceController::applyCartesianVelocityLimits()
+bool AdmittanceNode::applyCartesianVelocityLimits()
 {
   if (desired_vel_.hasNaN()) {
     return false;
@@ -449,7 +434,7 @@ bool AdmittanceController::applyCartesianVelocityLimits()
  * @param period Control loop period
  * @return true if conversion successful
  */
-bool AdmittanceController::convertToJointSpace(
+bool AdmittanceNode::convertToJointSpace(
     const Vector6d& cart_vel, 
     const rclcpp::Duration& period)
 {
@@ -460,25 +445,14 @@ bool AdmittanceController::convertToJointSpace(
   
   // Check array sizes
   if (params_.joints.size() == 0 || 
-      pos_state_indices_.size() < params_.joints.size() ||
       current_pos_.size() < params_.joints.size()) {
     return false;
   }
   
-  // Get current joint positions
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    size_t idx = pos_state_indices_[i];
-    if (idx >= state_interfaces_.size()) {
-      return false;
-    }
-    auto value = state_interfaces_[idx].get_optional();
-    if (!value.has_value()) {
-      return false;
-    }
-    current_pos_[i] = value.value();
-    if (std::isnan(current_pos_[i])) {
-      return false;
-    }
+  // Get current joint positions from stored values
+  {
+    std::lock_guard<std::mutex> lock(joint_state_mutex_);
+    current_pos_ = joint_positions_;
   }
   
   // Convert velocity to displacement
@@ -489,16 +463,18 @@ bool AdmittanceController::convertToJointSpace(
   // Call inverse kinematics
   if (!kinematics_ || !(*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
         current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) {
-    reportRTError(RTErrorType::KINEMATICS_ERROR);
+    last_rt_error_.store(RTErrorType::KINEMATICS_ERROR);
     return false;
   }
   
-  // Update joint positions
+  // Update joint positions and velocities
   for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
     joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
     if (std::isnan(joint_positions_[i])) {
       return false;
     }
+    // Calculate velocity from displacement
+    joint_velocities_[i] = joint_deltas_[i] / period.seconds();
   }
   
   return true;
@@ -510,7 +486,7 @@ bool AdmittanceController::convertToJointSpace(
  * @param period Control loop period
  * @return true if limits applied successfully
  */
-bool AdmittanceController::applyJointLimits(const rclcpp::Duration& period)
+bool AdmittanceNode::applyJointLimits(const rclcpp::Duration& period)
 {
   // Validate period
   if (period.seconds() <= 0.0) {
@@ -549,52 +525,35 @@ bool AdmittanceController::applyJointLimits(const rclcpp::Duration& period)
 }
 
 
-bool AdmittanceController::handleDriftReset()
+bool AdmittanceNode::handleDriftReset()
 {
   desired_vel_.setZero();
   V_base_tip_base_.setZero();
   
-  try {
-    size_t i = 0;
-    for (const auto& index : pos_state_indices_) {
-      if (index >= state_interfaces_.size()) {
-        return false;
-      }
-      auto value = state_interfaces_[index].get_optional();
-      if (value.has_value()) {
-        joint_positions_[i++] = value.value();
-      } else {
-        return false;
-      }
-    }
-  } catch (...) {
-    reportRTError(RTErrorType::CONTROL_ERROR);
-    return false;
-  }
+  // In the node version, joint positions are already up to date
+  // No need to read from hardware interfaces
   
   X_base_tip_desired_ = X_base_tip_current_;
   
   return true;
 }
 
-bool AdmittanceController::publishPoseError()
+bool AdmittanceNode::publishPoseError()
 {
-  if (rt_pose_error_pub_->trylock()) {
-    auto& msg = rt_pose_error_pub_->msg_;
-    msg.linear.x = error_tip_base_(0);
-    msg.linear.y = error_tip_base_(1);
-    msg.linear.z = error_tip_base_(2);
-    msg.angular.x = error_tip_base_(3);
-    msg.angular.y = error_tip_base_(4);
-    msg.angular.z = error_tip_base_(5);
-    rt_pose_error_pub_->unlockAndPublish();
-  }
+  geometry_msgs::msg::Twist msg;
+  msg.linear.x = error_tip_base_(0);
+  msg.linear.y = error_tip_base_(1);
+  msg.linear.z = error_tip_base_(2);
+  msg.angular.x = error_tip_base_(3);
+  msg.angular.y = error_tip_base_(4);
+  msg.angular.z = error_tip_base_(5);
+  pose_error_pub_->publish(msg);
   return true;
 }
 
-void AdmittanceController::processNonRTErrors()
+void AdmittanceNode::processNonRTErrors()
 {
-  processRTLogs();
+  // RT logs removed - using standard logging
   
   updateTransformCaches();
   
@@ -605,26 +564,26 @@ void AdmittanceController::processNonRTErrors()
   if (error != RTErrorType::NONE && rclcpp::ok()) {
     switch (error) {
       case RTErrorType::UPDATE_ERROR:
-        RCLCPP_ERROR(get_node()->get_logger(), "Real-time error occurred in update loop");
+        RCLCPP_ERROR(get_logger(), "Real-time error occurred in update loop");
         break;
       case RTErrorType::SENSOR_ERROR:
-        RCLCPP_ERROR(get_node()->get_logger(), "Real-time error in sensor data processing");
+        RCLCPP_ERROR(get_logger(), "Real-time error in sensor data processing");
         break;
       case RTErrorType::TRANSFORM_ERROR:
-        RCLCPP_ERROR(get_node()->get_logger(), "Transform lookup failed in real-time context");
+        RCLCPP_ERROR(get_logger(), "Transform lookup failed in real-time context");
         transform_update_needed_.store(true);
         break;
       case RTErrorType::CONTROL_ERROR:
-        RCLCPP_ERROR(get_node()->get_logger(), "Control computation error in real-time context");
+        RCLCPP_ERROR(get_logger(), "Control computation error in real-time context");
         break;
       case RTErrorType::KINEMATICS_ERROR:
-        RCLCPP_ERROR(get_node()->get_logger(), "Kinematics error in real-time context");
+        RCLCPP_ERROR(get_logger(), "Kinematics error in real-time context");
         break;
       case RTErrorType::JOINT_LIMITS_ERROR:
-        RCLCPP_ERROR(get_node()->get_logger(), "Joint limits error in real-time context");
+        RCLCPP_ERROR(get_logger(), "Joint limits error in real-time context");
         break;
       default:
-        RCLCPP_ERROR(get_node()->get_logger(), "Unknown real-time error occurred");
+        RCLCPP_ERROR(get_logger(), "Unknown real-time error occurred");
         break;
     }
   }
@@ -633,29 +592,16 @@ void AdmittanceController::processNonRTErrors()
 /**
  * @brief Update command interfaces with computed joint positions
  */
-void AdmittanceController::updateReferenceInterfaces()
+void AdmittanceNode::updateJointReferences()
 {
-  // Update reference positions
+  // In the node version, joint references are updated directly
+  // and published in the control loop as trajectory messages
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     joint_position_references_[i] = joint_positions_[i];
   }
-  
-  // Update ChainableController reference interfaces
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    reference_interfaces_[i] = joint_position_references_[i];
-  }
-  
-  // Write to command interfaces
-  for (size_t i = 0; i < command_interfaces_.size(); ++i) {
-    const size_t joint_idx = cmd_interface_to_joint_index_[i];
-    
-    if (!command_interfaces_[i].set_value(joint_position_references_[joint_idx])) {
-      reportRTError(RTErrorType::CONTROL_ERROR);
-    }
-  }
 }
 
-void AdmittanceController::publishMonitoringData()
+void AdmittanceNode::publishMonitoringData()
 {
   publishCartesianVelocity();
 }
@@ -665,24 +611,23 @@ void AdmittanceController::publishMonitoringData()
  *
  * @return Controller return status
  */
-controller_interface::return_type AdmittanceController::safeStop()
+bool AdmittanceNode::safeStop()
 {
   try {
     // Zero all velocities
     V_base_tip_base_.setZero();
     desired_vel_.setZero();
     
-    // Hold current position
-    for (size_t i = 0; i < params_.joints.size(); ++i) {
-      joint_position_references_[i] = state_interfaces_[pos_state_indices_[i]].get_optional().value();
-      reference_interfaces_[i] = joint_position_references_[i];
+    // Set joint velocities to zero
+    for (size_t i = 0; i < joint_velocities_.size(); ++i) {
+      joint_velocities_[i] = 0.0;
     }
     
-    return controller_interface::return_type::OK;
+    return true;
     
-  } catch (const std::exception &) {
-    reportRTError(RTErrorType::CONTROL_ERROR);
-    return controller_interface::return_type::ERROR;
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(get_logger(), "Exception in safeStop: %s", e.what());
+    return false;
   }
 }
 

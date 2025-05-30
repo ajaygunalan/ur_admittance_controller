@@ -1,6 +1,8 @@
-# UR Admittance Controller
+# UR Admittance Node
 
-> **Force-compliant motion control for Universal Robots - push the robot and it moves!**
+> **Standalone force-compliant motion control node for Universal Robots - push the robot and it moves!**
+>
+> **Note**: This package has been refactored from a ROS2 Control controller to a standalone ROS2 node that interfaces directly with trajectory controllers.
 
 ## 📚 Table of Contents
 
@@ -34,17 +36,17 @@ Launch UR5e + F/T sensor in Gazebo:
 ros2 launch ur_simulation_gz ur_sim_control.launch.py
 ```
 
-Launch admittance controller (default is simulation mode):
+Launch admittance node (default is simulation mode):
 ```
 ros2 launch ur_admittance_controller ur_admittance.launch.py
 ```
 
-The controller automatically uses topic mode and subscribes to Gazebo's `/wrist_ft_sensor` topic.
+The node automatically uses topic mode and subscribes to Gazebo's `/wrist_ft_sensor` topic and publishes to `/scaled_joint_trajectory_controller/joint_trajectory`.
 
 Apply force and watch robot move:
 ```
-ros2 topic pub /ft_sensor_readings geometry_msgs/WrenchStamped \
-  "{header: {frame_id: 'tool0'}, wrench: {force: {x: 10.0}}}" --once
+ros2 topic pub /wrist_ft_sensor geometry_msgs/WrenchStamped \
+  "{header: {frame_id: 'ft_sensor_link'}, wrench: {force: {x: 10.0}}}" --once
 ```
 
 **Gazebo Tip**: Press `F` key to enable force mode, then drag the robot!
@@ -104,27 +106,25 @@ ros2 param set /ur_admittance_controller admittance.stiffness [50,50,0,5,5,0]
 
 ```bash
 # Move robot to desired position first (manually or programmatically)
-# Then safely enable impedance mode:
-ros2 service call /ur_admittance_controller/move_to_start_pose std_srvs/srv/Trigger
-
-# Now set stiffness - it engages gradually
-ros2 param set /ur_admittance_controller admittance.stiffness [100,100,100,10,10,10]
+# Then set stiffness - it engages gradually
+ros2 param set /admittance_node admittance.stiffness [100,100,100,10,10,10]
 ```
 
 ## 🔄 F/T Sensor Modes
 
-The controller supports two F/T sensor modes:
+The node operates in topic-based mode for F/T sensor data:
 
 - **Simulation Mode (default)**: `ros2 launch ur_admittance_controller ur_admittance.launch.py`
-  - Automatically subscribes to `/wrist_ft_sensor` topic from Gazebo
+  - Subscribes to `/wrist_ft_sensor` topic from Gazebo
   
 - **Hardware Mode**: `ros2 launch ur_admittance_controller ur_admittance.launch.py use_sim:=false`
-  - Uses F/T sensor hardware interfaces from real robot
+  - Subscribes to F/T sensor topic from real robot driver
 
 ## ⚙️ Key Parameters
 
 | Parameter | Purpose | Default | Typical Range |
 |-----------|---------|---------|---------------|
+| `control_frequency` | Control loop rate | 200 Hz | 100-1000 Hz |
 | `admittance.mass` | Inertia (responsiveness) | [8,8,8,0.8,0.8,0.8] | 3-20 kg |
 | `admittance.damping_ratio` | Stability | [0.8,0.8,0.8,0.8,0.8,0.8] | 0.7-1.2 |
 | `admittance.stiffness` | Position control | [0,0,0,0,0,0] | 0-200 N/m |
@@ -149,21 +149,21 @@ ros2 run ur_admittance_controller ur_admittance_tests.py monitor
 ### No Motion?
 ```bash
 # Check force threshold
-ros2 param get /ur_admittance_controller admittance.min_motion_threshold
+ros2 param get /admittance_node admittance.min_motion_threshold
 # Lower it if needed
-ros2 param set /ur_admittance_controller admittance.min_motion_threshold 0.5
+ros2 param set /admittance_node admittance.min_motion_threshold 0.5
 
 # Verify F/T data
-ros2 topic echo /ft_sensor_readings
+ros2 topic echo /wrist_ft_sensor
 ```
 
 ### Oscillating?
 ```bash
 # Increase damping (>1.0 for overdamped)
-ros2 param set /ur_admittance_controller admittance.damping_ratio [1.2,1.2,1.2,1.2,1.2,1.2]
+ros2 param set /admittance_node admittance.damping_ratio [1.2,1.2,1.2,1.2,1.2,1.2]
 
 # Or increase mass (slower response)
-ros2 param set /ur_admittance_controller admittance.mass [15,15,15,1.5,1.5,1.5]
+ros2 param set /admittance_node admittance.mass [15,15,15,1.5,1.5,1.5]
 ```
 
 ### Real Robot Issues
@@ -171,29 +171,26 @@ ros2 param set /ur_admittance_controller admittance.mass [15,15,15,1.5,1.5,1.5]
 - Check robot mode: `ros2 topic echo /ur_hardware_interface/robot_mode`
 - Ensure network connectivity: `ping <robot_ip>`
 
-## 🔧 Services & Topics
-
-**Services:**
-- `/ur_admittance_controller/reset_desired_pose` - Set desired = current pose
-- `/ur_admittance_controller/move_to_start_pose` - Safe impedance transition
+## 🔧 Topics
 
 **Published Topics:**
-- `/ur_admittance_controller/cartesian_velocity_command` - Current velocity
-- `/ur_admittance_controller/pose_error` - Error in impedance mode
-- `/ur_admittance_controller/current_pose` - Current TCP pose
-- `/ur_admittance_controller/desired_pose` - Target pose (impedance mode)
+- `/scaled_joint_trajectory_controller/joint_trajectory` - Joint trajectory commands
+- `/admittance_cartesian_velocity` - Current Cartesian velocity
+- `/admittance_pose_error` - Error in impedance mode
 
 **Subscribed Topics:**
-- `/ur_admittance_controller/set_desired_pose` - Set target pose
+- `/wrist_ft_sensor` - Force/torque sensor data
+- `/joint_states` - Current joint positions
 
 ## 📐 Technical Documentation
 
 ### Core Architecture
-- **Controller Type**: ChainableControllerInterface (ROS2 Control)
-- **Update Rate**: Determined by controller_manager (typically 200-500 Hz)
+- **Node Type**: Standalone ROS2 Node
+- **Update Rate**: 200 Hz default (configurable 1-1000 Hz via `control_frequency` parameter)
 - **Force Processing**: Transforms sensor data from any frame to base frame
-- **Real-time Safe**: Pre-allocated memory, cached transforms, lock-free publishing
+- **Performance Optimized**: Pre-allocated messages, cached transforms
 - **Kinematics**: Plugin-based (supports KDL, MoveIt, custom implementations)
+- **Output Interface**: Publishes to trajectory controllers
 
 ### Key Features
 - **6-DOF Admittance Control**: Independent control for each Cartesian axis

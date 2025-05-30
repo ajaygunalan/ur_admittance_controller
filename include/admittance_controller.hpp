@@ -263,6 +263,38 @@ protected:
   bool stiffness_recently_changed_ = false;                ///< Flag for stiffness ramping
   
   SafeStartupParams safe_startup_params_;                  ///< Safe startup parameters
+  
+  // ============================================================================
+  // Topic-based F/T Sensor Support
+  // ============================================================================
+  
+  /** @brief Force/torque sensor topic subscriber */
+  rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr ft_topic_sub_;
+  
+  /** @brief Pre-allocated buffers for F/T sensor data */
+  std::array<FTSensorData, FT_BUFFER_SIZE> ft_buffer_storage_;
+  
+  /** @brief Real-time safe buffer for F/T sensor data */
+  realtime_tools::RealtimeBuffer<FTSensorData> rt_ft_buffer_;
+  
+  /** @brief Whether to use topic mode for F/T sensor */
+  bool use_topic_mode_{false};
+  
+  /** @brief Sequence number for tracking missed updates */
+  std::atomic<uint64_t> ft_sequence_number_{0};
+  
+  /** @brief Last processed sequence number */
+  std::atomic<uint64_t> last_processed_sequence_{0};
+  
+  /** @brief Counter for consecutive missed updates */
+  std::atomic<int> consecutive_missed_updates_{0};
+  
+  /** @brief Last F/T message receive time */
+  rclcpp::Time last_ft_msg_time_;
+  
+  /** @brief Custom allocator options for subscriber */
+  rclcpp::SubscriptionOptions ft_sub_options_;
+  
   // ============================================================================
   // Service Handlers
   // ============================================================================
@@ -461,6 +493,19 @@ private:
   
   /** @brief Publish all monitoring data */
   void publishMonitoringData();
+  
+  // ============================================================================
+  // Topic-based F/T Sensor Methods
+  // ============================================================================
+  
+  /** @brief Callback for F/T sensor topic */
+  void ftSensorCallback(const geometry_msgs::msg::WrenchStamped::SharedPtr msg);
+  
+  /** @brief Handle fallback strategy when sensor data is stale */
+  bool handleFallbackStrategy();
+  
+  /** @brief Validate sensor data freshness and sequence */
+  bool validateSensorData(const FTSensorData* sensor_data, const rclcpp::Time& current_time);
 
   // ============================================================================
   // Parameter Updates

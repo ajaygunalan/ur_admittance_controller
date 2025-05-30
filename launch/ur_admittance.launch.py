@@ -33,7 +33,7 @@ Date: 2024
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, TimerAction, ExecuteProcess
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, TextSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, TextSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -99,20 +99,40 @@ def generate_launch_description():
         "config", 
         "admittance_config.yaml"
     ])
+    
+    # Separate config file for controller manager - different for sim vs hardware
+    controller_config_file_sim = PathJoinSubstitution([
+        FindPackageShare("ur_admittance_controller"),
+        "config", 
+        "ur_admittance_controllers.yaml"
+    ])
+    
+    controller_config_file_hw = PathJoinSubstitution([
+        FindPackageShare("ur_admittance_controller"),
+        "config", 
+        "ur_admittance_controllers_hw.yaml"
+    ])
+    
+    # Select config based on use_sim
+    controller_config_file = PythonExpression([
+        "'", controller_config_file_sim, "' if '", use_sim, "' == 'true' else '", controller_config_file_hw, "'"
+    ])
 
-    # Force/Torque sensor broadcaster node
-    # Publishes F/T sensor data to ROS topics
+    # Force/Torque sensor broadcaster is not needed in Gazebo simulation
+    # Gazebo publishes F/T sensor data directly to /wrist_ft_sensor topic
+    # This node is kept as a placeholder for real robot mode
     ft_sensor_broadcaster = Node(
         package="controller_manager",
         executable="spawner", 
         arguments=[
             "force_torque_sensor_broadcaster",
             "--controller-manager", "/controller_manager",
-            "--param-file", config_file,
+            "--param-file", controller_config_file,
             "--controller-manager-timeout", "300"
         ],
         output="screen",
-        condition=UnlessCondition(LaunchConfiguration("mode").__eq__(TextSubstitution(text="controller_only")))
+        # Disable for simulation mode since Gazebo publishes directly to /wrist_ft_sensor
+        condition=UnlessCondition(PythonExpression(["'", mode, "' == 'controller_only' or '", use_sim, "' == 'true'"]))
     )
 
     # Load admittance controller (initially inactive)
@@ -126,7 +146,7 @@ def generate_launch_description():
                 arguments=[
                     controller_name,
                     "--controller-manager", "/controller_manager", 
-                    "--param-file", config_file,
+                    "--param-file", controller_config_file,
                     "--inactive",  # Start inactive for safe initialization
                     "--controller-manager-timeout", "300"
                 ],
@@ -137,7 +157,7 @@ def generate_launch_description():
                 }]
             )
         ],
-        condition=UnlessCondition(TextSubstitution(text="ft_only").__eq__(mode))
+        condition=UnlessCondition(PythonExpression(["'", mode, "' == 'ft_only'"]))
     )
 
     activate_admittance_controller = TimerAction(
@@ -155,7 +175,7 @@ def generate_launch_description():
                 output="screen"
             )
         ],
-        condition=IfCondition(start_active).__and__(UnlessCondition(TextSubstitution(text="ft_only").__eq__(mode)))
+        condition=IfCondition(PythonExpression(["'", start_active, "' == 'true' and '", mode, "' != 'ft_only'"]))
     )
 
     # Demo configuration presets
@@ -195,14 +215,14 @@ def generate_launch_description():
                 ExecuteProcess(
                     cmd=['ros2', 'param', 'set', f'/{controller_name}', params[i], params[i+1]],
                     output='screen',
-                    condition=IfCondition(TextSubstitution(text=preset_name).__eq__(demo_preset))
+                    condition=IfCondition(PythonExpression(["'", demo_preset, "' == '", preset_name, "'"]))
                 )
             )
 
     apply_demo_preset = TimerAction(
         period=6.0,
         actions=demo_preset_actions,
-        condition=IfCondition(TextSubstitution(text="demo").__eq__(mode))
+        condition=IfCondition(PythonExpression(["'", mode, "' == 'demo'"]))
     )
 
     # System status monitor
@@ -245,7 +265,7 @@ def generate_launch_description():
                     "echo ''"
                 ],
                 output="screen",
-                condition=IfCondition(TextSubstitution(text="full").__eq__(mode))
+                condition=IfCondition(PythonExpression(["'", mode, "' == 'full'"]))
             ),
             ExecuteProcess(
                 cmd=[
@@ -257,7 +277,7 @@ def generate_launch_description():
                     f"echo ''"
                 ],
                 output="screen", 
-                condition=IfCondition(TextSubstitution(text="demo").__eq__(mode))
+                condition=IfCondition(PythonExpression(["'", mode, "' == 'demo'"]))
             )
         ]
     )

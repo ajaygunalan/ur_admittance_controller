@@ -28,6 +28,17 @@ static constexpr size_t DOF = 6;
 /** @brief Default low-pass filter coefficient for force/torque sensor filtering */
 static constexpr double DEFAULT_FILTER_COEFF = 0.95;
 
+/** @brief Error types for real-time error reporting */
+enum class RTErrorType : uint8_t {
+  NONE = 0,
+  UPDATE_ERROR = 1,
+  SENSOR_ERROR = 2,
+  TRANSFORM_ERROR = 3,
+  CONTROL_ERROR = 4,
+  KINEMATICS_ERROR = 5,
+  JOINT_LIMITS_ERROR = 6
+};
+
 /** @brief Maximum age of transform data before considered stale (seconds) */
 static constexpr double TRANSFORM_TIMEOUT = 0.1;
 

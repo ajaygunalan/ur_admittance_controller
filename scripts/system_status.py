@@ -69,8 +69,8 @@ class SystemStatusMonitor(Node):
             f"System Status Monitor started. Checking every {self.check_period}s"
         )
         
-        # Schedule initial check after 2 seconds (one-shot timer)
-        self.create_timer(2.0, self.initial_check, timer_period_ns=0)
+        # Schedule initial check after 2 seconds
+        self.initial_timer = self.create_timer(2.0, self.initial_check)
     
     def initial_check(self) -> None:
         """
@@ -79,6 +79,8 @@ class SystemStatusMonitor(Node):
         This gives the system time to initialize before first check.
         """
         self.check_system_status()
+        # Make this a one-shot timer by destroying it after first use
+        self.destroy_timer(self.initial_timer)
     
     def check_system_status(self) -> None:
         """

@@ -1,4 +1,16 @@
 ur_admittance_controller:
+  control_frequency:
+    type: double
+    default_value: 200.0
+    description: |
+      Control loop frequency in Hz. Common values:
+      - 200 Hz: Standard for force control (5ms loop)
+      - 500 Hz: High-performance force control (2ms loop)
+      - 1000 Hz: Maximum for real-time systems (1ms loop)
+      - 0 Hz: Run as fast as possible (use with caution)
+    validation:
+      bounds<>: [0.0, 1000.0]
+  
   downstream_controller_name:
     type: string
     default_value: "scaled_joint_trajectory_controller"

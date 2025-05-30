@@ -27,12 +27,8 @@ endif()
 # Core ROS2 packages
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(rclcpp_lifecycle REQUIRED)
 
-# ROS2 Control packages
-find_package(controller_interface REQUIRED)
-find_package(hardware_interface REQUIRED)
-find_package(realtime_tools REQUIRED)
+# Parameter generation and plugin loading
 find_package(pluginlib REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 
@@ -40,9 +36,6 @@ find_package(generate_parameter_library REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(control_msgs REQUIRED)
-find_package(std_srvs REQUIRED)
 
 # Transform packages
 find_package(tf2 REQUIRED)
@@ -65,76 +58,62 @@ generate_parameter_library(
 )
 
 # ==============================================================================
-# Build Controller Library
+# Node Dependencies
 # ==============================================================================
-# Create shared library for the admittance controller
-add_library(${PROJECT_NAME} SHARED
-  src/admittance_controller.cpp
-  src/realtime_computations.cpp
-  src/sensor_interface.cpp
-  src/controller_integration.cpp
-  src/utilities.cpp
-  src/plugin_export.cpp
+set(NODE_DEPENDENCIES
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  trajectory_msgs
+  tf2
+  tf2_ros
+  tf2_eigen
+  tf2_geometry_msgs
+  kinematics_interface
+  pluginlib
+  urdf
 )
 
-# Include directories
-target_include_directories(${PROJECT_NAME} PUBLIC
+# ==============================================================================
+# Build Admittance Node Executable (New Standalone Implementation)
+# ==============================================================================
+add_executable(admittance_node
+  src/admittance_node.cpp
+  src/admittance_computations.cpp
+  src/node_integration.cpp
+  src/sensor_handling.cpp
+)
+
+# Include directories for node
+target_include_directories(admittance_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
 
-# Link libraries
-target_link_libraries(${PROJECT_NAME}
+# Link parameter library
+target_link_libraries(admittance_node
   ur_admittance_controller_parameters
   Eigen3::Eigen
 )
 
-# Specify dependencies for ament
-set(DEPENDENCIES
-  controller_interface
-  hardware_interface
-  rclcpp
-  rclcpp_lifecycle
-  realtime_tools
-  pluginlib
-  geometry_msgs
-  sensor_msgs
-  trajectory_msgs
-  std_msgs
-  control_msgs
-  std_srvs
-  kinematics_interface
-  kdl_parser
-  urdf
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-  tf2_eigen
-)
-
-ament_target_dependencies(${PROJECT_NAME} ${DEPENDENCIES})
-
-# Export compile definitions
-target_compile_definitions(${PROJECT_NAME} PRIVATE "UR_ADMITTANCE_CONTROLLER_BUILDING_DLL")
-# ==============================================================================
-# Plugin Export
-# ==============================================================================
-# Export plugin description for ros2_control
-pluginlib_export_plugin_description_file(
-  controller_interface
-  ur_admittance_controller.xml
-)
+ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
 
 # ==============================================================================
 # Installation
 # ==============================================================================
-# Install libraries
+# Install parameter library
 install(
-  TARGETS ${PROJECT_NAME} ur_admittance_controller_parameters
+  TARGETS ur_admittance_controller_parameters
   EXPORT export_${PROJECT_NAME}
   RUNTIME DESTINATION lib
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
+)
+
+# Install the new admittance node executable
+install(
+  TARGETS admittance_node
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 # Install headers
@@ -166,7 +145,7 @@ install(PROGRAMS
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
 # Export dependencies
-ament_export_dependencies(${DEPENDENCIES})
+ament_export_dependencies(${NODE_DEPENDENCIES})
 # ==============================================================================
 # Testing Configuration
 # ==============================================================================

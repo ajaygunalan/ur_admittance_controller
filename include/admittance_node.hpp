@@ -1,0 +1,183 @@
+#ifndef UR_ADMITTANCE_NODE_HPP
+#define UR_ADMITTANCE_NODE_HPP
+
+#include <rclcpp/rclcpp.hpp>
+#include <geometry_msgs/msg/wrench_stamped.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
+#include <trajectory_msgs/msg/joint_trajectory.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_eigen/tf2_eigen.hpp>
+
+// Kinematics
+#include <kinematics_interface/kinematics_interface.hpp>
+#include <pluginlib/class_loader.hpp>
+#include <urdf/model.h>
+
+// Reuse existing parameter system
+#include "ur_admittance_controller/ur_admittance_controller_parameters.hpp"
+
+// Reuse existing types
+#include "admittance_node_types.hpp"
+#include "admittance_constants.hpp"
+
+// Standard includes
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <optional>
+#include <mutex>
+#include <vector>
+
+namespace ur_admittance_controller {
+
+class AdmittanceNode : public rclcpp::Node
+{
+public:
+  explicit AdmittanceNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
+  ~AdmittanceNode() = default;
+
+private:
+  // Core control loop
+  void controlLoop();
+  
+  // Callback functions
+  void wrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
+  void jointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
+  
+  // Initialize components
+  bool initializeTransforms();
+  bool loadKinematics();
+  
+  // Core algorithm functions (from admittance_computations.cpp)
+  bool computeAdmittanceStep(const rclcpp::Duration& period);
+  bool computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
+  Vector6d computePoseError_tip_base();
+  bool updateStiffnessEngagement(const rclcpp::Duration& period);
+  void checkParameterUpdates();
+  void prepareParameterUpdate();
+  void updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes = true);
+  void updateMassMatrix();
+  void updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes = true);
+  void updateStiffnessMatrix();
+  void updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes = true);
+  void updateDampingMatrix();
+  bool applyCartesianVelocityLimits();
+  bool convertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
+  bool applyJointLimits(const rclcpp::Duration& period);
+  bool handleDriftReset();
+  bool publishPoseError();
+  void processNonRTErrors();
+  void updateJointReferences();
+  
+  // Helper functions
+  bool updateTransforms();
+  bool checkDeadband();
+  void updateTransformCaches();
+  bool safeStop();
+  void publishMonitoringData();
+  void publishCartesianVelocity();
+  bool updateSensorData();
+  bool waitForTransforms();
+  bool updateTransform_base_tip();
+  bool updateTransform_base_ft();
+  void updateEETransformOnly();
+  
+  // Subscriptions
+  rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
+  
+  // Publishers
+  rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
+  
+  // Monitoring publishers (using regular ROS2 publishers instead of RT)
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cart_vel_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pose_error_pub_;
+  
+  // Timer for control loop
+  rclcpp::TimerBase::SharedPtr control_timer_;
+  
+  // Parameters (reuse existing param structure)
+  std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
+  ur_admittance_controller::Params params_;
+  
+  // Transform handling
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
+  
+  // State variables
+  std::vector<double> joint_positions_;
+  std::vector<double> joint_velocities_;
+  std::vector<double> joint_position_references_;
+  std::vector<double> current_pos_;
+  std::vector<double> joint_deltas_;
+  std::vector<double> cart_displacement_deltas_;
+  geometry_msgs::msg::WrenchStamped current_wrench_;
+  std::mutex wrench_mutex_;
+  std::mutex joint_state_mutex_;
+  
+  // Parameter update tracking
+  std::atomic<bool> params_updated_{false};
+  
+  // Control variables (to be ported from existing controller)
+  Vector6d F_sensor_base_;
+  Vector6d V_base_tip_base_;
+  Vector6d desired_vel_;
+  Vector6d desired_accel_;
+  
+  // Admittance parameters
+  Matrix6d mass_;
+  Matrix6d mass_inverse_;
+  Matrix6d damping_;
+  Matrix6d stiffness_;
+  
+  // Transform caches
+  Eigen::Isometry3d X_base_tip_current_;
+  Eigen::Isometry3d X_base_tip_desired_;
+  
+  // Additional algorithm variables
+  Vector6d error_tip_base_;
+  Vector6d velocity_error_;
+  Vector6d wrench_filtered_;
+  std::vector<JointLimits> joint_limits_;
+  
+  // Stiffness engagement
+  double stiffness_engagement_factor_ = 0.0;
+  double stiffness_ramp_rate_ = 1.0;
+  bool stiffness_engaged_ = false;
+  bool stiffness_recently_changed_ = false;
+  
+  // Pre-allocated messages for performance
+  trajectory_msgs::msg::JointTrajectory trajectory_msg_;
+  geometry_msgs::msg::Twist cart_vel_msg_;
+  geometry_msgs::msg::Twist pose_error_msg_;
+  
+  // Safe startup parameters
+  struct {
+    double max_position_error = 0.1;
+    double max_orientation_error = 0.1;
+    double stiffness_ramp_time = 1.0;
+  } safe_startup_params_;
+  
+  // Kinematics interface
+  std::optional<std::unique_ptr<kinematics_interface::KinematicsInterface>> kinematics_;
+  std::shared_ptr<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>> kinematics_loader_;
+  
+  // Transform caches
+  TransformCache transform_base_ft_;
+  TransformCache transform_base_tip_;
+  std::atomic<bool> transform_update_needed_{false};
+  
+  // Error tracking
+  std::vector<std::string> non_rt_errors_;
+  std::mutex error_mutex_;
+  std::atomic<RTErrorType> last_rt_error_{RTErrorType::NONE};
+  
+  // Drift reset
+  bool drift_reset_requested_ = false;
+  std::chrono::steady_clock::time_point last_drift_reset_time_;
+};
+
+}  // namespace ur_admittance_controller
+
+#endif  // UR_ADMITTANCE_NODE_HPP
