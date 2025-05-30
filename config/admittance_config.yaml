@@ -1,44 +1,15 @@
 ur_admittance_controller:
+  # ============================================================================
+  # ROBOT CONFIGURATION
+  # ============================================================================
   joints:
     type: string_array
     default_value: ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
-    description: "List of joint names"
+    description: "List of joint names for UR5e robot"
 
-  sensor_interface:
-    topic_config:
-      topic_name:
-        type: string
-        default_value: "/wrist_ft_sensor"
-        description: "Force/torque sensor topic name"
-      
-      data_timeout_ms:
-        type: double
-        default_value: 50.0
-        description: "Maximum age of sensor data before considered stale (ms)"
-      
-      frame_id_override:
-        type: string
-        default_value: ""
-        description: "Override frame_id from topic (empty = use topic's frame)"
-      
-      enable_transform_caching:
-        type: bool
-        default_value: true
-        description: "Cache transforms in non-RT callback"
-
-  fallback_strategy:
-    on_stale_data:
-      type: string
-      default_value: "hold_position"
-      description: "Action on stale data: 'hold_position', 'use_last', 'zero_force'"
-      validation:
-        one_of<>: [["hold_position", "use_last", "zero_force"]]
-    
-    max_missed_updates:
-      type: int
-      default_value: 10
-      description: "Maximum consecutive missed updates before safety stop"
-
+  # ============================================================================
+  # ADMITTANCE CONTROL PARAMETERS
+  # ============================================================================  
   admittance:
     mass:
       type: double_array
@@ -186,5 +157,33 @@ ur_admittance_controller:
     type: string
     default_value: "kinematics_interface_kdl/KinematicsInterfaceKDL"
     description: "Name of the kinematics plugin to use"
+
+# ==============================================================================
+# HARDCODED VALUES (Not Configurable)
+# ==============================================================================
+# The following values are hardcoded in the C++ implementation:
+#
+# Sensor Topics:
+#   - F/T Sensor: /wrist_ft_sensor (from ur_simulation_gz)
+#   - Robot Description: /robot_description (from ur_description)
+#   - Joint States: /joint_states (standard ROS2)
+#
+# Control Outputs:
+#   - Trajectory Commands: /scaled_joint_trajectory_controller/joint_trajectory
+#   - Monitoring: /admittance_cartesian_velocity, /admittance_pose_error
+#
+# Frame Names:
+#   - Base Frame: base_link
+#   - Tool Frame: tool0  
+#   - F/T Frame: ft_sensor_link
+#
+# Safe Startup Parameters (hardcoded in admittance_node.hpp):
+#   - max_position_error: 0.1 m
+#   - max_orientation_error: 0.1 rad
+#   - stiffness_ramp_time: 1.0 s
+#
+# Control Loop:
+#   - Frequency: 500 Hz (2ms period)
+#   - Trajectory Duration: 20ms (0.02s)
 
 

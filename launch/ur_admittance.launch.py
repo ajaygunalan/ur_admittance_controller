@@ -57,13 +57,6 @@ def generate_launch_description():
         config_file
     ])
     
-    # Simulation-specific config overlay
-    sim_config_path = PathJoinSubstitution([
-        FindPackageShare("ur_admittance_controller"),
-        "config",
-        "admittance_sim_mode.yaml"
-    ])
-    
     # Create the admittance node
     admittance_node = Node(
         package="ur_admittance_controller",
@@ -71,9 +64,7 @@ def generate_launch_description():
         name=node_name,
         parameters=[
             config_path,
-            # Override sensor mode for simulation
-            {"sensor_interface.topic_config.topic_name": "/wrist_ft_sensor"},
-            # Node namespace to avoid conflicts
+            # Use simulation time when in simulation mode
             {"use_sim_time": use_sim}
         ],
         output="screen",
