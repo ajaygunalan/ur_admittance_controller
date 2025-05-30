@@ -124,7 +124,7 @@ The node operates in topic-based mode for F/T sensor data:
 
 | Parameter | Purpose | Default | Typical Range |
 |-----------|---------|---------|---------------|
-| `control_frequency` | Control loop rate | 200 Hz | 100-1000 Hz |
+| `control_frequency` | Control loop rate | 0 Hz (max rate) | 0 (thread) or 100-1000 Hz |
 | `admittance.mass` | Inertia (responsiveness) | [8,8,8,0.8,0.8,0.8] | 3-20 kg |
 | `admittance.damping_ratio` | Stability | [0.8,0.8,0.8,0.8,0.8,0.8] | 0.7-1.2 |
 | `admittance.stiffness` | Position control | [0,0,0,0,0,0] | 0-200 N/m |
@@ -186,9 +186,9 @@ ros2 param set /admittance_node admittance.mass [15,15,15,1.5,1.5,1.5]
 
 ### Core Architecture
 - **Node Type**: Standalone ROS2 Node
-- **Update Rate**: 200 Hz default (configurable 1-1000 Hz via `control_frequency` parameter)
+- **Update Rate**: Maximum possible frequency by default (thread-based), or timer-based (1-1000 Hz)
 - **Force Processing**: Transforms sensor data from any frame to base frame
-- **Performance Optimized**: Pre-allocated messages, cached transforms
+- **Performance Optimized**: Pre-allocated messages, cached transforms, 20ms trajectory timing
 - **Kinematics**: Plugin-based (supports KDL, MoveIt, custom implementations)
 - **Output Interface**: Publishes to trajectory controllers
 

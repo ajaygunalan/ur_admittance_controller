@@ -28,6 +28,7 @@
 #include <optional>
 #include <mutex>
 #include <vector>
+#include <thread>
 
 namespace ur_admittance_controller {
 
@@ -35,7 +36,7 @@ class AdmittanceNode : public rclcpp::Node
 {
 public:
   explicit AdmittanceNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  ~AdmittanceNode() = default;
+  ~AdmittanceNode();
 
 private:
   // Core control loop
@@ -96,6 +97,11 @@ private:
   
   // Timer for control loop
   rclcpp::TimerBase::SharedPtr control_timer_;
+  
+  // Thread-based control loop support
+  std::thread control_thread_;
+  std::atomic<bool> running_{false};
+  void controlThreadFunction();
   
   // Parameters (reuse existing param structure)
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;

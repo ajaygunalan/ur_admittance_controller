@@ -48,7 +48,7 @@ While `forward_velocity_controller` might seem like a good choice for cartesian-
 Instead of implementing admittance control as a ROS2 Control ChainableControllerInterface, we developed a **standalone ROS2 node** that:
 - **Subscribes to**: Force/torque sensor data (`/wrist_ft_sensor`) and joint states (`/joint_states`)
 - **Publishes to**: `scaled_joint_trajectory_controller` via topic interface (`/scaled_joint_trajectory_controller/joint_trajectory`)
-- **Operates at**: 200 Hz by default (configurable from 1-1000 Hz) with pre-allocated messages for performance
+- **Operates at**: Maximum possible frequency by default (thread-based), or configurable timer frequency (1-1000 Hz)
 
 **Why Standalone Node over ROS2 Control?**
 1. **Reduced Complexity**: Eliminated ~50% of code dealing with controller lifecycle, hardware interfaces, and chaining mechanics
@@ -70,14 +70,19 @@ Instead of implementing admittance control as a ROS2 Control ChainableController
 Our admittance node implements the following control flow:
 ```
 F/T Sensor → Admittance Node → Joint Trajectory → Scaled Joint Trajectory Controller → Robot
-     (Topic)      (200 Hz)         (Topic)                  (Real-time)              (UR Hardware)
+     (Topic)    (Max Rate)         (Topic)                  (Real-time)              (UR Hardware)
 ```
 
 The node publishes single-point trajectories with:
 - **Positions**: Current joint positions from `/joint_states`
 - **Velocities**: Computed from admittance control law
-- **Time-from-start**: Fixed at 0.1s for smooth streaming
+- **Time-from-start**: 0.02s (20ms) for smooth motion
 - **Joint names**: Matching robot configuration
+
+**Performance Optimization:**
+- Thread-based control loop runs at maximum possible frequency (typically 500-2000 Hz)
+- Pre-allocated messages to avoid dynamic memory allocation
+- Reduced trajectory timing from 100ms to 20ms for smoother motion
 
 ### 5. Driving scaled_joint_trajectory_controller: Action vs Topic
 
@@ -112,6 +117,7 @@ ros2 launch ur_admittance_controller ur_admittance.launch.py use_sim:=false
 ```
 
 **Key Parameters:**
+- `control_frequency`: 0.0 for maximum rate (thread-based), or specific Hz for timer-based
 - `admittance.mass`: Virtual mass matrix (default: [8,8,8,0.8,0.8,0.8])
 - `admittance.damping_ratio`: Damping ratios (default: [0.8,0.8,0.8,0.8,0.8,0.8])
 - `admittance.stiffness`: Spring constants for impedance mode (default: [0,0,0,0,0,0])

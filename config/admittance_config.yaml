@@ -1,13 +1,14 @@
 ur_admittance_controller:
   control_frequency:
     type: double
-    default_value: 200.0
+    default_value: 0.0
     description: |
       Control loop frequency in Hz. Common values:
-      - 200 Hz: Standard for force control (5ms loop)
-      - 500 Hz: High-performance force control (2ms loop)
-      - 1000 Hz: Maximum for real-time systems (1ms loop)
-      - 0 Hz: Run as fast as possible (use with caution)
+      - 0 Hz: Run as fast as possible using dedicated thread (recommended for maximum performance)
+      - 200 Hz: Standard timer-based control (5ms loop)
+      - 500 Hz: High-performance timer-based control (2ms loop)
+      - 1000 Hz: Maximum timer frequency (1ms loop)
+      Note: When set to 0, uses thread-based loop for highest possible frequency
     validation:
       bounds<>: [0.0, 1000.0]
   

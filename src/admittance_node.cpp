@@ -80,30 +80,73 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   trajectory_msg_.points.resize(1);
   trajectory_msg_.points[0].positions.resize(params_.joints.size());
   trajectory_msg_.points[0].velocities.resize(params_.joints.size());
-  trajectory_msg_.points[0].time_from_start = rclcpp::Duration::from_seconds(0.1);
+  // Reduced trajectory timing for smoother motion (10-20ms instead of 100ms)
+  trajectory_msg_.points[0].time_from_start = rclcpp::Duration::from_seconds(0.02);
   
-  // Create control timer with configurable frequency
+  // Create control loop based on frequency setting
   double control_freq = params_.control_frequency;
   if (control_freq > 0.0) {
-    // Timer-based control loop
+    // Timer-based control loop for specific frequency
     int period_us = static_cast<int>(1000000.0 / control_freq);
     RCLCPP_INFO(get_logger(), 
-      "Starting control loop at %.1f Hz (period: %d us)", 
+      "Starting timer-based control loop at %.1f Hz (period: %d us)", 
       control_freq, period_us);
     control_timer_ = create_wall_timer(
       std::chrono::microseconds(period_us),
       std::bind(&AdmittanceNode::controlLoop, this));
   } else {
-    // For maximum rate, we'll need a different approach
-    // This will be implemented in a separate thread
-    RCLCPP_WARN(get_logger(), 
-      "Maximum rate mode (0 Hz) not yet implemented, defaulting to 200 Hz");
-    control_timer_ = create_wall_timer(
-      std::chrono::microseconds(5000),  // 200 Hz
-      std::bind(&AdmittanceNode::controlLoop, this));
+    // Thread-based control loop for maximum rate
+    RCLCPP_INFO(get_logger(), 
+      "Starting thread-based control loop for maximum frequency");
+    running_.store(true);
+    control_thread_ = std::thread(&AdmittanceNode::controlThreadFunction, this);
   }
     
   RCLCPP_INFO(get_logger(), "Admittance Node initialized successfully");
+}
+
+AdmittanceNode::~AdmittanceNode()
+{
+  // Stop control thread if running
+  if (running_.load()) {
+    running_.store(false);
+    if (control_thread_.joinable()) {
+      control_thread_.join();
+    }
+  }
+}
+
+void AdmittanceNode::controlThreadFunction()
+{
+  // Create a single-threaded executor for this thread
+  rclcpp::executors::SingleThreadedExecutor executor;
+  
+  // Rate object for optional throttling (1000 Hz max)
+  rclcpp::Rate rate(1000);
+  
+  while (rclcpp::ok() && running_.load()) {
+    // Get current time
+    rclcpp::Time current_time = now();
+    static rclcpp::Time last_time = current_time;
+    rclcpp::Duration period = current_time - last_time;
+    
+    // Skip if period is invalid
+    if (period.seconds() > 0.0 && period.seconds() < 0.1) {
+      // Run control loop
+      controlLoop();
+    }
+    
+    last_time = current_time;
+    
+    // Process any pending callbacks (non-blocking)
+    executor.spin_some(std::chrono::nanoseconds(0));
+    
+    // Optional: Add minimal sleep to prevent 100% CPU usage
+    // Comment out for absolute maximum rate
+    // rate.sleep();
+  }
+  
+  RCLCPP_INFO(get_logger(), "Control thread stopped");
 }
 
 void AdmittanceNode::wrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg)
