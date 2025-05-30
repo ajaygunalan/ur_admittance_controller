@@ -46,6 +46,7 @@ find_package(tf2_eigen REQUIRED)
 # Math and kinematics packages
 find_package(Eigen3 REQUIRED)
 find_package(kinematics_interface REQUIRED)
+find_package(kinematics_interface_kdl REQUIRED)
 find_package(kdl_parser REQUIRED)
 find_package(urdf REQUIRED)
 # ==============================================================================
