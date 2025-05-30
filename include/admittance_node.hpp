@@ -72,15 +72,15 @@ private:
   // Helper functions
   bool updateTransforms();
   bool checkDeadband();
-  void updateTransformCaches();
   bool safeStop();
   void publishMonitoringData();
   void publishCartesianVelocity();
   bool updateSensorData();
   bool waitForTransforms();
-  bool updateTransform_base_tip();
-  bool updateTransform_base_ft();
-  void updateEETransformOnly();
+  
+  // Direct transform functions (replacing cache system)
+  Vector6d transformWrench(const Vector6d& wrench_sensor_frame);
+  bool getCurrentEndEffectorPose(Eigen::Isometry3d& pose);
   
   // Subscriptions
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
@@ -164,10 +164,6 @@ private:
   std::optional<std::unique_ptr<kinematics_interface::KinematicsInterface>> kinematics_;
   std::shared_ptr<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>> kinematics_loader_;
   
-  // Transform caches
-  TransformCache transform_base_ft_;
-  TransformCache transform_base_tip_;
-  std::atomic<bool> transform_update_needed_{false};
   
   
   // Drift reset

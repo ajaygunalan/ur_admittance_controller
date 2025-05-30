@@ -139,13 +139,8 @@ void AdmittanceNode::wrenchCallback(const geometry_msgs::msg::WrenchStamped::Con
   raw_wrench(4) = msg->wrench.torque.y;
   raw_wrench(5) = msg->wrench.torque.z;
   
-  // Transform to base frame if transform is available
-  if (params_.ft_frame != params_.base_link && transform_base_ft_.isValid()) {
-    const auto& transform_data = transform_base_ft_.getTransform();
-    F_sensor_base_ = transform_data.adjoint * raw_wrench;
-  } else {
-    F_sensor_base_ = raw_wrench;
-  }
+  // Transform to base frame using direct tf2 lookup
+  F_sensor_base_ = transformWrench(raw_wrench);
   
   // Apply low-pass filter
   wrench_filtered_ = params_.admittance.filter_coefficient * F_sensor_base_ + 
@@ -207,17 +202,7 @@ void AdmittanceNode::controlLoop()
 
 bool AdmittanceNode::initializeTransforms()
 {
-  // Initialize transform caches
-  transform_base_ft_.reset();
-  transform_base_tip_.reset();
-  
-  transform_base_ft_.target_frame = params_.base_link;
-  transform_base_ft_.source_frame = params_.ft_frame;
-  
-  transform_base_tip_.target_frame = params_.base_link;
-  transform_base_tip_.source_frame = params_.tip_link;
-  
-  // Wait for transforms to become available
+  // Just wait for transforms to become available
   return waitForTransforms();
 }
 
