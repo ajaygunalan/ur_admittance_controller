@@ -13,7 +13,7 @@
 #ifndef UR_ADMITTANCE_CONTROLLER__MATRIX_UTILITIES_HPP_
 #define UR_ADMITTANCE_CONTROLLER__MATRIX_UTILITIES_HPP_
 
-#include "admittance_types.hpp"
+#include "admittance_node_types.hpp"
 #include "admittance_constants.hpp"
 #include <array>
 #include <cmath>

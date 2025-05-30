@@ -285,60 +285,6 @@ void AdmittanceNode::checkParameterUpdates()
   }
 }
 
-void AdmittanceNode::prepareParameterUpdate()
-{
-  // Parameters already updated in checkParameterUpdates
-  
-  auto new_params = param_listener_->get_params();
-  
-  
-  bool mass_changed = false;
-  bool stiffness_changed = false;
-  bool damping_changed = false;
-  
-  for (size_t i = 0; i < 6; ++i) {
-    if (!utils::areEqual(params_.admittance.mass[i], new_params.admittance.mass[i])) {
-      mass_changed = true;
-      break;
-    }
-  }
-  
-  for (size_t i = 0; i < 6; ++i) {
-    if (!utils::areEqual(params_.admittance.stiffness[i], new_params.admittance.stiffness[i])) {
-      stiffness_changed = true;
-      break;
-    }
-  }
-  
-  for (size_t i = 0; i < 6; ++i) {
-    if (!utils::areEqual(params_.admittance.damping_ratio[i], new_params.admittance.damping_ratio[i])) {
-      damping_changed = true;
-      break;
-    }
-  }
-  
-  if (!mass_changed && !stiffness_changed && !damping_changed) {
-    params_ = new_params;
-    return;
-  }
-  
-  if (mass_changed) {
-    updateMassMatrix(new_params, true);
-  }
-  
-  if (stiffness_changed) {
-    updateStiffnessMatrix(new_params, true);
-    stiffness_recently_changed_ = true;
-    stiffness_engagement_factor_ = 0.0;
-    RCLCPP_INFO(get_logger(), "Starting gradual stiffness engagement");
-  }
-  
-  if (stiffness_changed || damping_changed) {
-    updateDampingMatrix(new_params, true);
-  }
-  
-  params_ = new_params;
-}
 
 
 void AdmittanceNode::updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes)
@@ -463,7 +409,7 @@ bool AdmittanceNode::convertToJointSpace(
   // Call inverse kinematics
   if (!kinematics_ || !(*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
         current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) {
-    last_rt_error_.store(RTErrorType::KINEMATICS_ERROR);
+    RCLCPP_ERROR(get_logger(), "Inverse kinematics computation failed for tip_link '%s'", params_.tip_link.c_str());
     return false;
   }
   
@@ -551,43 +497,6 @@ bool AdmittanceNode::publishPoseError()
   return true;
 }
 
-void AdmittanceNode::processNonRTErrors()
-{
-  // RT logs removed - using standard logging
-  
-  updateTransformCaches();
-  
-  prepareParameterUpdate();
-  
-  RTErrorType error = last_rt_error_.exchange(RTErrorType::NONE);
-  
-  if (error != RTErrorType::NONE && rclcpp::ok()) {
-    switch (error) {
-      case RTErrorType::UPDATE_ERROR:
-        RCLCPP_ERROR(get_logger(), "Real-time error occurred in update loop");
-        break;
-      case RTErrorType::SENSOR_ERROR:
-        RCLCPP_ERROR(get_logger(), "Real-time error in sensor data processing");
-        break;
-      case RTErrorType::TRANSFORM_ERROR:
-        RCLCPP_ERROR(get_logger(), "Transform lookup failed in real-time context");
-        transform_update_needed_.store(true);
-        break;
-      case RTErrorType::CONTROL_ERROR:
-        RCLCPP_ERROR(get_logger(), "Control computation error in real-time context");
-        break;
-      case RTErrorType::KINEMATICS_ERROR:
-        RCLCPP_ERROR(get_logger(), "Kinematics error in real-time context");
-        break;
-      case RTErrorType::JOINT_LIMITS_ERROR:
-        RCLCPP_ERROR(get_logger(), "Joint limits error in real-time context");
-        break;
-      default:
-        RCLCPP_ERROR(get_logger(), "Unknown real-time error occurred");
-        break;
-    }
-  }
-}
 
 /**
  * @brief Update command interfaces with computed joint positions

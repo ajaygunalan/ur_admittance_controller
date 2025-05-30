@@ -1,16 +1,16 @@
 # ==============================================================================
-# UR Admittance Controller - CMake Build Configuration
+# UR Admittance Node - CMake Build Configuration
 # ==============================================================================
 # This CMakeLists.txt defines the build configuration for the UR admittance
-# controller package. It handles compilation of the controller library,
+# node package. It builds a standalone ROS2 node for force-compliant control,
 # parameter generation, and installation of all necessary files.
 #
 # Author: UR Robotics Team
-# Date: 2024
+# Date: 2024-2025
 # ==============================================================================
 
 cmake_minimum_required(VERSION 3.16)
-project(ur_admittance_controller VERSION 1.0.0 LANGUAGES CXX)
+project(ur_admittance_controller VERSION 2.0.0 LANGUAGES CXX)
 
 # C++ Standard Configuration
 set(CMAKE_CXX_STANDARD 17)

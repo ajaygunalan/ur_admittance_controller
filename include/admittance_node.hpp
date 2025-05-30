@@ -56,7 +56,6 @@ private:
   Vector6d computePoseError_tip_base();
   bool updateStiffnessEngagement(const rclcpp::Duration& period);
   void checkParameterUpdates();
-  void prepareParameterUpdate();
   void updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes = true);
   void updateMassMatrix();
   void updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes = true);
@@ -68,7 +67,6 @@ private:
   bool applyJointLimits(const rclcpp::Duration& period);
   bool handleDriftReset();
   bool publishPoseError();
-  void processNonRTErrors();
   void updateJointReferences();
   
   // Helper functions
@@ -95,10 +93,7 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cart_vel_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pose_error_pub_;
   
-  // Timer for control loop
-  rclcpp::TimerBase::SharedPtr control_timer_;
-  
-  // Thread-based control loop support
+  // Thread-based control loop
   std::thread control_thread_;
   std::atomic<bool> running_{false};
   void controlThreadFunction();
@@ -174,10 +169,6 @@ private:
   TransformCache transform_base_tip_;
   std::atomic<bool> transform_update_needed_{false};
   
-  // Error tracking
-  std::vector<std::string> non_rt_errors_;
-  std::mutex error_mutex_;
-  std::atomic<RTErrorType> last_rt_error_{RTErrorType::NONE};
   
   // Drift reset
   bool drift_reset_requested_ = false;

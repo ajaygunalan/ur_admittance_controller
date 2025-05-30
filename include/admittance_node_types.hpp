@@ -3,8 +3,8 @@
  * @brief Type definitions and data structures for the UR admittance controller
  *
  * This file contains custom types, enumerations, and data structures used
- * throughout the admittance controller. It includes thread-safe logging
- * utilities, transform caching mechanisms, and parameter structures.
+ * throughout the admittance controller. It includes transform caching 
+ * mechanisms and parameter structures.
  *
  * @author UR Robotics Team
  * @date 2024
@@ -28,16 +28,6 @@ static constexpr size_t DOF = 6;
 /** @brief Default low-pass filter coefficient for force/torque sensor filtering */
 static constexpr double DEFAULT_FILTER_COEFF = 0.95;
 
-/** @brief Error types for real-time error reporting */
-enum class RTErrorType : uint8_t {
-  NONE = 0,
-  UPDATE_ERROR = 1,
-  SENSOR_ERROR = 2,
-  TRANSFORM_ERROR = 3,
-  CONTROL_ERROR = 4,
-  KINEMATICS_ERROR = 5,
-  JOINT_LIMITS_ERROR = 6
-};
 
 /** @brief Maximum age of transform data before considered stale (seconds) */
 static constexpr double TRANSFORM_TIMEOUT = 0.1;
@@ -48,215 +38,6 @@ using Matrix6d = Eigen::Matrix<double, 6, 6>;
 /** @brief 6D vector type for forces, velocities, and poses in Cartesian space */
 using Vector6d = Eigen::Matrix<double, 6, 1>;
 
-/**
- * @brief Logging severity levels for real-time safe logging
- */
-enum class LogLevel : uint8_t {
-  DEBUG = 0,  ///< Detailed information for debugging
-  INFO = 1,   ///< General informational messages
-  WARN = 2,   ///< Warning messages for recoverable issues
-  ERROR = 3,  ///< Error messages for serious problems
-  FATAL = 4   ///< Fatal errors requiring immediate shutdown
-};
-
-/**
- * @brief Message types for real-time logging system
- *
- * These message types allow structured logging from real-time contexts
- * without dynamic memory allocation or blocking operations.
- */
-enum class RTLogType : uint16_t {
-  // System lifecycle events
-  SYSTEM_INITIALIZED = 0,     ///< Controller successfully initialized
-  SYSTEM_SHUTDOWN = 1,        ///< Controller shutdown initiated
-  
-  // Error conditions (100-199)
-  ERROR_SENSOR_READ_FAILED = 100,   ///< Force/torque sensor read failure
-  ERROR_TRANSFORM_INVALID = 101,    ///< Transform lookup or validity error
-  ERROR_KINEMATICS_FAILED = 102,    ///< Inverse kinematics computation failed
-  ERROR_JOINT_LIMITS = 103,         ///< Joint position/velocity limits exceeded
-  ERROR_CONTROL_COMPUTATION = 104,  ///< Admittance control computation error
-  
-  // Warning conditions (200-299)
-  WARN_POSE_ERROR_LIMIT = 200,     ///< Pose error exceeds safety threshold
-  WARN_VELOCITY_LIMITED = 201,      ///< Velocity clamped to safety limits
-  WARN_DEADBAND_ACTIVE = 202,       ///< Force below deadband threshold
-  
-  // Informational events (300-399)
-  INFO_STIFFNESS_ENGAGED = 300,    ///< Stiffness ramping completed
-  INFO_DRIFT_RESET = 301,           ///< Drift compensation reset applied
-  INFO_PARAMETER_UPDATED = 302,     ///< Dynamic parameter update applied
-
-  // Parametric logging (400-499)
-  PARAM_FORCE_READING = 400,        ///< Log force sensor value with param1
-  PARAM_JOINT_POSITION = 401,       ///< Log joint position (joint# in param1, value in param2)
-  PARAM_CART_VELOCITY = 402         ///< Log Cartesian velocity component
-};
-
-/**
- * @brief Real-time safe log message structure
- *
- * This structure can be safely created and passed in real-time contexts
- * without dynamic memory allocation. It supports both typed messages
- * and literal string messages (using static strings only).
- */
-struct RTLogMessage {
-  LogLevel level;                                      ///< Severity level of the message
-  RTLogType type;                                      ///< Type of message for structured logging
-  std::chrono::steady_clock::time_point timestamp;     ///< High-resolution timestamp
-  
-  double param1;                                       ///< First numeric parameter
-  double param2;                                       ///< Second numeric parameter
-  double param3;                                       ///< Third numeric parameter
-  
-  const char* literal_msg;                             ///< Optional literal message (must be static)
-  
-  /** @brief Default constructor */
-  RTLogMessage() : 
-    level(LogLevel::INFO), 
-    type(RTLogType::SYSTEM_INITIALIZED),
-    timestamp(std::chrono::steady_clock::now()),
-    param1(0.0), param2(0.0), param3(0.0),
-    literal_msg(nullptr) {}
-  
-  /** @brief Constructor for typed messages without parameters */
-  RTLogMessage(LogLevel lvl, RTLogType typ) : 
-    level(lvl), type(typ),
-    timestamp(std::chrono::steady_clock::now()),
-    param1(0.0), param2(0.0), param3(0.0),
-    literal_msg(nullptr) {}
-  
-  /** @brief Constructor for typed messages with numeric parameters */
-  RTLogMessage(LogLevel lvl, RTLogType typ, double p1, double p2 = 0.0, double p3 = 0.0) : 
-    level(lvl), type(typ),
-    timestamp(std::chrono::steady_clock::now()),
-    param1(p1), param2(p2), param3(p3),
-    literal_msg(nullptr) {}
-    
-  /** @brief Constructor for literal messages (string must be static/literal) */
-  RTLogMessage(LogLevel lvl, const char* msg) : 
-    level(lvl), type(RTLogType::SYSTEM_INITIALIZED),
-    timestamp(std::chrono::steady_clock::now()),
-    param1(0.0), param2(0.0), param3(0.0),
-    literal_msg(msg) {}
-};
-
-/**
- * @brief Lock-free circular buffer for real-time logging
- *
- * This class implements a single-producer, single-consumer lock-free
- * circular buffer for passing log messages from real-time to non-real-time
- * contexts. It uses atomic operations with proper memory ordering to
- * ensure thread safety without locks.
- *
- * @tparam N Size of the circular buffer (number of messages)
- *
- * @note Thread-safe for one producer (RT thread) and one consumer (non-RT thread)
- * @note Does not allocate memory after construction
- * @note Messages are dropped if buffer is full (fail-fast behavior)
- */
-template<size_t N>
-class RTLogBuffer {
-private:
-  std::array<RTLogMessage, N> buffer_;   ///< Fixed-size message buffer
-  std::atomic<size_t> write_index_{0};   ///< Producer write position
-  std::atomic<size_t> read_index_{0};    ///< Consumer read position
-  
-public:
-  /**
-   * @brief Push a typed message without parameters
-   * @param level Log severity level
-   * @param type Message type
-   * @return true if message was pushed, false if buffer full
-   */
-  bool push(LogLevel level, RTLogType type) noexcept {
-    size_t current_write = write_index_.load(std::memory_order_relaxed);
-    size_t next_write = (current_write + 1) % N;
-    
-    // Check if buffer is full
-    if (next_write == read_index_.load(std::memory_order_acquire)) {
-      return false;
-    }
-    
-    buffer_[current_write] = RTLogMessage(level, type);
-    write_index_.store(next_write, std::memory_order_release);
-    return true;
-  }
-  
-  /**
-   * @brief Push a typed message with numeric parameters
-   * @param level Log severity level
-   * @param type Message type
-   * @param param1 First numeric parameter
-   * @param param2 Second numeric parameter (default: 0.0)
-   * @param param3 Third numeric parameter (default: 0.0)
-   * @return true if message was pushed, false if buffer full
-   */
-  bool push(LogLevel level, RTLogType type, 
-            double param1, double param2 = 0.0, double param3 = 0.0) noexcept {
-    size_t current_write = write_index_.load(std::memory_order_relaxed);
-    size_t next_write = (current_write + 1) % N;
-    
-    if (next_write == read_index_.load(std::memory_order_acquire)) {
-      return false;
-    }
-    
-    buffer_[current_write] = RTLogMessage(level, type, param1, param2, param3);
-    write_index_.store(next_write, std::memory_order_release);
-    return true;
-  }
-  
-  /**
-   * @brief Push a literal string message
-   * @param level Log severity level
-   * @param msg Static/literal string message
-   * @return true if message was pushed, false if buffer full
-   * @warning msg must point to static memory (string literal)
-   */
-  bool push(LogLevel level, const char* msg) noexcept {
-    size_t current_write = write_index_.load(std::memory_order_relaxed);
-    size_t next_write = (current_write + 1) % N;
-    
-    if (next_write == read_index_.load(std::memory_order_acquire)) {
-      return false;
-    }
-    
-    buffer_[current_write] = RTLogMessage(level, msg);
-    write_index_.store(next_write, std::memory_order_release);
-    return true;
-  }
-  
-  /**
-   * @brief Pop a message from the buffer
-   * @param message Output parameter to receive the message
-   * @return true if message was popped, false if buffer empty
-   */
-  bool pop(RTLogMessage& message) noexcept {
-    size_t current_read = read_index_.load(std::memory_order_relaxed);
-    if (current_read == write_index_.load(std::memory_order_acquire)) {
-      return false;
-    }
-    
-    message = buffer_[current_read];
-    read_index_.store((current_read + 1) % N, std::memory_order_release);
-    return true;
-  }
-  
-  /**
-   * @brief Check if buffer is empty
-   * @return true if no messages in buffer
-   */
-  bool empty() const noexcept {
-    return read_index_.load(std::memory_order_relaxed) == 
-           write_index_.load(std::memory_order_relaxed);
-  }
-};
-
-/** @brief Default size for real-time log buffer */
-#define RT_LOG_BUFFER_SIZE 1000
-
-/** @brief Type alias for the real-time logger used throughout the controller */
-using RTLogger = RTLogBuffer<RT_LOG_BUFFER_SIZE>;
 
 /**
  * @brief Joint physical limits structure
@@ -382,33 +163,6 @@ struct TransformCache {
   }
 };
 
-/**
- * @brief Pre-allocated F/T sensor data structure for topic mode
- *
- * This structure holds force/torque sensor data along with cached
- * transform information to avoid dynamic allocation in callbacks.
- */
-struct FTSensorData {
-  geometry_msgs::msg::WrenchStamped msg;      ///< Force/torque message
-  Eigen::Isometry3d sensor_to_base_transform; ///< Cached transform from sensor to base
-  rclcpp::Time receive_time;                  ///< Time when data was received
-  bool transform_valid;                       ///< Whether cached transform is valid
-  
-  /** @brief Default constructor with pre-allocation */
-  FTSensorData() : transform_valid(false) {
-    // Pre-allocate string capacity to avoid dynamic allocation
-    msg.header.frame_id.reserve(64);
-  }
-};
-
-/** @brief Buffer size for F/T sensor data triple buffering */
-static constexpr size_t FT_BUFFER_SIZE = 3;
-
-/** @brief Default data timeout in milliseconds */
-static constexpr double DEFAULT_DATA_TIMEOUT_MS = 50.0;
-
-/** @brief Maximum consecutive missed updates before safety trigger */
-static constexpr int DEFAULT_MAX_MISSED_UPDATES = 10;
 
 }  // namespace ur_admittance_controller
 

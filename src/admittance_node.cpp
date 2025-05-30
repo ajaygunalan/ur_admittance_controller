@@ -83,24 +83,10 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   // Reduced trajectory timing for smoother motion (10-20ms instead of 100ms)
   trajectory_msg_.points[0].time_from_start = rclcpp::Duration::from_seconds(0.02);
   
-  // Create control loop based on frequency setting
-  double control_freq = params_.control_frequency;
-  if (control_freq > 0.0) {
-    // Timer-based control loop for specific frequency
-    int period_us = static_cast<int>(1000000.0 / control_freq);
-    RCLCPP_INFO(get_logger(), 
-      "Starting timer-based control loop at %.1f Hz (period: %d us)", 
-      control_freq, period_us);
-    control_timer_ = create_wall_timer(
-      std::chrono::microseconds(period_us),
-      std::bind(&AdmittanceNode::controlLoop, this));
-  } else {
-    // Thread-based control loop for maximum rate
-    RCLCPP_INFO(get_logger(), 
-      "Starting thread-based control loop for maximum frequency");
-    running_.store(true);
-    control_thread_ = std::thread(&AdmittanceNode::controlThreadFunction, this);
-  }
+  // Start dedicated control thread for high-frequency admittance control
+  RCLCPP_INFO(get_logger(), "Starting dedicated control thread for admittance control");
+  running_.store(true);
+  control_thread_ = std::thread(&AdmittanceNode::controlThreadFunction, this);
     
   RCLCPP_INFO(get_logger(), "Admittance Node initialized successfully");
 }
@@ -118,32 +104,22 @@ AdmittanceNode::~AdmittanceNode()
 
 void AdmittanceNode::controlThreadFunction()
 {
-  // Create a single-threaded executor for this thread
-  rclcpp::executors::SingleThreadedExecutor executor;
+  // Fixed control rate for admittance control (500 Hz = 2ms period)
+  // This provides excellent performance while being CPU-efficient
+  constexpr double CONTROL_RATE_HZ = 500.0;
+  const auto period_ns = std::chrono::nanoseconds(static_cast<int64_t>(1e9 / CONTROL_RATE_HZ));
   
-  // Rate object for optional throttling (1000 Hz max)
-  rclcpp::Rate rate(1000);
+  RCLCPP_INFO(get_logger(), "Control thread running at %.0f Hz", CONTROL_RATE_HZ);
+  
+  auto next_time = std::chrono::steady_clock::now();
   
   while (rclcpp::ok() && running_.load()) {
-    // Get current time
-    rclcpp::Time current_time = now();
-    static rclcpp::Time last_time = current_time;
-    rclcpp::Duration period = current_time - last_time;
+    // Run admittance control computation
+    controlLoop();
     
-    // Skip if period is invalid
-    if (period.seconds() > 0.0 && period.seconds() < 0.1) {
-      // Run control loop
-      controlLoop();
-    }
-    
-    last_time = current_time;
-    
-    // Process any pending callbacks (non-blocking)
-    executor.spin_some(std::chrono::nanoseconds(0));
-    
-    // Optional: Add minimal sleep to prevent 100% CPU usage
-    // Comment out for absolute maximum rate
-    // rate.sleep();
+    // Maintain fixed rate with high precision
+    next_time += period_ns;
+    std::this_thread::sleep_until(next_time);
   }
   
   RCLCPP_INFO(get_logger(), "Control thread stopped");
@@ -296,14 +272,21 @@ bool AdmittanceNode::loadKinematics()
       joint_limits_[i].min_position = joint->limits->lower;
       joint_limits_[i].max_position = joint->limits->upper;
       joint_limits_[i].max_velocity = joint->limits->velocity;
-      joint_limits_[i].max_acceleration = joint->limits->effort / 10.0;
+      // Use appropriate default acceleration limits for UR5e joints
+      static const std::array<double, 6> default_acceleration_limits = {15.0, 15.0, 15.0, 25.0, 25.0, 25.0};
+      if (i < default_acceleration_limits.size()) {
+        joint_limits_[i].max_acceleration = default_acceleration_limits[i];
+      } else {
+        joint_limits_[i].max_acceleration = 15.0; // conservative default
+      }
       
       RCLCPP_INFO(get_logger(),
-        "Joint %s limits: pos[%.3f, %.3f], vel[%.3f]",
+        "Joint %s limits: pos[%.3f, %.3f], vel[%.3f], accel[%.3f]",
         params_.joints[i].c_str(),
         joint_limits_[i].min_position,
         joint_limits_[i].max_position, 
-        joint_limits_[i].max_velocity);
+        joint_limits_[i].max_velocity,
+        joint_limits_[i].max_acceleration);
     }
     
     return true;

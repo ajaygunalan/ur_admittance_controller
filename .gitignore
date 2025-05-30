@@ -1,0 +1,28 @@
+# Build directories
+build/
+install/
+log/
+
+# Colcon
+.colcon
+
+# IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Backup files
+*~
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files in any subdirectory
+**/log/

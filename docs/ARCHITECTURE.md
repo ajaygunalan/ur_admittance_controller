@@ -1,17 +1,17 @@
-# UR Admittance Controller Architecture
+# UR Admittance Node Architecture
 
 **Last Updated**: January 2025  
-**Package Version**: 1.0.0  
-**ROS2 Version**: Humble/Iron/Rolling
+**Package Version**: 2.0.0  
+**ROS2 Version**: Humble/Iron/Jazzy/Rolling
 
-## Why This Controller Exists
+## Why This Node Exists
 
-Universal Robots only accept **position commands**, not force/torque commands. But many tasks require force control:
+Universal Robots only accept **position/velocity commands**, not force/torque commands. But many tasks require force control:
 - **Assembly**: Insert parts without jamming
-- **Polishing**: Maintain constant contact force
+- **Polishing**: Maintain constant contact force  
 - **Human collaboration**: Safe physical interaction
 
-**Solution**: Admittance control - convert forces into compliant motion.
+**Solution**: Admittance control - convert forces into compliant motion via a standalone ROS2 node.
 
 ## Core Concept
 
@@ -22,298 +22,152 @@ External Force → Virtual Mass-Spring-Damper → Motion
 
 The robot behaves as if it has adjustable:
 - **Mass (M)**: How quickly it responds to forces
-- **Damping (D)**: How smoothly it moves (no oscillations)
+- **Damping (D)**: How smoothly it moves (no oscillations)  
 - **Stiffness (K)**: Whether it returns to position (spring behavior)
 
 ## System Architecture
 
 ```
-┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐     ┌───────┐
-│ F/T Sensor  │────►│ Admittance Ctrl  │────►│ Joint Traj Ctrl │────►│ Robot │
-└─────────────┘     └──────────────────┘     └─────────────────┘     └───────┘
-    6D Wrench         Joint References        Position Commands        Motion
-    @ 100-200Hz       (chainable i/f)         @ 125Hz streaming      
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────────┐     ┌───────┐
+│ F/T Sensor  │────►│ Admittance Node  │────►│ Trajectory Controller│────►│ Robot │
+└─────────────┘     └──────────────────┘     └─────────────────────┘     └───────┘
+    Wrench             Joint Trajectory         Position Commands          Motion
+    Topic              Message @ Max Hz         @ 125Hz streaming      
 ```
 
-### Why Controller Chaining?
-- **Direct memory sharing**: No serialization overhead
-- **Deterministic timing**: Guaranteed data delivery
-- **Zero-copy**: References point to same memory
+### Standalone Node Design
 
-## Frame Relationships
+The admittance controller is implemented as a **standalone ROS2 node** that:
+- **Subscribes** to force/torque sensor data via topics
+- **Computes** admittance dynamics in a real-time safe manner
+- **Publishes** joint trajectory commands to the robot's trajectory controller
 
-### Visual Frame Hierarchy
+Key advantages:
+- **Simplicity**: No complex ROS2 Control integration
+- **Flexibility**: Works with any trajectory controller
+- **Performance**: Thread-based control loop for maximum frequency
+- **Portability**: Easy to use with different robot drivers
 
+## Data Flow
+
+### 1. Force/Torque Input
 ```
-                              WORLD FRAME (W)
-                              [Optional - often same as base]
-                                      |
-                                      | X_W_base (fixed)
-                                      |
-                              BASE FRAME (base)
-                              [base_link - robot mount]
-                                      |
-                                      | X_base_J1
-                                      |
-                              Joint 1 (shoulder_pan)
-                                      |
-                                      | X_J1_J2
-                                      |
-                              Joint 2 (shoulder_lift)
-                                      |
-                                      | X_J2_J3
-                                      |
-                              Joint 3 (elbow)
-                                      |
-                                      | X_J3_J4
-                                      |
-                              Joint 4 (wrist_1)
-                                      |
-                                      | X_J4_J5
-                                      |
-                              Joint 5 (wrist_2)
-                                      |
-                                      | X_J5_J6
-                                      |
-                              Joint 6 (wrist_3)
-                                      |
-                                      | X_J6_tip
-                                      |
-                              TIP FRAME (tip)
-                              [tool0 - end effector]
-                                      |
-                                      | X_tip_ft (often identity)
-                                      |
-                              F/T SENSOR FRAME (ft)
-                              [Force/torque sensor]
+/wrist_ft_sensor (geometry_msgs/WrenchStamped)
+    ↓
+Transform to base frame
+    ↓
+Low-pass filtering
 ```
 
-### Key Transforms Used in Controller
-
-#### Primary Control Transform
+### 2. Admittance Computation
 ```
-X_base_tip = X_base_J1 * X_J1_J2 * ... * X_J6_tip
-           = Forward Kinematics(joint_positions)
-```
-
-#### Force Sensor Transform (Special Case)
-```
-When ft_frame == base_link:
-    F_sensor_base = raw_wrench  (no transform needed)
-    
-When ft_frame == tool0:
-    F_sensor_base = Adjoint(X_base_tip) * F_sensor_tip
+Filtered Force F
+    ↓
+Admittance Law: M·ẍ + D·ẋ + K·(x-x₀) = F
+    ↓
+Integrate to get Cartesian velocity
+    ↓
+Safety limits & drift prevention
 ```
 
-### Transform Update Flow
-
+### 3. Motion Output
 ```
-1. Read joint positions from hardware
-   ↓
-2. Compute forward kinematics
-   ↓
-3. Update X_base_tip
-   ↓
-4. Transform sensor data if needed
-   ↓
-5. Compute control in base frame
-   ↓
-6. Send commands to joints
+Cartesian velocity
+    ↓
+Inverse kinematics (plugin-based)
+    ↓
+Joint velocities
+    ↓
+/scaled_joint_trajectory_controller/joint_trajectory
 ```
 
-### Spatial Vector Transformations
+## Node Implementation
 
-#### Velocity Transform
-```
-V_base_tip_base = Adjoint(X_base_tip) * V_tip_tip_tip
-                = [R_base_tip    0       ] * [ω_tip]
-                  [p̂_base_tip  R_base_tip]   [v_tip]
-```
+### Core Components
 
-#### Force Transform  
-```
-F_tip_base = Adjoint^T(X_base_tip) * F_base_base
-           = [R_base_tip^T  -R_base_tip^T * p̂_base_tip] * [τ_base]
-             [0             R_base_tip^T               ]   [f_base]
-```
+1. **admittance_node.cpp**: Main node with control loop
+   - Thread-based execution for maximum frequency
+   - Pre-allocated messages for performance
+   - Configurable timer-based mode available
 
-Where p̂ is the skew-symmetric matrix of position vector p.
+2. **admittance_computations.cpp**: Dynamics calculations
+   - Real-time safe matrix operations
+   - Numerical integration (Euler method)
+   - Safety limiting and filtering
 
-## Control Algorithm
+3. **sensor_handling.cpp**: F/T data processing
+   - Transform management
+   - Data validation and timeout handling
+   - Frame conversion to base coordinates
 
-### 1. Force Acquisition & Transform
-```
-                  Transform only if needed
-F_tool ─────────────────────────────────────► F_base
-         │                                         │
-         │ if (ft_frame == base_link)             │
-         └────────────────────────────────────────┘
-                    Skip transform
-```
+4. **node_integration.cpp**: ROS2 interfaces
+   - Parameter management via generate_parameter_library
+   - Dynamic reconfiguration support
+   - Service interfaces for mode changes
 
-**Why?** Forces must be in robot base frame for correct motion direction.
+### Control Loop Design
 
-### 2. Admittance Dynamics
-
-**Pure Admittance Mode (K=0)**:
-```
-F_ext ──► [1/M] ──► ∫∫ ──► Δx
-            │
-            └── [D] ──┘
-               Damping
-```
-Robot moves freely, stays where pushed.
-
-**Impedance Mode (K>0)**:
-```
-         ┌── [K] ←── (x - x_desired)
-         │
-F_ext ───┴──► [1/M] ──► ∫∫ ──► Δx
-               │
-               └── [D] ──┘
-```
-Robot returns to desired position like a spring.
-
-### 3. Safety Pipeline
-```
-Cartesian    Apply         Convert        Apply          Output
-Velocity ──► Limits ────► to Joints ───► Joint ────────► References
-   ẋ         ±0.5m/s        IK          Limits            q_ref
-```
-
-## Key Parameters Explained
-
-### Virtual Mass `[X,Y,Z,Rx,Ry,Rz]`
-- **Units**: kg for translation, kg·m² for rotation
-- **Effect**: Lower = faster response, Higher = slower/stable
-- **Example**: `[5,5,5,0.5,0.5,0.5]` - Light and responsive
-
-### Damping Ratio `ζ`
-- **Units**: Dimensionless (typically 0.7-1.2)
-- **Effect**: 
-  - ζ < 1: Underdamped (oscillates)
-  - ζ = 1: Critically damped (fastest, no overshoot)
-  - ζ > 1: Overdamped (slow, no oscillation)
-
-### Stiffness `K`
-- **Units**: N/m (translation), Nm/rad (rotation)
-- **Effect**: Spring constant - how strongly robot returns to position
-- **Special**: K=0 disables position control entirely
-
-## Real-Time Considerations
-
-### Why Pre-allocated Memory?
 ```cpp
-// BAD - causes allocation in RT
-joint_positions_.push_back(value);  // ❌
-
-// GOOD - pre-sized in configure()
-joint_positions_[i] = value;        // ✅
-```
-Dynamic allocation is non-deterministic, can cause control loop timing violations.
-
-### Transform Caching Strategy
-```
-Non-RT Thread                    RT Thread
-─────────────                    ─────────
-TF Lookup (may block)            Read cached transform
-     ↓                                ↑
-Update atomic cache ─────────────────►│
-```
-TF lookups can block indefinitely. Cache ensures RT thread never waits.
-
-### Lock-Free Publishing
-```cpp
-if (publisher->trylock()) {      // Non-blocking
-    publisher->msg_ = data;
-    publisher->unlockAndPublish();
+// Thread-based control loop (default)
+void controlThreadFunction() {
+    rclcpp::Rate rate(1000);  // Limit max rate if needed
+    while (rclcpp::ok()) {
+        controlLoop();  // Main computation
+        executor.spin_some(0);  // Process callbacks
+    }
 }
-// Continue regardless - control > monitoring
 ```
 
-## Common Use Cases
+When `control_frequency = 0.0` (default), the node runs as fast as possible using a dedicated thread.
 
-### Assembly (Peg-in-Hole)
-**Problem**: Rigid position control causes jamming  
-**Solution**: 
-- XY stiffness = 50 N/m (gentle centering)
-- Z stiffness = 0 (free insertion)
-- Low mass for quick compliance
+## Parameter System
 
-### Surface Following  
-**Problem**: Maintain contact without excessive force  
-**Solution**:
-- XY stiffness = 0 (follow surface contours)
-- Z stiffness = 150 N/m (maintain height)
-- Very low Z mass (1 kg) for sensitivity
+Parameters are defined in `config/admittance_config.yaml` and auto-generated into a type-safe C++ interface:
 
-### Human Collaboration
-**Problem**: Safety during physical interaction  
-**Solution**:
-- Moderate stiffness (80 N/m) - gentle return
-- High damping (ζ=1.0) - no oscillation
-- Velocity limits for safety
+- **Dynamics**: mass, damping_ratio, stiffness
+- **Safety**: max_linear_velocity, max_angular_velocity  
+- **Performance**: control_frequency, trajectory timing
+- **Sensor**: topic names, timeout, transform settings
 
-## Implementation Insights
+## Kinematics Plugin System
 
-### Why RK4 Integration?
-Simple Euler integration accumulates error. RK4 provides:
-- 4th order accuracy
-- Numerical stability
-- Smooth velocity profiles
-
-### Why Gradual Stiffness Engagement?
+The node uses a plugin-based kinematics interface:
 ```
-Stiffness
-    ↑
-  K │      ╱─────── Target
-    │    ╱
-    │  ╱ ← Ramp over 2s
-  0 │╱
-    └────────────► Time
+Plugin Interface (kinematics_interface)
+    ↓
+KDL Implementation (default)
+MoveIt Implementation (optional)
+Custom Implementation (user-provided)
 ```
-Prevents sudden forces when switching modes. Critical for safety.
 
-### Drift Prevention
-When velocity < threshold for 1s → reset integrators.  
-Prevents accumulation of sensor noise causing unwanted motion.
+This allows switching between different IK solvers without recompiling.
 
-## Performance Profile
+## Performance Optimizations
 
-The controller must complete within the control period (e.g., 5ms @ 200Hz):
-1. **Sensor Read**: Direct array access - negligible
-2. **Transform**: Matrix multiply (only if needed) - ~0.1ms
-3. **Control Law**: 6x6 matrix ops + RK4 - ~0.2ms
-4. **Kinematics**: Plugin-dependent - ~0.5ms typical
-5. **Safety Checks**: Simple comparisons - negligible
+1. **Pre-allocated Messages**: All ROS messages allocated once
+2. **Cached Transforms**: TF lookups minimized  
+3. **Thread-based Loop**: No timer overhead
+4. **Direct Publishing**: No intermediate buffers
+5. **Optimized Trajectory Timing**: 20ms time_from_start
 
-Total: ~1ms typical, well within 5ms budget.
+## Safety Features
 
-## Dependencies and Integration
+- **Velocity Limiting**: Hard limits on Cartesian space
+- **Timeout Handling**: Automatic stop on stale data
+- **Drift Prevention**: Position reset when stationary
+- **Smooth Transitions**: Gradual stiffness engagement
+- **Emergency Stop**: Via service interface
 
-### ROS2 Dependencies
-- **ros2_control**: Controller interface and real-time tools
-- **kinematics_interface**: Plugin-based kinematics (KDL default)
-- **tf2**: Coordinate frame transformations
-- **generate_parameter_library**: Type-safe parameter handling
+## Integration with UR Robots
 
-### Hardware Requirements
-- Universal Robots arm (UR3/UR5/UR10/UR16 series)
-- Force/Torque sensor (built-in or external)
-- Real-time kernel recommended for <1ms control loops
+### Simulation Mode
+```
+Gazebo F/T Plugin → /wrist_ft_sensor → Admittance Node → Joint Trajectory
+```
 
-## Summary
+### Real Robot Mode  
+```
+UR F/T Sensor → Robot Driver → /wrist_ft_sensor → Admittance Node → Joint Trajectory
+```
 
-This controller enables force-sensitive tasks on position-controlled robots by implementing a virtual mass-spring-damper system. Key insights:
-
-1. **Admittance vs Impedance**: Same math, different perspective
-2. **Real-time safety**: Every design choice prioritizes deterministic timing
-3. **Flexibility**: Per-axis control enables task-specific behaviors
-4. **Safety first**: Multiple layers of limits and checks
-
-The result: A UR robot that can "feel" and respond to forces naturally.
-
-## See Also
-- [Notation Guide](NOTATION_GUIDE.md) - Coordinate frame conventions
-- [Setup Guide](SETUP_GUIDE.md) - Installation and configuration
-- [API Reference](https://github.com/ajaygunalan/ur_admittance_controller) - Code documentation
+The node automatically adapts based on the `use_sim` parameter.

@@ -210,15 +210,14 @@ ros2 param set /admittance_node admittance.mass [15,15,15,1.5,1.5,1.5]
 ```
 ur_admittance_controller/
 ├── include/               # Header files
-│   ├── admittance_controller.hpp
-│   ├── admittance_types.hpp
-│   ├── admittance_constants.hpp
-│   └── matrix_utilities.hpp
+│   ├── admittance_node.hpp          # Main node interface
+│   ├── admittance_constants.hpp     # Constants and utilities
+│   └── matrix_utilities.hpp         # Matrix operations
 ├── src/                   # Implementation files
-│   ├── admittance_controller.cpp    # Main controller logic
-│   ├── realtime_computations.cpp    # RT-safe calculations
-│   ├── sensor_interface.cpp         # F/T sensor handling
-│   ├── controller_integration.cpp   # ROS2 Control interface
+│   ├── admittance_node.cpp          # Main node implementation
+│   ├── admittance_computations.cpp  # Core dynamics calculations
+│   ├── sensor_handling.cpp          # F/T sensor data processing
+│   ├── node_integration.cpp         # ROS2 interfaces
 │   └── utilities.cpp                # Helper functions
 ├── config/                # Configuration
 │   └── admittance_config.yaml       # Parameter definitions
