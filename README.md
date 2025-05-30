@@ -40,12 +40,11 @@ colcon build && source install/setup.bash
 
 ## **📂 Package Structure**
 
-### **Core Source Files**
+### **Core Source Files (Minimized Architecture)**
 ```
 src/
 ├── admittance_node.cpp          # Main node, ROS2 interfaces, initialization
 ├── admittance_computations.cpp  # Core admittance algorithm (M·ẍ + D·ẋ + K·x = F)
-├── node_integration.cpp         # ROS2 callback handlers and data integration  
 └── sensor_handling.cpp          # F/T sensor processing and transform handling
 ```
 
@@ -58,12 +57,12 @@ launch/
 └── ur_admittance.launch.py      # Main launch file (sim/hardware modes)
 ```
 
-### **Headers & Types**
+### **Headers & Types (Streamlined)**
 ```
 include/
 ├── admittance_node.hpp           # Main node class definition
 ├── admittance_node_types.hpp     # Data structures (JointLimits, etc.)
-└── admittance_constants.hpp      # Mathematical and control constants
+└── admittance_constants.hpp      # Essential mathematical constants
 ```
 
 ---
@@ -279,6 +278,21 @@ ros2 topic list | grep admittance
 ros2 topic hz /scaled_joint_trajectory_controller/joint_trajectory
 ```
 
+### **Automated Testing (Consolidated Test Suite)**
+```bash
+# Test controller modes (impedance vs admittance)
+python3 scripts/test_suite.py impedance
+
+# Test safe startup sequence
+python3 scripts/test_suite.py startup
+
+# Check system status
+python3 scripts/test_suite.py status
+
+# Validate frame notation and transitions
+python3 scripts/validate.py
+```
+
 ### **Parameter Tuning**
 ```bash
 # Real-time parameter updates
@@ -293,18 +307,21 @@ ros2 param dump /admittance_node > my_config.yaml
 
 ## **📊 Package Metrics**
 
-### **Code Statistics**  
-- **Source lines**: ~1,200 lines C++
-- **Header lines**: ~400 lines  
-- **Config lines**: ~200 lines YAML
-- **Total files**: 15 core files
+### **Code Statistics (After Minimization)**  
+- **Source lines**: 1,063 lines C++ (streamlined)
+- **Header lines**: 275 lines (optimized)
+- **Config lines**: 86 lines YAML (concise)
+- **Script lines**: 80 lines Python (consolidated)
+- **Total core files**: 8 files (minimized from 12)
 - **Dependencies**: 12 ROS2 packages
 
-### **Recent Optimizations**
-- **Code removed**: ~50 lines (acceleration limiting)
-- **Integration improved**: Official UR5e specifications  
-- **Architecture simplified**: Leverages designed UR ecosystem
-- **Performance enhanced**: Velocity-level smoothness
+### **Recent Optimizations (41% Codebase Reduction)**
+- **Total reduction**: 1,060 lines eliminated (2,584 → 1,524 lines)
+- **Files eliminated**: 4 files removed (node_integration.cpp, matrix_utilities.hpp, etc.)
+- **Scripts consolidated**: 6 → 2 files (test_suite.py, validate.py)
+- **Documentation streamlined**: Verbose comments → concise implementation notes
+- **Architecture simplified**: Direct implementations, fewer abstractions
+- **Performance enhanced**: Faster builds, cleaner code structure
 
 ---
 
@@ -347,7 +364,8 @@ ros2 controller switch_controllers --activate scaled_joint_trajectory_controller
 - **Technical Documentation**: `docs/` directory
 - **API Reference**: `docs/API_REFERENCE.md`
 - **Architecture Details**: `docs/ARCHITECTURE.md`  
-- **Testing Guide**: `scripts/ur_admittance_tests.py`
+- **Testing Guide**: `scripts/test_suite.py` (consolidated test suite)
+- **Validation Tools**: `scripts/validate.py` (frame notation & transitions)
 
 ---
 
