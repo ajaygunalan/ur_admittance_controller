@@ -407,7 +407,9 @@ bool AdmittanceNode::convertToJointSpace(
 {
   // Validate inputs and sizes
   if (period.seconds() <= 0.0 || cart_vel.hasNaN() || params_.joints.empty() || 
-      current_pos_.size() < params_.joints.size()) return false;
+      current_pos_.size() < params_.joints.size() ||
+      joint_positions_.size() < params_.joints.size() ||
+      joint_deltas_.size() < params_.joints.size()) return false;
   
   // Get current joint positions from stored values
   {
@@ -424,8 +426,11 @@ bool AdmittanceNode::convertToJointSpace(
   if (!kinematics_ || !kinematics_->get() || !(*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
         current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) return false;
   
-  // Update joint positions (velocities will be calculated in applyJointLimits)
-  for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
+  // Update joint positions with comprehensive bounds checking
+  for (size_t i = 0; i < params_.joints.size() && 
+                     i < joint_deltas_.size() && 
+                     i < joint_positions_.size() && 
+                     i < current_pos_.size(); ++i) {
     joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
     if (std::isnan(joint_positions_[i])) return false;
   }
@@ -440,10 +445,16 @@ bool AdmittanceNode::applyJointLimits(const rclcpp::Duration& period)
   if (period.seconds() <= 0.0 || params_.joints.empty() || joint_deltas_.empty() ||
       params_.joints.size() > joint_positions_.size() || 
       joint_deltas_.size() > joint_positions_.size() ||
+      params_.joints.size() > current_pos_.size() ||
+      params_.joints.size() > joint_velocities_.size() ||
       joint_limits_.size() < params_.joints.size()) return false;
   
-  // Apply limits to each joint
-  for (size_t i = 0; i < params_.joints.size() && i < joint_deltas_.size(); ++i) {
+  // Apply limits to each joint with comprehensive bounds checking
+  for (size_t i = 0; i < params_.joints.size() && 
+                     i < joint_deltas_.size() && 
+                     i < joint_positions_.size() && 
+                     i < current_pos_.size() && 
+                     i < joint_velocities_.size(); ++i) {
     double current_velocity = joint_deltas_[i] / period.seconds();
     
     // Check velocity limit (position + velocity continuity ensures smoothness)
