@@ -128,8 +128,9 @@ private:
   std::mutex robot_description_mutex_;
   std::atomic<bool> robot_description_received_{false};
   
-  // Parameter update tracking
-  std::atomic<bool> params_updated_{false};
+  // Parameter update tracking - now handled by generate_parameter_library's is_old() method
+  rclcpp::Time last_param_check_{0, 0, RCL_ROS_TIME};
+  static constexpr double PARAM_CHECK_INTERVAL = 0.1; // Check parameters at 10Hz instead of 500Hz
   
   // Control variables (to be ported from existing controller)
   Vector6d F_sensor_base_;

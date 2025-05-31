@@ -3,22 +3,34 @@ ur_admittance_controller:
     type: string_array
     default_value: ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
     description: "UR5e joint names"
+    read_only: true
+    validation:
+      fixed_size<>: [6]
 
   admittance:
     mass:
       type: double_array
       default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
       description: "Virtual inertia [X,Y,Z,Rx,Ry,Rz] in [kg,kg,kg,kg⋅m²,kg⋅m²,kg⋅m²]"
+      validation:
+        fixed_size<>: [6]
+        element_bounds<>: [0.1, 100.0]
 
     stiffness:
       type: double_array
       default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       description: "Position stiffness [X,Y,Z,Rx,Ry,Rz] in [N/m,N/m,N/m,Nm/rad,Nm/rad,Nm/rad]"
+      validation:
+        fixed_size<>: [6]
+        element_bounds<>: [0.0, 10000.0]
 
     damping_ratio:
       type: double_array
       default_value: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
       description: "Damping ratios [X,Y,Z,Rx,Ry,Rz]"
+      validation:
+        fixed_size<>: [6]
+        element_bounds<>: [0.1, 2.0]
 
     enabled_axes:
       type: bool_array
@@ -34,6 +46,8 @@ ur_admittance_controller:
       type: double
       default_value: 0.8
       description: "EMA filter coefficient for F/T sensor (0.1=heavy filtering, 0.95=light filtering)"
+      validation:
+        bounds<>: [0.05, 0.95]
 
     drift_reset_threshold:
       type: double
@@ -64,16 +78,19 @@ ur_admittance_controller:
     type: string
     default_value: "base_link"
     description: "Robot base link frame"
+    read_only: true
 
   tip_link:
     type: string
     default_value: "tool0"
     description: "Robot end-effector frame"
+    read_only: true
 
   ft_frame:
     type: string
     default_value: "ft_sensor_link"
     description: "F/T sensor frame"
+    read_only: true
 
   kinematics_plugin_package:
     type: string

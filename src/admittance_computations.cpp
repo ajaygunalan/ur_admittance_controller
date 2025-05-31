@@ -297,12 +297,65 @@ bool AdmittanceNode::updateStiffnessEngagement(const rclcpp::Duration& period)
 void AdmittanceNode::checkParameterUpdates()
 {
   if (!params_.dynamic_parameters) return;
-
-  // In the node version, check if parameters were updated
-  if (params_updated_.load()) {
-    params_ = param_listener_->get_params();
-    params_updated_.store(false);
+  
+  // Reduce parameter check frequency for better real-time performance
+  auto now = this->now();
+  if ((now - last_param_check_).seconds() < PARAM_CHECK_INTERVAL) {
+    return;
   }
+  last_param_check_ = now;
+
+  // Use non-blocking parameter access for real-time safety
+  ur_admittance_controller::Params temp_params = params_;
+  if (param_listener_->try_get_params(temp_params)) {
+    // Parameters were updated and lock was acquired without blocking
+    
+    // Check what changed to avoid unnecessary matrix recomputation
+    bool mass_changed = (temp_params.admittance.mass != params_.admittance.mass);
+    bool stiffness_changed = (temp_params.admittance.stiffness != params_.admittance.stiffness);
+    bool damping_changed = (temp_params.admittance.damping_ratio != params_.admittance.damping_ratio);
+    
+    params_ = temp_params;
+    
+    // Only update matrices that actually changed
+    if (mass_changed) {
+      updateMassMatrix(params_, true);
+      updateDampingMatrix(params_, true); // Damping depends on mass
+      RCLCPP_INFO(get_logger(), "Mass parameters updated");
+    }
+    if (stiffness_changed) {
+      updateStiffnessMatrix(params_, true);
+      if (!mass_changed) updateDampingMatrix(params_, true); // Damping depends on stiffness
+      RCLCPP_INFO(get_logger(), "Stiffness parameters updated");
+    }
+    if (damping_changed && !mass_changed && !stiffness_changed) {
+      updateDampingMatrix(params_, true);
+      RCLCPP_INFO(get_logger(), "Damping parameters updated");
+    }
+    
+    // Enhanced parameter change tracking and logging
+    if (mass_changed || stiffness_changed || damping_changed) {
+      RCLCPP_INFO(get_logger(), 
+        "Parameter update completed at %.3f seconds - Mass:%s Stiffness:%s Damping:%s",
+        now.seconds(),
+        mass_changed ? "✓" : "○",
+        stiffness_changed ? "✓" : "○", 
+        damping_changed ? "✓" : "○");
+        
+      // Log current parameter values for debugging
+      RCLCPP_DEBUG(get_logger(), 
+        "Current admittance parameters - Mass:[%.2f,%.2f,%.2f,%.3f,%.3f,%.3f] "
+        "Stiffness:[%.1f,%.1f,%.1f,%.1f,%.1f,%.1f] "
+        "Damping:[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]",
+        params_.admittance.mass[0], params_.admittance.mass[1], params_.admittance.mass[2],
+        params_.admittance.mass[3], params_.admittance.mass[4], params_.admittance.mass[5],
+        params_.admittance.stiffness[0], params_.admittance.stiffness[1], params_.admittance.stiffness[2],
+        params_.admittance.stiffness[3], params_.admittance.stiffness[4], params_.admittance.stiffness[5],
+        params_.admittance.damping_ratio[0], params_.admittance.damping_ratio[1], params_.admittance.damping_ratio[2],
+        params_.admittance.damping_ratio[3], params_.admittance.damping_ratio[4], params_.admittance.damping_ratio[5]);
+    }
+  }
+  // If try_get_params returns false, continue with existing parameters (non-blocking)
 }
 
 
