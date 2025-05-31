@@ -1,87 +1,86 @@
 ur_admittance_controller:
-  ros__parameters:
-    joints:
-      type: string_array
-      default_value: ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
-      description: "UR5e joint names"
+  joints:
+    type: string_array
+    default_value: ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
+    description: "UR5e joint names"
 
-    admittance:
-      mass:
+  admittance:
+    mass:
       type: double_array
       default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
       description: "Virtual inertia [X,Y,Z,Rx,Ry,Rz] in [kg,kg,kg,kg⋅m²,kg⋅m²,kg⋅m²]"
 
-      stiffness:
+    stiffness:
       type: double_array
       default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       description: "Position stiffness [X,Y,Z,Rx,Ry,Rz] in [N/m,N/m,N/m,Nm/rad,Nm/rad,Nm/rad]"
 
-      damping_ratio:
+    damping_ratio:
       type: double_array
       default_value: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8]
       description: "Damping ratios [X,Y,Z,Rx,Ry,Rz]"
 
-      enabled_axes:
+    enabled_axes:
       type: bool_array
       default_value: [true, true, true, true, true, true]
       description: "Enable admittance per axis [X,Y,Z,Rx,Ry,Rz]"
 
-      min_motion_threshold:
+    min_motion_threshold:
       type: double
       default_value: 1.5
       description: "Minimum force/torque to trigger motion [N/Nm]"
 
-      filter_coefficient:
+    filter_coefficient:
       type: double
       default_value: 0.8
       description: "EMA filter coefficient for F/T sensor (0.1=heavy filtering, 0.95=light filtering)"
 
-      drift_reset_threshold:
+    drift_reset_threshold:
       type: double
       default_value: 0.001
       description: "Velocity threshold for drift reset [m/s]"
 
-    max_linear_velocity:
+  max_linear_velocity:
     type: double
     default_value: 0.5
     description: "Maximum linear velocity [m/s]"
 
-    max_angular_velocity:
+  max_angular_velocity:
     type: double
     default_value: 1.0
     description: "Maximum angular velocity [rad/s]"
 
-    dynamic_parameters:
+  dynamic_parameters:
     type: bool
     default_value: true
     description: "Enable live parameter tuning"
 
-    world_frame:
+  world_frame:
     type: string
     default_value: "world"
     description: "World reference frame"
 
-    base_link:
+  base_link:
     type: string
     default_value: "base_link"
     description: "Robot base link frame"
 
-    tip_link:
+  tip_link:
     type: string
     default_value: "tool0"
     description: "Robot end-effector frame"
 
-    ft_frame:
+  ft_frame:
     type: string
     default_value: "ft_sensor_link"
     description: "F/T sensor frame"
 
-    kinematics_plugin_package:
+  kinematics_plugin_package:
     type: string
     default_value: "kinematics_interface"
     description: "Package containing the kinematics plugin"
 
-    kinematics_plugin_name:
+  kinematics_plugin_name:
     type: string
     default_value: "kinematics_interface_kdl/KinematicsInterfaceKDL"
     description: "Name of the kinematics plugin to use"
