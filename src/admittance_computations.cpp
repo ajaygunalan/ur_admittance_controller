@@ -420,8 +420,8 @@ bool AdmittanceNode::convertToJointSpace(
     cart_displacement_deltas_[i] = cart_vel(i) * period.seconds();
   }
   
-  // Call inverse kinematics
-  if (!kinematics_ || !(*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
+  // Call inverse kinematics with proper null checking
+  if (!kinematics_ || !kinematics_->get() || !(*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
         current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) return false;
   
   // Update joint positions (velocities will be calculated in applyJointLimits)

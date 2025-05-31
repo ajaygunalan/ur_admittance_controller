@@ -319,13 +319,15 @@ bool AdmittanceNode::loadKinematics()
       params_.kinematics_plugin_package, "kinematics_interface::KinematicsInterface");
     
     auto plugin_instance = kinematics_loader_->createUniqueInstance(params_.kinematics_plugin_name);
-    // Convert the custom deleter unique_ptr to standard unique_ptr
-    kinematics_ = std::unique_ptr<kinematics_interface::KinematicsInterface>(plugin_instance.release());
     
-    if (!kinematics_.has_value()) {
-      RCLCPP_ERROR(get_logger(), "Failed to create kinematics instance");
+    // Check if plugin creation succeeded before assigning
+    if (!plugin_instance) {
+      RCLCPP_ERROR(get_logger(), "Failed to create kinematics instance: plugin_instance is null");
       return false;
     }
+    
+    // Convert the custom deleter unique_ptr to standard unique_ptr
+    kinematics_ = std::unique_ptr<kinematics_interface::KinematicsInterface>(plugin_instance.release());
     
     RCLCPP_INFO(get_logger(), "Loaded kinematics: %s", 
       params_.kinematics_plugin_name.c_str());
