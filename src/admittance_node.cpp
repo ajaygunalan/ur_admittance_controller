@@ -185,18 +185,22 @@ void AdmittanceNode::controlLoop()
   static rclcpp::Time last_time = now();
   rclcpp::Time current_time = now();
   rclcpp::Duration period = current_time - last_time;
-  last_time = current_time;
   
   // Skip if period is invalid
   if (period.seconds() <= 0.0 || period.seconds() > 0.1) {
     return;
   }
   
+  // Update last_time only after successful period validation
+  last_time = current_time;
+  
   // Run admittance control computation
   if (!computeAdmittanceStep(period)) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, 
       "Admittance computation failed");
     safeStop();
+    // Reset last_time on computation failure to maintain timing consistency
+    last_time = current_time;
     return;
   }
   
