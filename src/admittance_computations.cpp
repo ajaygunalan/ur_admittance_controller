@@ -123,8 +123,6 @@ bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
   return true;
 }
 
-// writeJointCommands removed - trajectory publishing handled in controlLoop()
-
 // Compute admittance control: M*a + D*v + K*x = F_external using RK4 integration
 bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {

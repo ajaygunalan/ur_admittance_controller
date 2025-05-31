@@ -15,9 +15,6 @@ namespace ur_admittance_controller
 /** @brief Degrees of freedom for 6D Cartesian space (3 translation + 3 rotation) */
 static constexpr size_t DOF = 6;
 
-/** @brief Maximum age of transform data before considered stale (seconds) */
-static constexpr double TRANSFORM_TIMEOUT = 0.1;
-
 /** @brief 6x6 matrix type for mass, damping, and stiffness matrices */
 using Matrix6d = Eigen::Matrix<double, 6, 6>;
 
