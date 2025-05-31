@@ -44,7 +44,7 @@
   <depend>trajectory_msgs</depend>
   
   <!-- Kinematics and Transforms -->
-  <depend>kinematics_interface</depend>
+  <depend>orocos_kdl</depend>
   <depend>urdf</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
@@ -54,7 +54,6 @@
   <depend>generate_parameter_library</depend>
   <!-- Kinematics -->
   <depend>kdl_parser</depend>
-  <depend>kinematics_interface_kdl</depend>
   
   <!-- Test Dependencies -->
   <test_depend>ament_cmake_gmock</test_depend>

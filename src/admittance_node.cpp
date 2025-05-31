@@ -321,24 +321,48 @@ bool AdmittanceNode::loadJointLimitsFromParameters()
 
 bool AdmittanceNode::loadKinematics()
 {
+  // Wait for robot description
+  if (!robot_description_received_.load()) {
+    RCLCPP_WARN(get_logger(), "Robot description not available for kinematics setup");
+    return false;
+  }
+
+  std::string urdf_string;
+  {
+    std::lock_guard<std::mutex> lock(robot_description_mutex_);
+    urdf_string = robot_description_;
+  }
+
+  if (urdf_string.empty()) {
+    RCLCPP_ERROR(get_logger(), "Robot description is empty");
+    return false;
+  }
+
   try {
-    kinematics_loader_ = std::make_shared<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>>(
-      params_.kinematics_plugin_package, "kinematics_interface::KinematicsInterface");
-    
-    auto plugin_instance = kinematics_loader_->createUniqueInstance(params_.kinematics_plugin_name);
-    
-    // Check if plugin creation succeeded before assigning
-    if (!plugin_instance) {
-      RCLCPP_ERROR(get_logger(), "Failed to create kinematics instance: plugin_instance is null");
+    // Parse URDF into KDL tree (direct KDL approach like tutorial)
+    if (!kdl_parser::treeFromString(urdf_string, kdl_tree_)) {
+      RCLCPP_ERROR(get_logger(), "Failed to parse URDF into KDL tree");
       return false;
     }
+
+    // Extract kinematic chain from base to tip
+    if (!kdl_tree_.getChain(params_.base_link, params_.tip_link, kdl_chain_)) {
+      RCLCPP_ERROR(get_logger(), "Failed to extract chain from %s to %s", 
+        params_.base_link.c_str(), params_.tip_link.c_str());
+      return false;
+    }
+
+    // Create inverse kinematics solvers
+    ik_solver_ = std::make_unique<KDL::ChainIkSolverPos_LMA>(kdl_chain_);
+    ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(kdl_chain_);
+
+    kinematics_ready_ = true;
     
-    // Convert the custom deleter unique_ptr to standard unique_ptr
-    kinematics_ = std::unique_ptr<kinematics_interface::KinematicsInterface>(plugin_instance.release());
-    
-    RCLCPP_INFO(get_logger(), "Loaded kinematics: %s", 
-      params_.kinematics_plugin_name.c_str());
-    
+    RCLCPP_INFO(get_logger(), "KDL kinematics initialized successfully");
+    RCLCPP_INFO(get_logger(), "Chain: %s -> %s (%d joints, %d segments)",
+      params_.base_link.c_str(), params_.tip_link.c_str(),
+      kdl_chain_.getNrOfJoints(), kdl_chain_.getNrOfSegments());
+
     // Load joint limits from robot_description topic first, fallback to hardcoded
     if (!loadJointLimitsFromURDF()) {
       RCLCPP_WARN(get_logger(), "Could not load joint limits from robot_description, using fallback");
@@ -351,7 +375,7 @@ bool AdmittanceNode::loadKinematics()
     return true;
     
   } catch (const std::exception & e) {
-    RCLCPP_ERROR(get_logger(), "Exception loading kinematics: %s", e.what());
+    RCLCPP_ERROR(get_logger(), "KDL initialization failed: %s", e.what());
     return false;
   }
 }

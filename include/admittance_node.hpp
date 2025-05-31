@@ -12,8 +12,12 @@
 #include <tf2_eigen/tf2_eigen.hpp>
 
 // Kinematics
-#include <kinematics_interface/kinematics_interface.hpp>
-#include <pluginlib/class_loader.hpp>
+#include <kdl_parser/kdl_parser.hpp>
+#include <kdl/tree.hpp>
+#include <kdl/chain.hpp>
+#include <kdl/chainiksolver.hpp>
+#include <kdl/chainiksolverpos_lma.hpp>
+#include <kdl/chainiksolvervel_pinv.hpp>
 #include <urdf/model.h>
 
 // Reuse existing parameter system
@@ -172,9 +176,12 @@ private:
     double stiffness_ramp_time = 1.0;
   } safe_startup_params_;
   
-  // Kinematics interface
-  std::optional<std::unique_ptr<kinematics_interface::KinematicsInterface>> kinematics_;
-  std::shared_ptr<pluginlib::ClassLoader<kinematics_interface::KinematicsInterface>> kinematics_loader_;
+  // Direct KDL kinematics
+  KDL::Tree kdl_tree_;
+  KDL::Chain kdl_chain_;
+  std::unique_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
+  std::unique_ptr<KDL::ChainIkSolverVel_pinv> ik_vel_solver_;
+  bool kinematics_ready_ = false;
   
   
   

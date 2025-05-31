@@ -473,9 +473,38 @@ bool AdmittanceNode::convertToJointSpace(
     cart_displacement_deltas_[i] = cart_vel(i) * period.seconds();
   }
   
-  // Call inverse kinematics with proper null checking
-  if (!kinematics_ || !kinematics_->get() || !(*kinematics_)->convert_cartesian_deltas_to_joint_deltas(
-        current_pos_, cart_displacement_deltas_, params_.tip_link, joint_deltas_)) return false;
+  // Call direct KDL inverse kinematics
+  if (!kinematics_ready_) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "KDL not ready");
+    return false;
+  }
+
+  // Convert to KDL types
+  KDL::JntArray q_current(kdl_chain_.getNrOfJoints());
+  for (size_t i = 0; i < std::min(current_pos_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
+    q_current(i) = current_pos_[i];
+  }
+
+  // Convert Cartesian deltas to twist
+  KDL::Twist cart_twist;
+  cart_twist.vel.x(cart_displacement_deltas_[0]);
+  cart_twist.vel.y(cart_displacement_deltas_[1]);
+  cart_twist.vel.z(cart_displacement_deltas_[2]);
+  cart_twist.rot.x(cart_displacement_deltas_[3]);
+  cart_twist.rot.y(cart_displacement_deltas_[4]);
+  cart_twist.rot.z(cart_displacement_deltas_[5]);
+
+  // Solve for joint velocities using KDL
+  KDL::JntArray q_dot(kdl_chain_.getNrOfJoints());
+  if (ik_vel_solver_->CartToJnt(q_current, cart_twist, q_dot) < 0) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "KDL IK velocity solver failed");
+    return false;
+  }
+
+  // Convert back to joint deltas
+  for (size_t i = 0; i < std::min(joint_deltas_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
+    joint_deltas_[i] = q_dot(i);
+  }
   
   // Update joint positions with comprehensive bounds checking
   for (size_t i = 0; i < params_.joints.size() && 

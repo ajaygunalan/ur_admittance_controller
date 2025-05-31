@@ -92,12 +92,3 @@ ur_admittance_controller:
     description: "F/T sensor frame"
     read_only: true
 
-  kinematics_plugin_package:
-    type: string
-    default_value: "kinematics_interface"
-    description: "Package containing the kinematics plugin"
-
-  kinematics_plugin_name:
-    type: string
-    default_value: "kinematics_interface_kdl/KinematicsInterfaceKDL"
-    description: "Name of the kinematics plugin to use"

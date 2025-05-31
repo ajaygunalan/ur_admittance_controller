@@ -45,8 +45,7 @@ find_package(tf2_eigen REQUIRED)
 
 # Math and kinematics packages
 find_package(Eigen3 REQUIRED)
-find_package(kinematics_interface REQUIRED)
-find_package(kinematics_interface_kdl REQUIRED)
+find_package(orocos_kdl REQUIRED)
 find_package(kdl_parser REQUIRED)
 find_package(urdf REQUIRED)
 # ==============================================================================
@@ -70,8 +69,7 @@ set(NODE_DEPENDENCIES
   tf2
   tf2_ros
   tf2_eigen
-  kinematics_interface
-  pluginlib
+  orocos_kdl
   urdf
   kdl_parser
 )
