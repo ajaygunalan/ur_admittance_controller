@@ -148,16 +148,9 @@ void AdmittanceNode::wrenchCallback(const geometry_msgs::msg::WrenchStamped::Con
   // Transform to base frame using direct tf2 lookup
   F_sensor_base_ = transformWrench(raw_wrench);
   
-  // Apply EMA filter with parameter validation
-  if (params_.admittance.filter_coefficient < 0.05 || params_.admittance.filter_coefficient > 0.95) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
-      "Invalid filter_coefficient: %.3f. Using fallback value 0.8", 
-      params_.admittance.filter_coefficient);
-    wrench_filtered_ = 0.8 * F_sensor_base_ + 0.2 * wrench_filtered_;
-  } else {
-    wrench_filtered_ = params_.admittance.filter_coefficient * F_sensor_base_ + 
-      (1.0 - params_.admittance.filter_coefficient) * wrench_filtered_;
-  }
+  // Apply EMA filter - validation handled by generate_parameter_library
+  wrench_filtered_ = params_.admittance.filter_coefficient * F_sensor_base_ + 
+    (1.0 - params_.admittance.filter_coefficient) * wrench_filtered_;
 }
 
 void AdmittanceNode::jointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg)
@@ -352,17 +345,6 @@ bool AdmittanceNode::loadKinematics()
       return false;
     }
 
-    // Create inverse kinematics solvers
-    ik_solver_ = std::make_unique<KDL::ChainIkSolverPos_LMA>(kdl_chain_);
-    ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(kdl_chain_);
-
-    kinematics_ready_ = true;
-    
-    RCLCPP_INFO(get_logger(), "KDL kinematics initialized successfully");
-    RCLCPP_INFO(get_logger(), "Chain: %s -> %s (%d joints, %d segments)",
-      params_.base_link.c_str(), params_.tip_link.c_str(),
-      kdl_chain_.getNrOfJoints(), kdl_chain_.getNrOfSegments());
-
     // Load joint limits from robot_description topic first, fallback to hardcoded
     if (!loadJointLimitsFromURDF()) {
       RCLCPP_WARN(get_logger(), "Could not load joint limits from robot_description, using fallback");
@@ -371,6 +353,26 @@ bool AdmittanceNode::loadKinematics()
         return false;
       }
     }
+
+    // Create inverse kinematics velocity solver with WDLS (Weighted Damped Least Squares)
+    const double eps = 0.00001;  // Precision threshold
+    const int maxiter = 150;     // Maximum iterations
+    ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_wdls>(kdl_chain_, eps, maxiter);
+
+    // Configure WDLS parameters for better performance
+    const double lambda = 0.01;  // Damping factor for singularity robustness
+    ik_vel_solver_->setLambda(lambda);
+    
+    // Note: KDL WDLS solver doesn't have built-in joint limit enforcement
+    // Joint limits are enforced in our applyJointLimits() function
+
+    kinematics_ready_ = true;
+    
+    RCLCPP_INFO(get_logger(), "KDL WDLS kinematics initialized successfully");
+    RCLCPP_INFO(get_logger(), "Chain: %s -> %s (%d joints, %d segments)",
+      params_.base_link.c_str(), params_.tip_link.c_str(),
+      kdl_chain_.getNrOfJoints(), kdl_chain_.getNrOfSegments());
+    RCLCPP_INFO(get_logger(), "WDLS solver configured for singularity robustness (lambda=%.3f)", lambda);
     
     return true;
     

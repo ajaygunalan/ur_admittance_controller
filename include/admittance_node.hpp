@@ -16,8 +16,8 @@
 #include <kdl/tree.hpp>
 #include <kdl/chain.hpp>
 #include <kdl/chainiksolver.hpp>
-#include <kdl/chainiksolverpos_lma.hpp>
 #include <kdl/chainiksolvervel_pinv.hpp>
+#include <kdl/chainiksolvervel_wdls.hpp>
 #include <urdf/model.h>
 
 // Reuse existing parameter system
@@ -179,8 +179,7 @@ private:
   // Direct KDL kinematics
   KDL::Tree kdl_tree_;
   KDL::Chain kdl_chain_;
-  std::unique_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
-  std::unique_ptr<KDL::ChainIkSolverVel_pinv> ik_vel_solver_;
+  std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_;
   bool kinematics_ready_ = false;
   
   
