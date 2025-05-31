@@ -15,10 +15,6 @@ namespace ur_admittance_controller
 /** @brief Degrees of freedom for 6D Cartesian space (3 translation + 3 rotation) */
 static constexpr size_t DOF = 6;
 
-/** @brief Default low-pass filter coefficient for force/torque sensor filtering */
-static constexpr double DEFAULT_FILTER_COEFF = 0.95;
-
-
 /** @brief Maximum age of transform data before considered stale (seconds) */
 static constexpr double TRANSFORM_TIMEOUT = 0.1;
 

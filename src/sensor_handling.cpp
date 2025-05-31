@@ -24,9 +24,16 @@ bool AdmittanceNode::updateSensorData()
   // Transform to base frame using direct tf2 lookup
   F_sensor_base_ = transformWrench(raw_wrench);
   
-  // Common filtering and deadband check
-  wrench_filtered_ = params_.admittance.filter_coefficient * F_sensor_base_ + 
-    (1.0 - params_.admittance.filter_coefficient) * wrench_filtered_;
+  // Apply EMA filter with parameter validation
+  if (params_.admittance.filter_coefficient < 0.05 || params_.admittance.filter_coefficient > 0.95) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+      "Invalid filter_coefficient: %.3f. Using fallback value 0.8", 
+      params_.admittance.filter_coefficient);
+    wrench_filtered_ = 0.8 * F_sensor_base_ + 0.2 * wrench_filtered_;
+  } else {
+    wrench_filtered_ = params_.admittance.filter_coefficient * F_sensor_base_ + 
+      (1.0 - params_.admittance.filter_coefficient) * wrench_filtered_;
+  }
   
   if (wrench_filtered_.hasNaN()) {
     RCLCPP_ERROR(get_logger(), "NaN detected in filtered wrench");

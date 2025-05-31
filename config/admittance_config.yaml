@@ -32,8 +32,8 @@ ur_admittance_controller:
 
     filter_coefficient:
       type: double
-      default_value: 0.15
-      description: "Low-pass filter coefficient for wrench signals"
+      default_value: 0.8
+      description: "EMA filter coefficient for F/T sensor (0.1=heavy filtering, 0.95=light filtering)"
 
     drift_reset_threshold:
       type: double
