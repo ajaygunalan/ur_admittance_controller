@@ -453,18 +453,6 @@ bool AdmittanceNode::handleDriftReset()
   return true;
 }
 
-bool AdmittanceNode::publishPoseError()
-{
-  geometry_msgs::msg::Twist msg;
-  msg.linear.x = error_tip_base_(0);
-  msg.linear.y = error_tip_base_(1);
-  msg.linear.z = error_tip_base_(2);
-  msg.angular.x = error_tip_base_(3);
-  msg.angular.y = error_tip_base_(4);
-  msg.angular.z = error_tip_base_(5);
-  pose_error_pub_->publish(msg);
-  return true;
-}
 
 
 

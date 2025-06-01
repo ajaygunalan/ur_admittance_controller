@@ -65,11 +65,6 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   trajectory_pub_ = create_publisher<trajectory_msgs::msg::JointTrajectory>(
     "/scaled_joint_trajectory_controller/joint_trajectory", 1);
   
-  // Initialize monitoring publishers
-  cart_vel_pub_ = create_publisher<geometry_msgs::msg::Twist>(
-    "/admittance_cartesian_velocity", 10);
-  pose_error_pub_ = create_publisher<geometry_msgs::msg::Twist>(
-    "/admittance_pose_error", 10);
   
   
   // Note: Transform and kinematics initialization will happen lazily 
@@ -212,9 +207,6 @@ void AdmittanceNode::controlLoop()
   trajectory_msg_.points[0].velocities = joint_velocities_;
   
   trajectory_pub_->publish(trajectory_msg_);
-  
-  // Publish monitoring data
-  publishCartesianVelocity();
 }
 
 

@@ -67,12 +67,9 @@ private:
   void updateDampingMatrix(bool log_changes = false);
   bool convertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
   bool handleDriftReset();
-  bool publishPoseError();
-  
   // Helper functions
   bool checkDeadband();
   bool safeStop();
-  void publishCartesianVelocity();
   bool validatePoseErrorSafety(const Vector6d& pose_error);
   
   // Direct transform functions (replacing cache system)
@@ -87,9 +84,6 @@ private:
   // Publishers
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
   
-  // Monitoring publishers (using regular ROS2 publishers instead of RT)
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cart_vel_pub_;
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pose_error_pub_;
   
   
   // Thread-based control loop
@@ -149,7 +143,6 @@ private:
   
   // Pre-allocated messages for performance
   trajectory_msgs::msg::JointTrajectory trajectory_msg_;
-  geometry_msgs::msg::Twist cart_vel_msg_;
   
   
   // Direct KDL kinematics

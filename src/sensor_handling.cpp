@@ -80,17 +80,5 @@ bool AdmittanceNode::checkDeadband()
   return false;
 }
 
-// Publish Cartesian velocity for monitoring
-void AdmittanceNode::publishCartesianVelocity()
-{
-  // Use pre-allocated message for better performance
-  cart_vel_msg_.linear.x = V_base_tip_base_(0);
-  cart_vel_msg_.linear.y = V_base_tip_base_(1);
-  cart_vel_msg_.linear.z = V_base_tip_base_(2);
-  cart_vel_msg_.angular.x = V_base_tip_base_(3);
-  cart_vel_msg_.angular.y = V_base_tip_base_(4);
-  cart_vel_msg_.angular.z = V_base_tip_base_(5);
-  cart_vel_pub_->publish(cart_vel_msg_);
-}
 
 }  // namespace ur_admittance_controller
