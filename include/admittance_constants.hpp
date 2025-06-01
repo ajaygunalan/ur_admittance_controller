@@ -8,8 +8,6 @@
 namespace ur_admittance_controller::constants {
 
 // Stiffness Control Parameters
-constexpr double STIFFNESS_REDUCTION_FACTOR = 0.5;
-constexpr double STIFFNESS_ENGAGEMENT_THRESHOLD = 0.9;
 constexpr double STIFFNESS_BLEND_THRESHOLD = 1.0;
 constexpr double VIRTUAL_STIFFNESS = 10.0;
 
@@ -19,6 +17,10 @@ constexpr double PARAMETER_EPSILON = 1e-12;
 constexpr double MAX_ORIENTATION_ERROR = M_PI * 0.9;
 constexpr double MAX_CONDITION_NUMBER = 1e12;
 constexpr double REGULARIZATION_FACTOR = 1e-8;
+
+// Pose Error Safety Limits
+constexpr double MAX_SAFE_POSITION_ERROR = 0.5;     // 50cm maximum position jump
+constexpr double MAX_SAFE_ORIENTATION_ERROR = 0.5;  // ~28.6° maximum orientation jump
 
 
 }  // namespace ur_admittance_controller::constants

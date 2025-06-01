@@ -18,8 +18,6 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   joint_velocities_.resize(params_.joints.size(), 0.0);
   joint_position_references_.resize(params_.joints.size(), 0.0);
   current_pos_.resize(params_.joints.size(), 0.0);
-  joint_deltas_.resize(params_.joints.size(), 0.0);
-  cart_displacement_deltas_.resize(6, 0.0);
   
   // Initialize control matrices
   mass_ = Matrix6d::Identity();
@@ -67,14 +65,9 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   pose_error_pub_ = create_publisher<geometry_msgs::msg::Twist>(
     "/admittance_pose_error", 10);
   
-  // Initialize transforms and kinematics
-  if (!initializeTransforms()) {
-    RCLCPP_ERROR(get_logger(), "Failed to initialize transforms");
-  }
   
-  if (!loadKinematics()) {
-    RCLCPP_ERROR(get_logger(), "Failed to load kinematics");
-  }
+  // Note: Transform and kinematics initialization will happen lazily 
+  // in the control loop once robot_description and tf data are available
   
   // Initialize matrices from parameters
   updateMassMatrix();
@@ -86,8 +79,8 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   trajectory_msg_.points.resize(1);
   trajectory_msg_.points[0].positions.resize(params_.joints.size());
   trajectory_msg_.points[0].velocities.resize(params_.joints.size());
-  // Reduced trajectory timing for smoother motion (10-20ms instead of 100ms)
-  trajectory_msg_.points[0].time_from_start = rclcpp::Duration::from_seconds(0.02);
+  // Match control loop timing: 500Hz = 2ms period
+  trajectory_msg_.points[0].time_from_start = rclcpp::Duration::from_seconds(0.002);
   
   // Start dedicated control thread for high-frequency admittance control
   RCLCPP_INFO(get_logger(), "Starting dedicated control thread for admittance control");
@@ -138,12 +131,8 @@ void AdmittanceNode::wrenchCallback(const geometry_msgs::msg::WrenchStamped::Con
   
   // Extract wrench data
   Vector6d raw_wrench;
-  raw_wrench(0) = msg->wrench.force.x;
-  raw_wrench(1) = msg->wrench.force.y;
-  raw_wrench(2) = msg->wrench.force.z;
-  raw_wrench(3) = msg->wrench.torque.x;
-  raw_wrench(4) = msg->wrench.torque.y;
-  raw_wrench(5) = msg->wrench.torque.z;
+  raw_wrench << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
+                msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
   
   // Transform to base frame using direct tf2 lookup
   F_sensor_base_ = transformWrench(raw_wrench);
@@ -226,91 +215,6 @@ bool AdmittanceNode::initializeTransforms()
   return waitForTransforms();
 }
 
-bool AdmittanceNode::loadJointLimitsFromURDF()
-{
-  // Check if robot description has been received
-  if (!robot_description_received_.load()) {
-    RCLCPP_WARN(get_logger(), "Robot description not yet received from /robot_description topic");
-    return false;
-  }
-  
-  std::string urdf_string;
-  {
-    std::lock_guard<std::mutex> lock(robot_description_mutex_);
-    urdf_string = robot_description_;
-  }
-  
-  if (urdf_string.empty()) {
-    RCLCPP_ERROR(get_logger(), "Robot description is empty");
-    return false;
-  }
-  
-  // Parse URDF
-  urdf::Model model;
-  if (!model.initString(urdf_string)) {
-    RCLCPP_ERROR(get_logger(), "Failed to parse robot description URDF");
-    return false;
-  }
-  
-  joint_limits_.resize(params_.joints.size());
-  
-  // Load official UR5e limits from URDF
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    auto joint = model.getJoint(params_.joints[i]);
-    if (!joint) {
-      RCLCPP_ERROR(get_logger(), 
-        "Joint '%s' not found in robot description URDF", params_.joints[i].c_str());
-      return false;
-    }
-    
-    if (!joint->limits) {
-      RCLCPP_ERROR(get_logger(), 
-        "No limits defined for joint '%s' in URDF", params_.joints[i].c_str());
-      return false;
-    }
-    
-    // Extract official UR5e limits
-    joint_limits_[i].min_position = joint->limits->lower;
-    joint_limits_[i].max_position = joint->limits->upper;
-    joint_limits_[i].max_velocity = joint->limits->velocity;
-    
-    // UR5e has no published acceleration limits (confirmed by official ur_description)
-    // Acceleration smoothing is handled by scaled_joint_trajectory_controller
-    
-    RCLCPP_INFO(get_logger(),
-      "Joint %s limits from official UR5e URDF: pos[%.3f, %.3f], vel[%.3f]",
-      params_.joints[i].c_str(),
-      joint_limits_[i].min_position,
-      joint_limits_[i].max_position, 
-      joint_limits_[i].max_velocity);
-  }
-  
-  RCLCPP_INFO(get_logger(), "Successfully loaded joint limits from official UR5e robot description");
-  return true;
-}
-
-// Fallback method with temporary hardcoded limits
-bool AdmittanceNode::loadJointLimitsFromParameters()
-{
-  joint_limits_.resize(params_.joints.size());
-  
-  // Fallback hardcoded UR5e limits
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    // Default UR5e limits
-    joint_limits_[i].min_position = -6.283;  // ±360°
-    joint_limits_[i].max_position = 6.283;
-    joint_limits_[i].max_velocity = 3.14;    // 180°/s
-    
-    // Special case for elbow joint (limited to ±180° for planning)
-    if (params_.joints[i] == "elbow_joint") {
-      joint_limits_[i].min_position = -3.142;  // ±180°
-      joint_limits_[i].max_position = 3.142;
-    }
-  }
-  
-  RCLCPP_WARN(get_logger(), "Using fallback joint limits - robot description not available");
-  return true;
-}
 
 bool AdmittanceNode::loadKinematics()
 {
@@ -345,15 +249,6 @@ bool AdmittanceNode::loadKinematics()
       return false;
     }
 
-    // Load joint limits from robot_description topic first, fallback to hardcoded
-    if (!loadJointLimitsFromURDF()) {
-      RCLCPP_WARN(get_logger(), "Could not load joint limits from robot_description, using fallback");
-      if (!loadJointLimitsFromParameters()) {
-        RCLCPP_ERROR(get_logger(), "Failed to load joint limits");
-        return false;
-      }
-    }
-
     // Create inverse kinematics velocity solver with WDLS (Weighted Damped Least Squares)
     const double eps = 0.00001;  // Precision threshold
     const int maxiter = 150;     // Maximum iterations
@@ -363,8 +258,7 @@ bool AdmittanceNode::loadKinematics()
     const double lambda = 0.01;  // Damping factor for singularity robustness
     ik_vel_solver_->setLambda(lambda);
     
-    // Note: KDL WDLS solver doesn't have built-in joint limit enforcement
-    // Joint limits are enforced in our applyJointLimits() function
+    // Note: No joint limits enforced - pure mathematical framework
 
     kinematics_ready_ = true;
     
@@ -407,6 +301,38 @@ bool AdmittanceNode::waitForTransforms()
   RCLCPP_INFO(get_logger(), "All required transforms are available");
   return true;
 }
+
+bool AdmittanceNode::initializeDesiredPose()
+{
+  if (desired_pose_initialized_.load()) {
+    return true;  // Already initialized
+  }
+  
+  // Get current robot pose
+  Eigen::Isometry3d current_pose;
+  if (!getCurrentEndEffectorPose(current_pose)) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, 
+      "Cannot initialize desired pose - current pose not available");
+    return false;
+  }
+  
+  // Set desired pose to current pose (zero error)
+  {
+    std::lock_guard<std::mutex> lock(desired_pose_mutex_);
+    X_base_tip_desired_ = current_pose;
+  }
+  
+  desired_pose_initialized_.store(true);
+  
+  RCLCPP_INFO(get_logger(), "Desired pose initialized to current robot pose");
+  RCLCPP_INFO(get_logger(), "Position: [%.3f, %.3f, %.3f]", 
+    current_pose.translation().x(), 
+    current_pose.translation().y(), 
+    current_pose.translation().z());
+  
+  return true;
+}
+
 
 }  // namespace ur_admittance_controller
 

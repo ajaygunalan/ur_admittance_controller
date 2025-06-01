@@ -5,37 +5,6 @@
 namespace ur_admittance_controller {
 
 
-// Update force/torque sensor data with filtering and transform
-bool AdmittanceNode::updateSensorData()
-{
-  Vector6d raw_wrench = Vector6d::Zero();
-  
-  // Get current wrench from callback data
-  {
-    std::lock_guard<std::mutex> lock(wrench_mutex_);
-    raw_wrench(0) = current_wrench_.wrench.force.x;
-    raw_wrench(1) = current_wrench_.wrench.force.y;
-    raw_wrench(2) = current_wrench_.wrench.force.z;
-    raw_wrench(3) = current_wrench_.wrench.torque.x;
-    raw_wrench(4) = current_wrench_.wrench.torque.y;
-    raw_wrench(5) = current_wrench_.wrench.torque.z;
-  }
-  
-  // Transform to base frame using direct tf2 lookup
-  F_sensor_base_ = transformWrench(raw_wrench);
-  
-  // Apply EMA filter - validation now handled by generate_parameter_library
-  wrench_filtered_ = params_.admittance.filter_coefficient * F_sensor_base_ + 
-    (1.0 - params_.admittance.filter_coefficient) * wrench_filtered_;
-  
-  if (wrench_filtered_.hasNaN()) {
-    RCLCPP_ERROR(get_logger(), "NaN detected in filtered wrench");
-    return false;
-  }
-  
-  return checkDeadband();
-}
-
 bool AdmittanceNode::updateTransforms()
 {
   // Get current end-effector pose using direct tf2 lookup

@@ -57,8 +57,6 @@ private:
   // Initialize components
   bool initializeTransforms();
   bool loadKinematics();
-  bool loadJointLimitsFromURDF();
-  bool loadJointLimitsFromParameters();  // Fallback method
   bool initializeDesiredPose();  // Set desired pose to current robot pose
   
   // Core algorithm functions (from admittance_computations.cpp)
@@ -66,12 +64,9 @@ private:
   bool computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
   Vector6d computePoseError_tip_base();
   void checkParameterUpdates();
-  void updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes = true);
-  void updateMassMatrix();
-  void updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes = true);
-  void updateStiffnessMatrix();
-  void updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes = true);
-  void updateDampingMatrix();
+  void updateMassMatrix(bool log_changes = false);
+  void updateStiffnessMatrix(bool log_changes = false);
+  void updateDampingMatrix(bool log_changes = false);
   bool convertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
   bool handleDriftReset();
   bool publishPoseError();
@@ -83,7 +78,6 @@ private:
   bool safeStop();
   void publishMonitoringData();
   void publishCartesianVelocity();
-  bool updateSensorData();
   bool waitForTransforms();
   bool validatePoseErrorSafety(const Vector6d& pose_error);
   
@@ -159,7 +153,6 @@ private:
   Vector6d error_tip_base_;
   Vector6d velocity_error_;
   Vector6d wrench_filtered_;
-  std::vector<JointLimits> joint_limits_;
   
   
   // Pre-allocated messages for performance

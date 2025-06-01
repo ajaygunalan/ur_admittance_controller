@@ -325,17 +325,17 @@ void AdmittanceNode::checkParameterUpdates()
     
     // Only update matrices that actually changed
     if (mass_changed) {
-      updateMassMatrix(params_, true);
-      updateDampingMatrix(params_, true); // Damping depends on mass
+      updateMassMatrix(true);
+      updateDampingMatrix(true); // Damping depends on mass
       RCLCPP_INFO(get_logger(), "Mass parameters updated");
     }
     if (stiffness_changed) {
-      updateStiffnessMatrix(params_, true);
-      if (!mass_changed) updateDampingMatrix(params_, true); // Damping depends on stiffness
+      updateStiffnessMatrix(true);
+      if (!mass_changed) updateDampingMatrix(true); // Damping depends on stiffness
       RCLCPP_INFO(get_logger(), "Stiffness parameters updated");
     }
     if (damping_changed && !mass_changed && !stiffness_changed) {
-      updateDampingMatrix(params_, true);
+      updateDampingMatrix(true);
       RCLCPP_INFO(get_logger(), "Damping parameters updated");
     }
     
@@ -348,17 +348,7 @@ void AdmittanceNode::checkParameterUpdates()
         stiffness_changed ? "✓" : "○", 
         damping_changed ? "✓" : "○");
         
-      // Log current parameter values for debugging
-      RCLCPP_DEBUG(get_logger(), 
-        "Current admittance parameters - Mass:[%.2f,%.2f,%.2f,%.3f,%.3f,%.3f] "
-        "Stiffness:[%.1f,%.1f,%.1f,%.1f,%.1f,%.1f] "
-        "Damping:[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]",
-        params_.admittance.mass[0], params_.admittance.mass[1], params_.admittance.mass[2],
-        params_.admittance.mass[3], params_.admittance.mass[4], params_.admittance.mass[5],
-        params_.admittance.stiffness[0], params_.admittance.stiffness[1], params_.admittance.stiffness[2],
-        params_.admittance.stiffness[3], params_.admittance.stiffness[4], params_.admittance.stiffness[5],
-        params_.admittance.damping_ratio[0], params_.admittance.damping_ratio[1], params_.admittance.damping_ratio[2],
-        params_.admittance.damping_ratio[3], params_.admittance.damping_ratio[4], params_.admittance.damping_ratio[5]);
+      RCLCPP_DEBUG(get_logger(), "Admittance parameters updated");
     }
   }
   // If try_get_params returns false, continue with existing parameters (non-blocking)
@@ -366,11 +356,11 @@ void AdmittanceNode::checkParameterUpdates()
 
 
 
-void AdmittanceNode::updateMassMatrix(const ur_admittance_controller::Params& params, bool log_changes)
+void AdmittanceNode::updateMassMatrix(bool log_changes)
 {
   std::array<double, 6> mass_array;
   for (size_t i = 0; i < 6; ++i) {
-    mass_array[i] = params.admittance.mass[i];
+    mass_array[i] = params_.admittance.mass[i];
     mass_(i, i) = mass_array[i];
   }
   
@@ -392,15 +382,10 @@ void AdmittanceNode::updateMassMatrix(const ur_admittance_controller::Params& pa
   }
 }
 
-void AdmittanceNode::updateMassMatrix()
-{
-  updateMassMatrix(params_, false);
-}
-
-void AdmittanceNode::updateStiffnessMatrix(const ur_admittance_controller::Params& params, bool log_changes)
+void AdmittanceNode::updateStiffnessMatrix(bool log_changes)
 {
   for (size_t i = 0; i < 6; ++i) {
-    stiffness_(i, i) = params.admittance.stiffness[i];
+    stiffness_(i, i) = params_.admittance.stiffness[i];
   }
   
   if (log_changes) {
@@ -408,19 +393,13 @@ void AdmittanceNode::updateStiffnessMatrix(const ur_admittance_controller::Param
   }
 }
 
-void AdmittanceNode::updateStiffnessMatrix()
+void AdmittanceNode::updateDampingMatrix(bool log_changes)
 {
-  updateStiffnessMatrix(params_, false);
-}
-
-void AdmittanceNode::updateDampingMatrix(const ur_admittance_controller::Params& params, bool log_changes)
-{
-  // Use the robust damping computation from matrix utilities
   std::array<double, 6> mass_array, stiffness_array, damping_ratio_array;
   for (size_t i = 0; i < 6; ++i) {
-    mass_array[i] = params.admittance.mass[i];
-    stiffness_array[i] = params.admittance.stiffness[i];
-    damping_ratio_array[i] = params.admittance.damping_ratio[i];
+    mass_array[i] = params_.admittance.mass[i];
+    stiffness_array[i] = params_.admittance.stiffness[i];
+    damping_ratio_array[i] = params_.admittance.damping_ratio[i];
   }
   
   damping_ = computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
@@ -429,11 +408,6 @@ void AdmittanceNode::updateDampingMatrix(const ur_admittance_controller::Params&
     RCLCPP_INFO(get_logger(), 
       "Damping parameters updated using robust matrix utilities (with virtual stiffness blending)");
   }
-}
-
-void AdmittanceNode::updateDampingMatrix()
-{
-  updateDampingMatrix(params_, false);
 }
 
 
@@ -573,31 +547,14 @@ bool AdmittanceNode::validatePoseErrorSafety(const Vector6d& pose_error)
   double orientation_error_norm = pose_error.tail<3>().norm();
   
   if (position_error_norm > MAX_SAFE_POSITION_ERROR) {
-    RCLCPP_ERROR(get_logger(), 
-      "SAFETY VIOLATION: Desired pose is too far from current pose!");
-    RCLCPP_ERROR(get_logger(), 
-      "Position error: %.3f m (max safe: %.3f m)", 
+    RCLCPP_ERROR(get_logger(), "SAFETY: Position error %.3f m > %.3f m limit", 
       position_error_norm, MAX_SAFE_POSITION_ERROR);
-    RCLCPP_ERROR(get_logger(), 
-      "This would cause a sudden jump. Please set a closer desired pose.");
-    RCLCPP_ERROR(get_logger(), 
-      "Current position error: [%.3f, %.3f, %.3f] m", 
-      pose_error(0), pose_error(1), pose_error(2));
     return false;
   }
   
   if (orientation_error_norm > MAX_SAFE_ORIENTATION_ERROR) {
-    RCLCPP_ERROR(get_logger(), 
-      "SAFETY VIOLATION: Desired orientation is too far from current orientation!");
-    RCLCPP_ERROR(get_logger(), 
-      "Orientation error: %.3f rad (%.1f°) (max safe: %.3f rad / %.1f°)", 
-      orientation_error_norm, orientation_error_norm * 180.0 / M_PI,
-      MAX_SAFE_ORIENTATION_ERROR, MAX_SAFE_ORIENTATION_ERROR * 180.0 / M_PI);
-    RCLCPP_ERROR(get_logger(), 
-      "This would cause a sudden rotational jump. Please set a closer desired orientation.");
-    RCLCPP_ERROR(get_logger(), 
-      "Current orientation error: [%.3f, %.3f, %.3f] rad", 
-      pose_error(3), pose_error(4), pose_error(5));
+    RCLCPP_ERROR(get_logger(), "SAFETY: Orientation error %.3f rad (%.1f°) > %.3f rad limit", 
+      orientation_error_norm, orientation_error_norm * 180.0 / M_PI, MAX_SAFE_ORIENTATION_ERROR);
     return false;
   }
   
