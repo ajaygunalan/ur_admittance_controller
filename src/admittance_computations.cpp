@@ -76,17 +76,6 @@ inline Matrix6d computeMassInverse(const std::array<double, 6>& mass)
     return mass_inverse;
 }
 
-// Helper function to compute acceleration from admittance equation
-inline Vector6d computeAdmittanceAcceleration(
-    const Matrix6d& mass_inverse,
-    const Vector6d& external_wrench, 
-    const Matrix6d& damping,
-    const Vector6d& velocity,
-    const Matrix6d& stiffness,
-    const Vector6d& pose_error)
-{
-    return mass_inverse * (external_wrench - damping * velocity - stiffness * pose_error);
-}
 
 }  // namespace
 
@@ -146,12 +135,12 @@ bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
   return true;
 }
 
-// Compute admittance control using RK4 integration
+// Compute admittance control using forward Euler integration
 //
 // MATHEMATICAL FRAMEWORK:
 // 1. Admittance equation: M·a + D·v + K·x = F_external  
 // 2. Solve for acceleration: a = M⁻¹ × (F_external - D·v - K·x)
-// 3. Integrate acceleration: v_new = v_old + ∫a dt using RK4
+// 3. Integrate acceleration: v_new = v_old + a × dt
 //
 bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {
@@ -175,47 +164,15 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
     return false;
   }
   
-  // RK4 Integration: Integrate acceleration to get new velocity
-  Vector6d current_velocity = desired_vel_;
+  // Compute acceleration from admittance equation: a = M⁻¹ × (F_external - D·v - K·x)
+  Vector6d acceleration = mass_inverse_ * (wrench_filtered_ - damping_ * desired_vel_ - stiffness_ * error_tip_base_);
   
-  // k1: acceleration at current time with current velocity
-  Vector6d accel_k1 = computeAdmittanceAcceleration(
-      mass_inverse_, wrench_filtered_, damping_, current_velocity, stiffness_, error_tip_base_);
-  
-  if (accel_k1.hasNaN()) {
+  if (acceleration.hasNaN()) {
     return false;
   }
   
-  // k2: acceleration at midpoint time with velocity estimated using k1
-  Vector6d velocity_mid1 = current_velocity + accel_k1 * (dt / 2.0);
-  Vector6d accel_k2 = computeAdmittanceAcceleration(
-      mass_inverse_, wrench_filtered_, damping_, velocity_mid1, stiffness_, error_tip_base_);
-  
-  if (accel_k2.hasNaN()) {
-    return false;
-  }
-  
-  // k3: acceleration at midpoint time with velocity estimated using k2
-  Vector6d velocity_mid2 = current_velocity + accel_k2 * (dt / 2.0);
-  Vector6d accel_k3 = computeAdmittanceAcceleration(
-      mass_inverse_, wrench_filtered_, damping_, velocity_mid2, stiffness_, error_tip_base_);
-  
-  if (accel_k3.hasNaN()) {
-    return false;
-  }
-  
-  // k4: acceleration at end time with velocity estimated using k3
-  Vector6d velocity_end = current_velocity + accel_k3 * dt;
-  Vector6d accel_k4 = computeAdmittanceAcceleration(
-      mass_inverse_, wrench_filtered_, damping_, velocity_end, stiffness_, error_tip_base_);
-  
-  if (accel_k4.hasNaN()) {
-    return false;
-  }
-  
-  // Final RK4 integration: v_new = v_old + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
-  // where k1,k2,k3,k4 are acceleration estimates at different points
-  desired_vel_ = current_velocity + (dt / 6.0) * (accel_k1 + 2.0 * accel_k2 + 2.0 * accel_k3 + accel_k4);
+  // Forward Euler integration: v_new = v_old + a × dt
+  desired_vel_ = desired_vel_ + acceleration * dt;
   
   if (desired_vel_.hasNaN()) {
     return false;
