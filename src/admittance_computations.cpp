@@ -12,64 +12,13 @@ using namespace constants;
 // Inlined matrix utility functions
 namespace {
 
-// Helper function to convert parameter vectors to arrays
-inline std::array<double, 6> paramVectorToArray(const std::vector<double>& param_vec) {
-  std::array<double, 6> result;
-  for (size_t i = 0; i < 6; ++i) {
-    result[i] = param_vec[i];
-  }
-  return result;
-}
+// Removed unnecessary paramVectorToArray helper - using Eigen::Map directly
 
 
 
-inline Matrix6d computeDampingMatrix(
-    const std::array<double, 6>& mass,
-    const std::array<double, 6>& stiffness, 
-    const std::array<double, 6>& damping_ratio)
-{
-    using namespace constants;
-    
-    Matrix6d damping = Matrix6d::Zero();
-    
-    for (size_t i = 0; i < 6; ++i) {
-        // Use virtual stiffness for low/zero stiffness values
-        double effective_stiffness = (stiffness[i] <= 0.0) ? VIRTUAL_STIFFNESS : stiffness[i];
-        
-        // Standard critical damping formula: D = 2*ζ*√(M*K)
-        damping(i, i) = 2.0 * damping_ratio[i] * std::sqrt(mass[i] * effective_stiffness);
-    }
-    
-    return damping;
-}
+// Removed computeDampingMatrix helper - logic moved directly into updateDampingMatrix()
 
-inline Matrix6d computeMassInverse(const std::array<double, 6>& mass)
-{
-    using namespace constants;
-    
-    Matrix6d mass_matrix = Matrix6d::Zero();
-    Matrix6d mass_inverse = Matrix6d::Zero();
-    
-    for (size_t i = 0; i < 6; ++i) {
-        mass_matrix(i, i) = mass[i];
-    }
-    
-    const double max_mass = mass_matrix.diagonal().maxCoeff();
-    const double min_mass = mass_matrix.diagonal().minCoeff();
-    const double condition_number = max_mass / min_mass;
-    
-    if (condition_number > MAX_CONDITION_NUMBER || min_mass <= 0.0) {
-        for (size_t i = 0; i < 6; ++i) {
-            mass_matrix(i, i) += REGULARIZATION_FACTOR;
-        }
-    }
-    
-    for (size_t i = 0; i < 6; ++i) {
-        mass_inverse(i, i) = 1.0 / mass_matrix(i, i);
-    }
-    
-    return mass_inverse;
-}
+// Removed over-engineered mass inversion - now done directly with Eigen
 
 
 }  // namespace
@@ -223,19 +172,26 @@ rcl_interfaces::msg::SetParametersResult AdmittanceNode::onParameterChange(
 
 void AdmittanceNode::updateMassMatrix()
 {
-  std::array<double, 6> mass_array = paramVectorToArray(params_.admittance.mass);
-  mass_.diagonal() = Eigen::Map<const Eigen::VectorXd>(mass_array.data(), 6);
-  mass_inverse_ = computeMassInverse(mass_array);
+  // Build diagonal mass matrix and compute inverse efficiently using Eigen
+  mass_.diagonal() = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6);
+  mass_inverse_.diagonal() = mass_.diagonal().cwiseInverse();
 }
 
 
 void AdmittanceNode::updateDampingMatrix()
 {
-  std::array<double, 6> mass_array = paramVectorToArray(params_.admittance.mass);
-  std::array<double, 6> stiffness_array = paramVectorToArray(params_.admittance.stiffness);
-  std::array<double, 6> damping_ratio_array = paramVectorToArray(params_.admittance.damping_ratio);
+  using namespace constants;
   
-  damping_ = computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
+  // Compute damping matrix using direct parameter access
+  for (size_t i = 0; i < 6; ++i) {
+    // Use virtual stiffness for low/zero stiffness values  
+    double effective_stiffness = (params_.admittance.stiffness[i] <= 0.0) ? 
+                                 VIRTUAL_STIFFNESS : params_.admittance.stiffness[i];
+    
+    // Standard critical damping formula: D = 2*ζ*√(M*K)
+    damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
+                     std::sqrt(params_.admittance.mass[i] * effective_stiffness);
+  }
 }
 
 
