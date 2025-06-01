@@ -80,13 +80,14 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   trajectory_msg_.points.resize(1);
   trajectory_msg_.points[0].positions.resize(params_.joints.size());
   trajectory_msg_.points[0].velocities.resize(params_.joints.size());
-  // Match control loop timing: 500Hz = 2ms period
-  trajectory_msg_.points[0].time_from_start = rclcpp::Duration::from_seconds(0.002);
+  // Match control loop timing to optimized rate
+  trajectory_msg_.points[0].time_from_start = rclcpp::Duration::from_seconds(constants::MIN_CONTROL_PERIOD_SEC);
   
   // No more thread communication overhead
   
-  // Start unified control thread - maximum speed, no artificial rate limiting
-  RCLCPP_INFO(get_logger(), "Starting unified control thread at MAXIMUM SPEED");
+  // Start unified control thread - optimized for controller_manager rate
+  RCLCPP_INFO(get_logger(), "Starting unified control thread at %.0fHz (optimized for controller_manager)", 
+    constants::TARGET_CONTROL_RATE_HZ);
   running_.store(true);
   control_thread_ = std::thread(&AdmittanceNode::controlThreadFunction, this);
     
@@ -108,7 +109,8 @@ AdmittanceNode::~AdmittanceNode()
 
 void AdmittanceNode::controlThreadFunction()
 {
-  RCLCPP_INFO(get_logger(), "Unified control thread running at MAXIMUM SPEED (no rate limiting)");
+  RCLCPP_INFO(get_logger(), "Unified control thread running at %.0fHz (matched to controller_manager)", 
+    constants::TARGET_CONTROL_RATE_HZ);
   
   auto last_time = std::chrono::steady_clock::now();
   
@@ -117,8 +119,8 @@ void AdmittanceNode::controlThreadFunction()
     auto period_ns = current_time - last_time;
     double dt = period_ns.count() * 1e-9;  // Convert to seconds
     
-    // Run at maximum speed, but skip if time step is too small (prevent excessive CPU usage)
-    if (dt >= 0.0001) {  // Min 0.1ms = 10kHz max theoretical rate
+    // Run at 500Hz to match controller_manager rate (prevent wasted CPU cycles)
+    if (dt >= constants::MIN_CONTROL_PERIOD_SEC) {  // 2ms = 500Hz optimal rate
       if (unifiedControlStep(dt)) {
         last_time = current_time;
       }
