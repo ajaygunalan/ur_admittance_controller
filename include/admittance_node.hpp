@@ -151,14 +151,12 @@ private:
   
   // Additional algorithm variables
   Vector6d error_tip_base_;
-  Vector6d velocity_error_;
   Vector6d wrench_filtered_;
   
   
   // Pre-allocated messages for performance
   trajectory_msgs::msg::JointTrajectory trajectory_msg_;
   geometry_msgs::msg::Twist cart_vel_msg_;
-  geometry_msgs::msg::Twist pose_error_msg_;
   
   
   // Direct KDL kinematics
@@ -169,9 +167,7 @@ private:
   
   
   
-  // Drift reset
-  bool drift_reset_requested_ = false;
-  std::chrono::steady_clock::time_point last_drift_reset_time_;
+  // Drift reset (unused variables removed)
 };
 
 }  // namespace ur_admittance_controller

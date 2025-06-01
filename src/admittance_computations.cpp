@@ -12,6 +12,28 @@ using namespace constants;
 // Inlined matrix utility functions
 namespace {
 
+// Helper function to convert parameter vectors to arrays
+inline std::array<double, 6> paramVectorToArray(const std::vector<double>& param_vec) {
+  std::array<double, 6> result;
+  for (size_t i = 0; i < 6; ++i) {
+    result[i] = param_vec[i];
+  }
+  return result;
+}
+
+// Template function for diagonal matrix assignment
+template<typename MatrixType, typename ArrayType>
+inline void assignDiagonalMatrix(MatrixType& matrix, const ArrayType& array) {
+  for (size_t i = 0; i < 6; ++i) {
+    matrix(i, i) = array[i];
+  }
+}
+
+// Validate Vector6d for NaN values
+inline bool validateVector6d(const Vector6d& vec) {
+  return !vec.hasNaN();
+}
+
 inline Matrix6d computeDampingMatrix(
     const std::array<double, 6>& mass,
     const std::array<double, 6>& stiffness, 
@@ -146,7 +168,7 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
 {
   // Compute pose error between desired and current poses
   error_tip_base_ = computePoseError_tip_base();
-  if (error_tip_base_.hasNaN()) {
+  if (!validateVector6d(error_tip_base_)) {
     return false;
   }
   
@@ -167,14 +189,14 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
   // Compute acceleration from admittance equation: a = M⁻¹ × (F_external - D·v - K·x)
   Vector6d acceleration = mass_inverse_ * (wrench_filtered_ - damping_ * desired_vel_ - stiffness_ * error_tip_base_);
   
-  if (acceleration.hasNaN()) {
+  if (!validateVector6d(acceleration)) {
     return false;
   }
   
   // Forward Euler integration: v_new = v_old + a × dt
   desired_vel_ = desired_vel_ + acceleration * dt;
   
-  if (desired_vel_.hasNaN()) {
+  if (!validateVector6d(desired_vel_)) {
     return false;
   }
   
@@ -315,11 +337,8 @@ void AdmittanceNode::checkParameterUpdates()
 
 void AdmittanceNode::updateMassMatrix(bool log_changes)
 {
-  std::array<double, 6> mass_array;
-  for (size_t i = 0; i < 6; ++i) {
-    mass_array[i] = params_.admittance.mass[i];
-    mass_(i, i) = mass_array[i];
-  }
+  std::array<double, 6> mass_array = paramVectorToArray(params_.admittance.mass);
+  assignDiagonalMatrix(mass_, mass_array);
   
   mass_inverse_ = computeMassInverse(mass_array);
   
@@ -341,9 +360,8 @@ void AdmittanceNode::updateMassMatrix(bool log_changes)
 
 void AdmittanceNode::updateStiffnessMatrix(bool log_changes)
 {
-  for (size_t i = 0; i < 6; ++i) {
-    stiffness_(i, i) = params_.admittance.stiffness[i];
-  }
+  std::array<double, 6> stiffness_array = paramVectorToArray(params_.admittance.stiffness);
+  assignDiagonalMatrix(stiffness_, stiffness_array);
   
   if (log_changes) {
     RCLCPP_INFO(get_logger(), "Stiffness parameters updated");
@@ -352,12 +370,9 @@ void AdmittanceNode::updateStiffnessMatrix(bool log_changes)
 
 void AdmittanceNode::updateDampingMatrix(bool log_changes)
 {
-  std::array<double, 6> mass_array, stiffness_array, damping_ratio_array;
-  for (size_t i = 0; i < 6; ++i) {
-    mass_array[i] = params_.admittance.mass[i];
-    stiffness_array[i] = params_.admittance.stiffness[i];
-    damping_ratio_array[i] = params_.admittance.damping_ratio[i];
-  }
+  std::array<double, 6> mass_array = paramVectorToArray(params_.admittance.mass);
+  std::array<double, 6> stiffness_array = paramVectorToArray(params_.admittance.stiffness);
+  std::array<double, 6> damping_ratio_array = paramVectorToArray(params_.admittance.damping_ratio);
   
   damping_ = computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
   
