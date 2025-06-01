@@ -147,26 +147,7 @@ Vector6d AdmittanceNode::computePoseError_tip_base()
 
 
 
-// Parameter callback implementation
-rcl_interfaces::msg::SetParametersResult AdmittanceNode::onParameterChange(
-  const std::vector<rclcpp::Parameter> & /*parameters*/) 
-{
-  // Reload parameters from generate_parameter_library
-  params_ = param_listener_->get_params();
-  
-  // Update matrices with new parameters
-  updateMassMatrix();
-  updateDampingMatrix();
-  
-  // Update stiffness matrix (diagonal assignment)
-  for (size_t i = 0; i < 6; ++i) {
-    stiffness_(i, i) = params_.admittance.stiffness[i];
-  }
-  
-  rcl_interfaces::msg::SetParametersResult result;
-  result.successful = true;
-  return result;
-}
+// Removed redundant manual parameter callback - using auto-generated parameter handling
 
 
 
@@ -313,6 +294,17 @@ bool AdmittanceNode::unifiedControlStep(double dt)
   if (!desired_pose_initialized_.load()) {
     if (!initializeDesiredPose()) {
       return false;
+    }
+  }
+  
+  // 2.5. Check for parameter updates (auto-generated parameter library)
+  if (param_listener_->is_old(params_)) {
+    params_ = param_listener_->get_params();
+    updateMassMatrix();
+    updateDampingMatrix();
+    // Update stiffness matrix
+    for (size_t i = 0; i < 6; ++i) {
+      stiffness_(i, i) = params_.admittance.stiffness[i];
     }
   }
   

@@ -75,9 +75,7 @@ private:
   void updateMassMatrix();
   void updateDampingMatrix();
   
-  // Parameter callback system
-  rcl_interfaces::msg::SetParametersResult onParameterChange(
-    const std::vector<rclcpp::Parameter> & parameters);
+  // Parameters handled automatically by generate_parameter_library
   bool convertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
   bool handleDriftReset();
   // Helper functions
@@ -131,8 +129,7 @@ private:
   std::atomic<bool> desired_pose_initialized_{false};
   std::mutex desired_pose_mutex_;
   
-  // Parameter callback handle
-  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_;
+  // Parameter callback removed - using auto-generated parameter handling
   
   // Control variables (to be ported from existing controller)
   Vector6d F_sensor_base_;
