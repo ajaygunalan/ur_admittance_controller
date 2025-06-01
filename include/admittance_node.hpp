@@ -83,11 +83,8 @@ private:
   // Helper functions
   bool checkDeadband();
   
-  // New node computation methods
-  void computationTimerCallback();
-  bool computeAdmittanceControlInNode(const rclcpp::Duration& period, 
-                                     std::vector<double>& joint_velocities_out);
-  void integrateAndPublish();
+  // Unified control methods
+  bool unifiedControlStep(double dt);
   bool validatePoseErrorSafety(const Vector6d& pose_error);
   
   // Direct transform functions (replacing cache system)
@@ -104,17 +101,10 @@ private:
   
   
   
-  // Thread-based control loop
+  // Unified control thread - maximum speed, no rate limiting
   std::thread control_thread_;
   std::atomic<bool> running_{false};
   void controlThreadFunction();
-  
-  // Node-thread communication
-  ComputedControl computed_control_;
-  std::mutex control_data_mutex_;
-  
-  // Computation timer (replaces computation in thread)
-  rclcpp::TimerBase::SharedPtr computation_timer_;
   
   // Parameters (reuse existing param structure)
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;

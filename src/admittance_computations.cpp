@@ -33,27 +33,11 @@ inline Matrix6d computeDampingMatrix(
     Matrix6d damping = Matrix6d::Zero();
     
     for (size_t i = 0; i < 6; ++i) {
-        const double mass_value = mass[i];
-        const double stiffness_value = stiffness[i];
-        const double damping_ratio_value = damping_ratio[i];
+        // Use virtual stiffness for low/zero stiffness values
+        double effective_stiffness = (stiffness[i] <= 0.0) ? VIRTUAL_STIFFNESS : stiffness[i];
         
-        if (stiffness_value <= 0.0) {
-            damping(i, i) = 2.0 * damping_ratio_value * 
-                           std::sqrt(mass_value * VIRTUAL_STIFFNESS);
-        } 
-        else if (stiffness_value >= STIFFNESS_BLEND_THRESHOLD) {
-            damping(i, i) = 2.0 * damping_ratio_value * 
-                           std::sqrt(mass_value * stiffness_value);
-        }
-        else {
-            const double blend_factor = stiffness_value / STIFFNESS_BLEND_THRESHOLD;
-            const double admittance_damping = 2.0 * damping_ratio_value * 
-                                             std::sqrt(mass_value * VIRTUAL_STIFFNESS);
-            const double impedance_damping = 2.0 * damping_ratio_value * 
-                                            std::sqrt(mass_value * stiffness_value);
-            damping(i, i) = (1.0 - blend_factor) * admittance_damping + 
-                           blend_factor * impedance_damping;
-        }
+        // Standard critical damping formula: D = 2*ζ*√(M*K)
+        damping(i, i) = 2.0 * damping_ratio[i] * std::sqrt(mass[i] * effective_stiffness);
     }
     
     return damping;
@@ -356,64 +340,73 @@ bool AdmittanceNode::validatePoseErrorSafety(const Vector6d& pose_error)
   return true;
 }
 
-// New method: Move all computation logic from computeAdmittanceStep to node
-bool AdmittanceNode::computeAdmittanceControlInNode(
-    const rclcpp::Duration& period, 
-    std::vector<double>& joint_velocities_out)
+// Unified control step - everything in one blazing-fast function
+bool AdmittanceNode::unifiedControlStep(double dt)
 {
-  // ALL THE EXISTING LOGIC FROM computeAdmittanceStep() MOVES HERE:
-  
   // 1. Lazy kinematics initialization
   if (!kinematics_ready_) {
     if (robot_description_received_.load()) {
-      loadKinematics();  // Attempt initialization, ignore return value
+      loadKinematics();
     }
     if (!kinematics_ready_) {
-      return false;  // Still not ready, skip this cycle
+      return false;
     }
   }
   
   // 2. Initialize desired pose to current robot pose (only once)
   if (!desired_pose_initialized_.load()) {
     if (!initializeDesiredPose()) {
-      return false;  // Desired pose not ready yet
+      return false;
     }
   }
   
-  // 3. Parameter updates now handled via callback system
-  
-  // 4. Update transform caches if needed
+  // 3. Update current pose
   if (!getCurrentEndEffectorPose(X_base_tip_current_)) {
     return false;
   }
   
-  // 5. Check if forces are within deadband
+  // 4. Check deadband
   if (!checkDeadband()) {
-    // Zero velocity when in deadband
     V_base_tip_base_.setZero();
     desired_vel_.setZero();
-    joint_velocities_out.assign(params_.joints.size(), 0.0);
-    return true;
+    // Zero velocities - robot stops
+    for (size_t i = 0; i < joint_velocities_.size(); ++i) {
+      joint_velocities_[i] = 0.0;
+    }
+  } else {
+    // 5. Compute admittance control
+    Vector6d cmd_vel;
+    rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
+    if (computeAdmittanceControl(period, cmd_vel)) {
+      // 6. Convert to joint space
+      if (convertToJointSpace(cmd_vel, period)) {
+        V_base_tip_base_ = cmd_vel;
+      } else {
+        return false;
+      }
+    } else {
+      return false;
+    }
   }
   
-  // 6. Compute admittance control law
-  Vector6d cmd_vel;
-  if (!computeAdmittanceControl(period, cmd_vel)) {
-    RCLCPP_ERROR(get_logger(), "Failed to compute admittance control");
-    return false;
+  // 7. Integrate joint positions (direct integration, no mutex overhead)
+  {
+    std::lock_guard<std::mutex> lock(joint_state_mutex_);
+    for (size_t i = 0; i < params_.joints.size() && 
+                       i < joint_velocities_.size() && 
+                       i < joint_positions_.size(); ++i) {
+      joint_positions_[i] += joint_velocities_[i] * dt;
+    }
   }
   
-  // 7. Store computed velocity
-  V_base_tip_base_ = cmd_vel;
-  
-  // 8. Convert Cartesian velocity to joint space
-  if (!convertToJointSpace(cmd_vel, period)) {
-    RCLCPP_ERROR(get_logger(), "Failed to convert to joint space");
-    return false;
+  // 8. Publish trajectory command
+  trajectory_msg_.header.stamp = now();
+  {
+    std::lock_guard<std::mutex> lock(joint_state_mutex_);
+    trajectory_msg_.points[0].positions = joint_positions_;
   }
-  
-  // 9. Output joint velocities (instead of storing in member variables)
-  joint_velocities_out = joint_velocities_;
+  trajectory_msg_.points[0].velocities = joint_velocities_;
+  trajectory_pub_->publish(trajectory_msg_);
   
   return true;
 }
