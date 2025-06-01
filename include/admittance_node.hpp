@@ -55,7 +55,6 @@ private:
   
   
   // Initialize components
-  bool initializeTransforms();
   bool loadKinematics();
   bool initializeDesiredPose();  // Set desired pose to current robot pose
   
@@ -77,7 +76,6 @@ private:
   bool safeStop();
   void publishMonitoringData();
   void publishCartesianVelocity();
-  bool waitForTransforms();
   bool validatePoseErrorSafety(const Vector6d& pose_error);
   
   // Direct transform functions (replacing cache system)
