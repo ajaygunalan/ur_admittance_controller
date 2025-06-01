@@ -212,7 +212,7 @@ void AdmittanceNode::controlLoop()
   trajectory_pub_->publish(trajectory_msg_);
   
   // Publish monitoring data
-  publishMonitoringData();
+  publishCartesianVelocity();
 }
 
 

@@ -74,7 +74,6 @@ private:
   bool updateTransforms();
   bool checkDeadband();
   bool safeStop();
-  void publishMonitoringData();
   void publishCartesianVelocity();
   bool validatePoseErrorSafety(const Vector6d& pose_error);
   

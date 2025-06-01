@@ -475,10 +475,6 @@ bool AdmittanceNode::publishPoseError()
 
 
 
-void AdmittanceNode::publishMonitoringData()
-{
-  publishCartesianVelocity();
-}
 
 // Emergency stop with position hold
 bool AdmittanceNode::safeStop()
