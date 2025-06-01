@@ -5,11 +5,6 @@
 namespace ur_admittance_controller {
 
 
-bool AdmittanceNode::updateTransforms()
-{
-  // Get current end-effector pose using direct tf2 lookup
-  return getCurrentEndEffectorPose(X_base_tip_current_);
-}
 
 
 Vector6d AdmittanceNode::transformWrench(const Vector6d& wrench_sensor_frame)

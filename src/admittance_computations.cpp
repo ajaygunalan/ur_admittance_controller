@@ -126,7 +126,7 @@ bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
   checkParameterUpdates();
   
   // Update transform caches if needed
-  if (!updateTransforms()) {
+  if (!getCurrentEndEffectorPose(X_base_tip_current_)) {
     return false;
   }
   

@@ -71,7 +71,6 @@ private:
   bool publishPoseError();
   
   // Helper functions
-  bool updateTransforms();
   bool checkDeadband();
   bool safeStop();
   void publishCartesianVelocity();
