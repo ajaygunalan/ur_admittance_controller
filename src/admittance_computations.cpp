@@ -21,18 +21,7 @@ inline std::array<double, 6> paramVectorToArray(const std::vector<double>& param
   return result;
 }
 
-// Template function for diagonal matrix assignment
-template<typename MatrixType, typename ArrayType>
-inline void assignDiagonalMatrix(MatrixType& matrix, const ArrayType& array) {
-  for (size_t i = 0; i < 6; ++i) {
-    matrix(i, i) = array[i];
-  }
-}
 
-// Validate Vector6d for NaN values
-inline bool validateVector6d(const Vector6d& vec) {
-  return !vec.hasNaN();
-}
 
 inline Matrix6d computeDampingMatrix(
     const std::array<double, 6>& mass,
@@ -114,7 +103,7 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
 {
   // Compute pose error between desired and current poses
   error_tip_base_ = computePoseError_tip_base();
-  if (!validateVector6d(error_tip_base_)) {
+  if (error_tip_base_.hasNaN()) {
     return false;
   }
   
@@ -135,14 +124,14 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
   // Compute acceleration from admittance equation: a = M⁻¹ × (F_external - D·v - K·x)
   Vector6d acceleration = mass_inverse_ * (wrench_filtered_ - damping_ * desired_vel_ - stiffness_ * error_tip_base_);
   
-  if (!validateVector6d(acceleration)) {
+  if (acceleration.hasNaN()) {
     return false;
   }
   
   // Forward Euler integration: v_new = v_old + a × dt
   desired_vel_ = desired_vel_ + acceleration * dt;
   
-  if (!validateVector6d(desired_vel_)) {
+  if (desired_vel_.hasNaN()) {
     return false;
   }
   
@@ -286,7 +275,7 @@ void AdmittanceNode::checkParameterUpdates()
 void AdmittanceNode::updateMassMatrix(bool log_changes)
 {
   std::array<double, 6> mass_array = paramVectorToArray(params_.admittance.mass);
-  assignDiagonalMatrix(mass_, mass_array);
+  mass_.diagonal() = Eigen::Map<const Eigen::VectorXd>(mass_array.data(), 6);
   
   mass_inverse_ = computeMassInverse(mass_array);
   
