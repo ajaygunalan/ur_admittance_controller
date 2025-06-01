@@ -76,12 +76,41 @@ inline Matrix6d computeMassInverse(const std::array<double, 6>& mass)
     return mass_inverse;
 }
 
+// Helper function to compute acceleration from admittance equation
+inline Vector6d computeAdmittanceAcceleration(
+    const Matrix6d& mass_inverse,
+    const Vector6d& external_wrench, 
+    const Matrix6d& damping,
+    const Vector6d& velocity,
+    const Matrix6d& stiffness,
+    const Vector6d& pose_error)
+{
+    return mass_inverse * (external_wrench - damping * velocity - stiffness * pose_error);
+}
+
 }  // namespace
 
 // Main admittance control step
 
 bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
 {
+  // Lazy initialization: try to load kinematics if not ready yet
+  if (!kinematics_ready_) {
+    if (robot_description_received_.load()) {
+      loadKinematics();  // Attempt initialization, ignore return value
+    }
+    if (!kinematics_ready_) {
+      return false;  // Still not ready, skip this cycle
+    }
+  }
+  
+  // Initialize desired pose to current robot pose (only once)
+  if (!desired_pose_initialized_.load()) {
+    if (!initializeDesiredPose()) {
+      return false;  // Desired pose not ready yet
+    }
+  }
+  
   // Check for parameter updates from ROS
   checkParameterUpdates();
   
@@ -114,16 +143,16 @@ bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
     return false;
   }
   
-  // Apply joint position and velocity limits
-  if (!applyJointLimits(period)) {
-    RCLCPP_ERROR(get_logger(), "Joint limits violated");
-    return false;
-  }
-  
   return true;
 }
 
-// Compute admittance control: M*a + D*v + K*x = F_external using RK4 integration
+// Compute admittance control using RK4 integration
+//
+// MATHEMATICAL FRAMEWORK:
+// 1. Admittance equation: M·a + D·v + K·x = F_external  
+// 2. Solve for acceleration: a = M⁻¹ × (F_external - D·v - K·x)
+// 3. Integrate acceleration: v_new = v_old + ∫a dt using RK4
+//
 bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
 {
   // Compute pose error between desired and current poses
@@ -132,10 +161,13 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
     return false;
   }
   
-  // Update stiffness engagement factor for safe ramping
-  if (!updateStiffnessEngagement(period)) {
+  // Safety check: validate pose error is within safe limits
+  if (!validatePoseErrorSafety(error_tip_base_)) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, 
+      "Admittance control disabled due to unsafe pose error magnitude");
     return false;
   }
+  
   
   // Validate time step
   double dt = period.seconds();
@@ -143,43 +175,47 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
     return false;
   }
   
-  // Runge-Kutta 4th order integration
-  Vector6d v0 = desired_vel_;
+  // RK4 Integration: Integrate acceleration to get new velocity
+  Vector6d current_velocity = desired_vel_;
   
-  // k1 = f(t_n, v_n)
-  Vector6d stiffness_force1 = stiffness_engagement_factor_ * (stiffness_ * error_tip_base_);
-  Vector6d k1 = mass_inverse_ * (wrench_filtered_ - damping_ * v0 - stiffness_force1);
+  // k1: acceleration at current time with current velocity
+  Vector6d accel_k1 = computeAdmittanceAcceleration(
+      mass_inverse_, wrench_filtered_, damping_, current_velocity, stiffness_, error_tip_base_);
   
-  if (k1.hasNaN()) {
+  if (accel_k1.hasNaN()) {
     return false;
   }
   
-  // k2 = f(t_n + dt/2, v_n + k1*dt/2)
-  Vector6d v1 = v0 + k1 * (dt / 2.0);
-  Vector6d k2 = mass_inverse_ * (wrench_filtered_ - damping_ * v1 - stiffness_force1);
+  // k2: acceleration at midpoint time with velocity estimated using k1
+  Vector6d velocity_mid1 = current_velocity + accel_k1 * (dt / 2.0);
+  Vector6d accel_k2 = computeAdmittanceAcceleration(
+      mass_inverse_, wrench_filtered_, damping_, velocity_mid1, stiffness_, error_tip_base_);
   
-  if (k2.hasNaN()) {
+  if (accel_k2.hasNaN()) {
     return false;
   }
   
-  // k3 = f(t_n + dt/2, v_n + k2*dt/2)
-  Vector6d v2 = v0 + k2 * (dt / 2.0);
-  Vector6d k3 = mass_inverse_ * (wrench_filtered_ - damping_ * v2 - stiffness_force1);
+  // k3: acceleration at midpoint time with velocity estimated using k2
+  Vector6d velocity_mid2 = current_velocity + accel_k2 * (dt / 2.0);
+  Vector6d accel_k3 = computeAdmittanceAcceleration(
+      mass_inverse_, wrench_filtered_, damping_, velocity_mid2, stiffness_, error_tip_base_);
   
-  if (k3.hasNaN()) {
+  if (accel_k3.hasNaN()) {
     return false;
   }
   
-  // k4 = f(t_n + dt, v_n + k3*dt)
-  Vector6d v3 = v0 + k3 * dt;
-  Vector6d k4 = mass_inverse_ * (wrench_filtered_ - damping_ * v3 - stiffness_force1);
+  // k4: acceleration at end time with velocity estimated using k3
+  Vector6d velocity_end = current_velocity + accel_k3 * dt;
+  Vector6d accel_k4 = computeAdmittanceAcceleration(
+      mass_inverse_, wrench_filtered_, damping_, velocity_end, stiffness_, error_tip_base_);
   
-  if (k4.hasNaN()) {
+  if (accel_k4.hasNaN()) {
     return false;
   }
   
-  // v_{n+1} = v_n + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
-  desired_vel_ = v0 + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+  // Final RK4 integration: v_new = v_old + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
+  // where k1,k2,k3,k4 are acceleration estimates at different points
+  desired_vel_ = current_velocity + (dt / 6.0) * (accel_k1 + 2.0 * accel_k2 + 2.0 * accel_k3 + accel_k4);
   
   if (desired_vel_.hasNaN()) {
     return false;
@@ -190,11 +226,6 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
     if (!params_.admittance.enabled_axes[i]) {
       desired_vel_(i) = 0.0;
     }
-  }
-  
-  // Apply velocity limits
-  if (!applyCartesianVelocityLimits()) {
-    return false;
   }
   
   // Check for drift and reset if velocity is near zero
@@ -217,12 +248,19 @@ Vector6d AdmittanceNode::computePoseError_tip_base()
 {
   Vector6d error = Vector6d::Zero();
   
+  // Get desired pose with thread safety
+  Eigen::Isometry3d desired_pose;
+  {
+    std::lock_guard<std::mutex> lock(desired_pose_mutex_);
+    desired_pose = X_base_tip_desired_;
+  }
+  
   // Position error (simple difference)
-  error.head<3>() = X_base_tip_desired_.translation() - X_base_tip_current_.translation();
+  error.head<3>() = desired_pose.translation() - X_base_tip_current_.translation();
   
   // Extract rotation matrices
   Eigen::Matrix3d R_current = X_base_tip_current_.rotation();
-  Eigen::Matrix3d R_desired = X_base_tip_desired_.rotation();
+  Eigen::Matrix3d R_desired = desired_pose.rotation();
   
   // Convert to quaternions and normalize
   Eigen::Quaterniond q_current(R_current);
@@ -260,38 +298,6 @@ Vector6d AdmittanceNode::computePoseError_tip_base()
   return error;
 }
 
-bool AdmittanceNode::updateStiffnessEngagement(const rclcpp::Duration& period)
-{
-  if (period.seconds() <= 0.0) {
-    return false;
-  }
-  
-  double position_error_norm = error_tip_base_.head<3>().norm();
-  double orientation_error_norm = error_tip_base_.tail<3>().norm();
-  
-  bool error_within_limits = true;
-  if (stiffness_engagement_factor_ > STIFFNESS_ENGAGEMENT_THRESHOLD && 
-      (position_error_norm > safe_startup_params_.max_position_error || 
-       orientation_error_norm > safe_startup_params_.max_orientation_error)) {
-    error_within_limits = false;
-    
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Pose error exceeds safe startup limits");
-    
-    stiffness_recently_changed_ = true;
-    stiffness_engagement_factor_ = STIFFNESS_REDUCTION_FACTOR;
-  }
-  
-  if (stiffness_recently_changed_ && error_within_limits) {
-    stiffness_engagement_factor_ += period.seconds() / safe_startup_params_.stiffness_ramp_time;
-    if (stiffness_engagement_factor_ >= 1.0) {
-      stiffness_engagement_factor_ = 1.0;
-      stiffness_recently_changed_ = false;
-      RCLCPP_INFO(get_logger(), "Stiffness fully engaged");
-    }
-  }
-  
-  return true;
-}
 
 
 void AdmittanceNode::checkParameterUpdates()
@@ -431,26 +437,6 @@ void AdmittanceNode::updateDampingMatrix()
 }
 
 
-bool AdmittanceNode::applyCartesianVelocityLimits()
-{
-  if (desired_vel_.hasNaN()) {
-    return false;
-  }
-  
-  double linear_velocity_magnitude = desired_vel_.head<3>().norm();
-  double angular_velocity_magnitude = desired_vel_.tail<3>().norm();
-  
-  if (linear_velocity_magnitude > params_.max_linear_velocity) {
-    desired_vel_.head<3>() *= (params_.max_linear_velocity / linear_velocity_magnitude);
-  }
-  
-  if (angular_velocity_magnitude > params_.max_angular_velocity) {
-    desired_vel_.tail<3>() *= (params_.max_angular_velocity / angular_velocity_magnitude);
-  }
-  
-  return !desired_vel_.hasNaN();
-}
-
 // Convert Cartesian velocity to joint space using inverse kinematics
 bool AdmittanceNode::convertToJointSpace(
     const Vector6d& cart_vel, 
@@ -458,9 +444,8 @@ bool AdmittanceNode::convertToJointSpace(
 {
   // Validate inputs and sizes
   if (period.seconds() <= 0.0 || cart_vel.hasNaN() || params_.joints.empty() || 
-      current_pos_.size() < params_.joints.size() ||
-      joint_positions_.size() < params_.joints.size() ||
-      joint_deltas_.size() < params_.joints.size()) return false;
+      joint_velocities_.size() < params_.joints.size() ||
+      joint_positions_.size() < params_.joints.size()) return false;
   
   // Get current joint positions from stored values
   {
@@ -468,14 +453,9 @@ bool AdmittanceNode::convertToJointSpace(
     current_pos_ = joint_positions_;
   }
   
-  // Convert velocity to displacement
-  for (size_t i = 0; i < 6 && i < cart_displacement_deltas_.size(); ++i) {
-    cart_displacement_deltas_[i] = cart_vel(i) * period.seconds();
-  }
-  
-  // Call direct KDL inverse kinematics
+  // Check KDL readiness
   if (!kinematics_ready_) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "KDL not ready");
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "KDL kinematics not ready, waiting for initialization");
     return false;
   }
 
@@ -485,14 +465,14 @@ bool AdmittanceNode::convertToJointSpace(
     q_current(i) = current_pos_[i];
   }
 
-  // Convert Cartesian deltas to twist
+  // Send Cartesian velocity directly to KDL (CORRECT: velocity → velocity)
   KDL::Twist cart_twist;
-  cart_twist.vel.x(cart_displacement_deltas_[0]);
-  cart_twist.vel.y(cart_displacement_deltas_[1]);
-  cart_twist.vel.z(cart_displacement_deltas_[2]);
-  cart_twist.rot.x(cart_displacement_deltas_[3]);
-  cart_twist.rot.y(cart_displacement_deltas_[4]);
-  cart_twist.rot.z(cart_displacement_deltas_[5]);
+  cart_twist.vel.x(cart_vel(0));    // Linear velocity [m/s]
+  cart_twist.vel.y(cart_vel(1));
+  cart_twist.vel.z(cart_vel(2));
+  cart_twist.rot.x(cart_vel(3));    // Angular velocity [rad/s]
+  cart_twist.rot.y(cart_vel(4));
+  cart_twist.rot.z(cart_vel(5));
 
   // Solve for joint velocities using KDL
   KDL::JntArray q_dot(kdl_chain_.getNrOfJoints());
@@ -501,81 +481,35 @@ bool AdmittanceNode::convertToJointSpace(
     return false;
   }
 
-  // Convert back to joint deltas
-  for (size_t i = 0; i < std::min(joint_deltas_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
-    joint_deltas_[i] = q_dot(i);
+  // Store joint velocities directly (CORRECT: velocity → velocity)
+  for (size_t i = 0; i < std::min(joint_velocities_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
+    joint_velocities_[i] = q_dot(i);  // [rad/s]
   }
   
-  // Update joint positions with comprehensive bounds checking
+  // Integrate velocities to get positions (CORRECT: q = q₀ + v×Δt)
   for (size_t i = 0; i < params_.joints.size() && 
-                     i < joint_deltas_.size() && 
+                     i < joint_velocities_.size() && 
                      i < joint_positions_.size() && 
                      i < current_pos_.size(); ++i) {
-    joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
-    if (std::isnan(joint_positions_[i])) return false;
-  }
-  
-  return true;
-}
-
-// Apply joint position and velocity limits
-bool AdmittanceNode::applyJointLimits(const rclcpp::Duration& period)
-{
-  // Validate period and array sizes
-  if (period.seconds() <= 0.0 || params_.joints.empty() || joint_deltas_.empty() ||
-      params_.joints.size() > joint_positions_.size() || 
-      joint_deltas_.size() > joint_positions_.size() ||
-      params_.joints.size() > current_pos_.size() ||
-      params_.joints.size() > joint_velocities_.size() ||
-      joint_limits_.size() < params_.joints.size()) return false;
-  
-  // Apply limits to each joint with comprehensive bounds checking
-  for (size_t i = 0; i < params_.joints.size() && 
-                     i < joint_deltas_.size() && 
-                     i < joint_positions_.size() && 
-                     i < current_pos_.size() && 
-                     i < joint_velocities_.size(); ++i) {
-    double current_velocity = joint_deltas_[i] / period.seconds();
-    
-    // Check velocity limit (position + velocity continuity ensures smoothness)
-    if (std::abs(current_velocity) > joint_limits_[i].max_velocity) {
-      // Scale down movement to respect velocity limit
-      double scale = joint_limits_[i].max_velocity / std::abs(current_velocity);
-      joint_deltas_[i] *= scale;
-      current_velocity *= scale;
-      
-      RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
-        "Joint %zu velocity limited: %.3f -> %.3f rad/s", 
-        i, current_velocity / scale, current_velocity);
-    }
-    
-    // Update joint position
-    joint_positions_[i] = current_pos_[i] + joint_deltas_[i];
-    
-    // Apply position limits
-    joint_positions_[i] = std::max(joint_limits_[i].min_position, 
-                          std::min(joint_positions_[i], joint_limits_[i].max_position));
-    
-    // Store velocity for output to trajectory controller
-    joint_velocities_[i] = current_velocity;
-    
-    // Check for NaN
+    joint_positions_[i] = current_pos_[i] + joint_velocities_[i] * period.seconds();
     if (std::isnan(joint_positions_[i]) || std::isnan(joint_velocities_[i])) return false;
   }
   
   return true;
 }
 
-
 bool AdmittanceNode::handleDriftReset()
 {
   desired_vel_.setZero();
   V_base_tip_base_.setZero();
   
-  // In the node version, joint positions are already up to date
-  // No need to read from hardware interfaces
+  // Update desired pose to current pose (reset reference)
+  {
+    std::lock_guard<std::mutex> lock(desired_pose_mutex_);
+    X_base_tip_desired_ = X_base_tip_current_;
+  }
   
-  X_base_tip_desired_ = X_base_tip_current_;
+  RCLCPP_DEBUG(get_logger(), "Drift reset: desired pose updated to current pose");
   
   return true;
 }
@@ -628,6 +562,46 @@ bool AdmittanceNode::safeStop()
     RCLCPP_ERROR(get_logger(), "Exception in safeStop: %s", e.what());
     return false;
   }
+}
+
+bool AdmittanceNode::validatePoseErrorSafety(const Vector6d& pose_error)
+{
+  using namespace constants;
+  
+  // Check position error magnitude
+  double position_error_norm = pose_error.head<3>().norm();
+  double orientation_error_norm = pose_error.tail<3>().norm();
+  
+  if (position_error_norm > MAX_SAFE_POSITION_ERROR) {
+    RCLCPP_ERROR(get_logger(), 
+      "SAFETY VIOLATION: Desired pose is too far from current pose!");
+    RCLCPP_ERROR(get_logger(), 
+      "Position error: %.3f m (max safe: %.3f m)", 
+      position_error_norm, MAX_SAFE_POSITION_ERROR);
+    RCLCPP_ERROR(get_logger(), 
+      "This would cause a sudden jump. Please set a closer desired pose.");
+    RCLCPP_ERROR(get_logger(), 
+      "Current position error: [%.3f, %.3f, %.3f] m", 
+      pose_error(0), pose_error(1), pose_error(2));
+    return false;
+  }
+  
+  if (orientation_error_norm > MAX_SAFE_ORIENTATION_ERROR) {
+    RCLCPP_ERROR(get_logger(), 
+      "SAFETY VIOLATION: Desired orientation is too far from current orientation!");
+    RCLCPP_ERROR(get_logger(), 
+      "Orientation error: %.3f rad (%.1f°) (max safe: %.3f rad / %.1f°)", 
+      orientation_error_norm, orientation_error_norm * 180.0 / M_PI,
+      MAX_SAFE_ORIENTATION_ERROR, MAX_SAFE_ORIENTATION_ERROR * 180.0 / M_PI);
+    RCLCPP_ERROR(get_logger(), 
+      "This would cause a sudden rotational jump. Please set a closer desired orientation.");
+    RCLCPP_ERROR(get_logger(), 
+      "Current orientation error: [%.3f, %.3f, %.3f] rad", 
+      pose_error(3), pose_error(4), pose_error(5));
+    return false;
+  }
+  
+  return true;
 }
 
 }  // namespace ur_admittance_controller
