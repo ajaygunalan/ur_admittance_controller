@@ -82,7 +82,6 @@ private:
   bool handleDriftReset();
   // Helper functions
   bool checkDeadband();
-  bool safeStop();
   
   // New node computation methods
   void computationTimerCallback();

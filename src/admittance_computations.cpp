@@ -331,26 +331,7 @@ bool AdmittanceNode::handleDriftReset()
 
 
 
-// Emergency stop with position hold
-bool AdmittanceNode::safeStop()
-{
-  try {
-    // Zero all velocities
-    V_base_tip_base_.setZero();
-    desired_vel_.setZero();
-    
-    // Set joint velocities to zero
-    for (size_t i = 0; i < joint_velocities_.size(); ++i) {
-      joint_velocities_[i] = 0.0;
-    }
-    
-    return true;
-    
-  } catch (const std::exception& e) {
-    RCLCPP_ERROR(get_logger(), "Exception in safeStop: %s", e.what());
-    return false;
-  }
-}
+// Removed unused safeStop() function
 
 bool AdmittanceNode::validatePoseErrorSafety(const Vector6d& pose_error)
 {

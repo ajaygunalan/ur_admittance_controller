@@ -3,12 +3,7 @@
 
 namespace ur_admittance_controller {
 
-// Helper function to validate joint array sizes
-namespace {
-  inline bool isValidJointIndex(size_t i, size_t joints_size, size_t velocities_size, size_t positions_size) {
-    return i < joints_size && i < velocities_size && i < positions_size;
-  }
-}
+// Removed unused isValidJointIndex() function
 
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
 : Node("admittance_node", options)
