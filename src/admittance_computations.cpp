@@ -309,9 +309,11 @@ void AdmittanceNode::checkParameterUpdates()
       RCLCPP_INFO(get_logger(), "Mass parameters updated");
     }
     if (stiffness_changed) {
-      updateStiffnessMatrix(true);
-      if (!mass_changed) updateDampingMatrix(true); // Damping depends on stiffness
+      for (size_t i = 0; i < 6; ++i) {
+        stiffness_(i, i) = params_.admittance.stiffness[i];
+      }
       RCLCPP_INFO(get_logger(), "Stiffness parameters updated");
+      if (!mass_changed) updateDampingMatrix(true); // Damping depends on stiffness
     }
     if (damping_changed && !mass_changed && !stiffness_changed) {
       updateDampingMatrix(true);
@@ -358,15 +360,6 @@ void AdmittanceNode::updateMassMatrix(bool log_changes)
   }
 }
 
-void AdmittanceNode::updateStiffnessMatrix(bool log_changes)
-{
-  std::array<double, 6> stiffness_array = paramVectorToArray(params_.admittance.stiffness);
-  assignDiagonalMatrix(stiffness_, stiffness_array);
-  
-  if (log_changes) {
-    RCLCPP_INFO(get_logger(), "Stiffness parameters updated");
-  }
-}
 
 void AdmittanceNode::updateDampingMatrix(bool log_changes)
 {

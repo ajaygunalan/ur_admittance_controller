@@ -78,7 +78,9 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   // Initialize matrices from parameters
   updateMassMatrix();
   updateDampingMatrix();
-  updateStiffnessMatrix();
+  for (size_t i = 0; i < 6; ++i) {
+    stiffness_(i, i) = params_.admittance.stiffness[i];
+  }
   
   // Pre-allocate messages
   trajectory_msg_.joint_names = params_.joints;

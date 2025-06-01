@@ -64,7 +64,6 @@ private:
   Vector6d computePoseError_tip_base();
   void checkParameterUpdates();
   void updateMassMatrix(bool log_changes = false);
-  void updateStiffnessMatrix(bool log_changes = false);
   void updateDampingMatrix(bool log_changes = false);
   bool convertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
   bool handleDriftReset();
