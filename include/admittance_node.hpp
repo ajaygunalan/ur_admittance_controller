@@ -72,9 +72,12 @@ private:
   // Core algorithm functions (from admittance_computations.cpp)
   bool computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
   Vector6d computePoseError_tip_base();
-  void checkParameterUpdates();
-  void updateMassMatrix(bool log_changes = false);
-  void updateDampingMatrix(bool log_changes = false);
+  void updateMassMatrix();
+  void updateDampingMatrix();
+  
+  // Parameter callback system
+  rcl_interfaces::msg::SetParametersResult onParameterChange(
+    const std::vector<rclcpp::Parameter> & parameters);
   bool convertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
   bool handleDriftReset();
   // Helper functions
@@ -139,9 +142,8 @@ private:
   std::atomic<bool> desired_pose_initialized_{false};
   std::mutex desired_pose_mutex_;
   
-  // Parameter update tracking - now handled by generate_parameter_library's is_old() method
-  rclcpp::Time last_param_check_{0, 0, RCL_ROS_TIME};
-  static constexpr double PARAM_CHECK_INTERVAL = 0.1; // Check parameters at 10Hz instead of 500Hz
+  // Parameter callback handle
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_;
   
   // Control variables (to be ported from existing controller)
   Vector6d F_sensor_base_;

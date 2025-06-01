@@ -214,100 +214,44 @@ Vector6d AdmittanceNode::computePoseError_tip_base()
 
 
 
-void AdmittanceNode::checkParameterUpdates()
+// Parameter callback implementation
+rcl_interfaces::msg::SetParametersResult AdmittanceNode::onParameterChange(
+  const std::vector<rclcpp::Parameter> & /*parameters*/) 
 {
-  if (!params_.dynamic_parameters) return;
+  // Reload parameters from generate_parameter_library
+  params_ = param_listener_->get_params();
   
-  // Reduce parameter check frequency for better real-time performance
-  auto now = this->now();
-  if ((now - last_param_check_).seconds() < PARAM_CHECK_INTERVAL) {
-    return;
+  // Update matrices with new parameters
+  updateMassMatrix();
+  updateDampingMatrix();
+  
+  // Update stiffness matrix (diagonal assignment)
+  for (size_t i = 0; i < 6; ++i) {
+    stiffness_(i, i) = params_.admittance.stiffness[i];
   }
-  last_param_check_ = now;
-
-  // Use non-blocking parameter access for real-time safety
-  ur_admittance_controller::Params temp_params = params_;
-  if (param_listener_->try_get_params(temp_params)) {
-    // Parameters were updated and lock was acquired without blocking
-    
-    // Check what changed to avoid unnecessary matrix recomputation
-    bool mass_changed = (temp_params.admittance.mass != params_.admittance.mass);
-    bool stiffness_changed = (temp_params.admittance.stiffness != params_.admittance.stiffness);
-    bool damping_changed = (temp_params.admittance.damping_ratio != params_.admittance.damping_ratio);
-    
-    params_ = temp_params;
-    
-    // Only update matrices that actually changed
-    if (mass_changed) {
-      updateMassMatrix(true);
-      updateDampingMatrix(true); // Damping depends on mass
-      RCLCPP_INFO(get_logger(), "Mass parameters updated");
-    }
-    if (stiffness_changed) {
-      for (size_t i = 0; i < 6; ++i) {
-        stiffness_(i, i) = params_.admittance.stiffness[i];
-      }
-      RCLCPP_INFO(get_logger(), "Stiffness parameters updated");
-      if (!mass_changed) updateDampingMatrix(true); // Damping depends on stiffness
-    }
-    if (damping_changed && !mass_changed && !stiffness_changed) {
-      updateDampingMatrix(true);
-      RCLCPP_INFO(get_logger(), "Damping parameters updated");
-    }
-    
-    // Enhanced parameter change tracking and logging
-    if (mass_changed || stiffness_changed || damping_changed) {
-      RCLCPP_INFO(get_logger(), 
-        "Parameter update completed at %.3f seconds - Mass:%s Stiffness:%s Damping:%s",
-        now.seconds(),
-        mass_changed ? "✓" : "○",
-        stiffness_changed ? "✓" : "○", 
-        damping_changed ? "✓" : "○");
-        
-      RCLCPP_DEBUG(get_logger(), "Admittance parameters updated");
-    }
-  }
-  // If try_get_params returns false, continue with existing parameters (non-blocking)
+  
+  rcl_interfaces::msg::SetParametersResult result;
+  result.successful = true;
+  return result;
 }
 
 
 
-void AdmittanceNode::updateMassMatrix(bool log_changes)
+void AdmittanceNode::updateMassMatrix()
 {
   std::array<double, 6> mass_array = paramVectorToArray(params_.admittance.mass);
   mass_.diagonal() = Eigen::Map<const Eigen::VectorXd>(mass_array.data(), 6);
-  
   mass_inverse_ = computeMassInverse(mass_array);
-  
-  if (log_changes) {
-    double max_mass = mass_.diagonal().maxCoeff();
-    double min_mass = mass_.diagonal().minCoeff();
-    double condition_number = max_mass / min_mass;
-    
-    if (condition_number > MAX_CONDITION_NUMBER || min_mass <= 0.0) {
-      RCLCPP_WARN(get_logger(), 
-        "Mass matrix regularized (condition number: %.2e, min mass: %.6f)", 
-        condition_number, min_mass);
-    } else {
-      RCLCPP_INFO(get_logger(), 
-        "Mass parameters updated (condition number: %.2e)", condition_number);
-    }
-  }
 }
 
 
-void AdmittanceNode::updateDampingMatrix(bool log_changes)
+void AdmittanceNode::updateDampingMatrix()
 {
   std::array<double, 6> mass_array = paramVectorToArray(params_.admittance.mass);
   std::array<double, 6> stiffness_array = paramVectorToArray(params_.admittance.stiffness);
   std::array<double, 6> damping_ratio_array = paramVectorToArray(params_.admittance.damping_ratio);
   
   damping_ = computeDampingMatrix(mass_array, stiffness_array, damping_ratio_array);
-  
-  if (log_changes) {
-    RCLCPP_INFO(get_logger(), 
-      "Damping parameters updated using robust matrix utilities (with virtual stiffness blending)");
-  }
 }
 
 
@@ -455,8 +399,7 @@ bool AdmittanceNode::computeAdmittanceControlInNode(
     }
   }
   
-  // 3. Check for parameter updates from ROS
-  checkParameterUpdates();
+  // 3. Parameter updates now handled via callback system
   
   // 4. Update transform caches if needed
   if (!getCurrentEndEffectorPose(X_base_tip_current_)) {

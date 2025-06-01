@@ -73,6 +73,10 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   // Initialize matrices from parameters
   updateMassMatrix();
   updateDampingMatrix();
+  
+  // Set up parameter callback for dynamic updates
+  param_callback_ = this->add_on_set_parameters_callback(
+    std::bind(&AdmittanceNode::onParameterChange, this, std::placeholders::_1));
   for (size_t i = 0; i < 6; ++i) {
     stiffness_(i, i) = params_.admittance.stiffness[i];
   }
