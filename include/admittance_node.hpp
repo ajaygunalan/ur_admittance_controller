@@ -38,6 +38,17 @@
 
 namespace ur_admittance_controller {
 
+// Thread-safe data structure for node-thread communication
+struct ComputedControl {
+    std::vector<double> joint_velocities;
+    rclcpp::Time computation_timestamp;
+    bool valid = false;
+    
+    ComputedControl() : valid(false) {}
+    ComputedControl(size_t joint_count) 
+        : joint_velocities(joint_count, 0.0), valid(false) {}
+};
+
 class AdmittanceNode : public rclcpp::Node
 {
 public:
@@ -59,7 +70,6 @@ private:
   bool initializeDesiredPose();  // Set desired pose to current robot pose
   
   // Core algorithm functions (from admittance_computations.cpp)
-  bool computeAdmittanceStep(const rclcpp::Duration& period);
   bool computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
   Vector6d computePoseError_tip_base();
   void checkParameterUpdates();
@@ -70,6 +80,12 @@ private:
   // Helper functions
   bool checkDeadband();
   bool safeStop();
+  
+  // New node computation methods
+  void computationTimerCallback();
+  bool computeAdmittanceControlInNode(const rclcpp::Duration& period, 
+                                     std::vector<double>& joint_velocities_out);
+  void integrateAndPublish();
   bool validatePoseErrorSafety(const Vector6d& pose_error);
   
   // Direct transform functions (replacing cache system)
@@ -90,6 +106,13 @@ private:
   std::thread control_thread_;
   std::atomic<bool> running_{false};
   void controlThreadFunction();
+  
+  // Node-thread communication
+  ComputedControl computed_control_;
+  std::mutex control_data_mutex_;
+  
+  // Computation timer (replaces computation in thread)
+  rclcpp::TimerBase::SharedPtr computation_timer_;
   
   // Parameters (reuse existing param structure)
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;

@@ -101,61 +101,7 @@ inline Matrix6d computeMassInverse(const std::array<double, 6>& mass)
 
 }  // namespace
 
-// Main admittance control step
-
-bool AdmittanceNode::computeAdmittanceStep(const rclcpp::Duration & period)
-{
-  // Lazy initialization: try to load kinematics if not ready yet
-  if (!kinematics_ready_) {
-    if (robot_description_received_.load()) {
-      loadKinematics();  // Attempt initialization, ignore return value
-    }
-    if (!kinematics_ready_) {
-      return false;  // Still not ready, skip this cycle
-    }
-  }
-  
-  // Initialize desired pose to current robot pose (only once)
-  if (!desired_pose_initialized_.load()) {
-    if (!initializeDesiredPose()) {
-      return false;  // Desired pose not ready yet
-    }
-  }
-  
-  // Check for parameter updates from ROS
-  checkParameterUpdates();
-  
-  // Update transform caches if needed
-  if (!getCurrentEndEffectorPose(X_base_tip_current_)) {
-    return false;
-  }
-  
-  // Check if forces are within deadband
-  if (!checkDeadband()) {
-    // Zero velocity when in deadband
-    V_base_tip_base_.setZero();
-    desired_vel_.setZero();
-    return true;
-  }
-  
-  // Compute admittance control law
-  Vector6d cmd_vel;
-  if (!computeAdmittanceControl(period, cmd_vel)) {
-    RCLCPP_ERROR(get_logger(), "Failed to compute admittance control");
-    return false;
-  }
-  
-  // Store computed velocity
-  V_base_tip_base_ = cmd_vel;
-  
-  // Convert Cartesian velocity to joint space
-  if (!convertToJointSpace(cmd_vel, period)) {
-    RCLCPP_ERROR(get_logger(), "Failed to convert to joint space");
-    return false;
-  }
-  
-  return true;
-}
+// Main admittance control step - REMOVED: Logic moved to computeAdmittanceControlInNode()
 
 // Compute admittance control using forward Euler integration
 //
@@ -423,16 +369,11 @@ bool AdmittanceNode::convertToJointSpace(
   // Store joint velocities directly (CORRECT: velocity → velocity)
   for (size_t i = 0; i < std::min(joint_velocities_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
     joint_velocities_[i] = q_dot(i);  // [rad/s]
+    if (std::isnan(joint_velocities_[i])) return false;
   }
   
-  // Integrate velocities to get positions (CORRECT: q = q₀ + v×Δt)
-  for (size_t i = 0; i < params_.joints.size() && 
-                     i < joint_velocities_.size() && 
-                     i < joint_positions_.size() && 
-                     i < current_pos_.size(); ++i) {
-    joint_positions_[i] = current_pos_[i] + joint_velocities_[i] * period.seconds();
-    if (std::isnan(joint_positions_[i]) || std::isnan(joint_velocities_[i])) return false;
-  }
+  // INTEGRATION REMOVED: Now done in thread's integrateAndPublish() method
+  // joint_positions_[i] = current_pos_[i] + joint_velocities_[i] * period.seconds();
   
   return true;
 }
@@ -497,6 +438,69 @@ bool AdmittanceNode::validatePoseErrorSafety(const Vector6d& pose_error)
       orientation_error_norm, orientation_error_norm * 180.0 / M_PI, MAX_SAFE_ORIENTATION_ERROR);
     return false;
   }
+  
+  return true;
+}
+
+// New method: Move all computation logic from computeAdmittanceStep to node
+bool AdmittanceNode::computeAdmittanceControlInNode(
+    const rclcpp::Duration& period, 
+    std::vector<double>& joint_velocities_out)
+{
+  // ALL THE EXISTING LOGIC FROM computeAdmittanceStep() MOVES HERE:
+  
+  // 1. Lazy kinematics initialization
+  if (!kinematics_ready_) {
+    if (robot_description_received_.load()) {
+      loadKinematics();  // Attempt initialization, ignore return value
+    }
+    if (!kinematics_ready_) {
+      return false;  // Still not ready, skip this cycle
+    }
+  }
+  
+  // 2. Initialize desired pose to current robot pose (only once)
+  if (!desired_pose_initialized_.load()) {
+    if (!initializeDesiredPose()) {
+      return false;  // Desired pose not ready yet
+    }
+  }
+  
+  // 3. Check for parameter updates from ROS
+  checkParameterUpdates();
+  
+  // 4. Update transform caches if needed
+  if (!getCurrentEndEffectorPose(X_base_tip_current_)) {
+    return false;
+  }
+  
+  // 5. Check if forces are within deadband
+  if (!checkDeadband()) {
+    // Zero velocity when in deadband
+    V_base_tip_base_.setZero();
+    desired_vel_.setZero();
+    joint_velocities_out.assign(params_.joints.size(), 0.0);
+    return true;
+  }
+  
+  // 6. Compute admittance control law
+  Vector6d cmd_vel;
+  if (!computeAdmittanceControl(period, cmd_vel)) {
+    RCLCPP_ERROR(get_logger(), "Failed to compute admittance control");
+    return false;
+  }
+  
+  // 7. Store computed velocity
+  V_base_tip_base_ = cmd_vel;
+  
+  // 8. Convert Cartesian velocity to joint space
+  if (!convertToJointSpace(cmd_vel, period)) {
+    RCLCPP_ERROR(get_logger(), "Failed to convert to joint space");
+    return false;
+  }
+  
+  // 9. Output joint velocities (instead of storing in member variables)
+  joint_velocities_out = joint_velocities_;
   
   return true;
 }

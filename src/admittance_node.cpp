@@ -85,8 +85,17 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   // Match control loop timing: 500Hz = 2ms period
   trajectory_msg_.points[0].time_from_start = rclcpp::Duration::from_seconds(0.002);
   
-  // Start dedicated control thread for high-frequency admittance control
-  RCLCPP_INFO(get_logger(), "Starting dedicated control thread for admittance control");
+  // Initialize thread-safe control data
+  computed_control_ = ComputedControl(params_.joints.size());
+  
+  // Create computation timer (500Hz same as thread)
+  computation_timer_ = create_wall_timer(
+    std::chrono::milliseconds(2),  // 500Hz = 2ms
+    std::bind(&AdmittanceNode::computationTimerCallback, this));
+  
+  // Start dedicated control thread for high-frequency integration and publishing
+  RCLCPP_INFO(get_logger(), "Starting computation timer at 500Hz");
+  RCLCPP_INFO(get_logger(), "Starting dedicated integration thread");
   running_.store(true);
   control_thread_ = std::thread(&AdmittanceNode::controlThreadFunction, this);
     
@@ -104,27 +113,55 @@ AdmittanceNode::~AdmittanceNode()
   }
 }
 
+void AdmittanceNode::computationTimerCallback()
+{
+  // Calculate timing (same as current thread)
+  static rclcpp::Time last_time = now();
+  rclcpp::Time current_time = now();
+  rclcpp::Duration period = current_time - last_time;
+  
+  if (period.seconds() <= 0.0 || period.seconds() > 0.1) {
+    return; // Skip invalid periods
+  }
+  last_time = current_time;
+  
+  // Compute admittance control (moved from thread)
+  std::vector<double> computed_velocities;
+  bool success = computeAdmittanceControlInNode(period, computed_velocities);
+  
+  // Update thread-safe shared data
+  {
+    std::lock_guard<std::mutex> lock(control_data_mutex_);
+    if (success) {
+      computed_control_.joint_velocities = computed_velocities;
+      computed_control_.computation_timestamp = current_time;
+      computed_control_.valid = true;
+    } else {
+      computed_control_.valid = false;
+    }
+  }
+}
+
 void AdmittanceNode::controlThreadFunction()
 {
-  // Fixed control rate for admittance control (500 Hz = 2ms period)
-  // This provides excellent performance while being CPU-efficient
+  // Fixed control rate for integration and publishing (500 Hz = 2ms period)
   constexpr double CONTROL_RATE_HZ = 500.0;
   const auto period_ns = std::chrono::nanoseconds(static_cast<int64_t>(1e9 / CONTROL_RATE_HZ));
   
-  RCLCPP_INFO(get_logger(), "Control thread running at %.0f Hz", CONTROL_RATE_HZ);
+  RCLCPP_INFO(get_logger(), "Integration thread running at %.0f Hz", CONTROL_RATE_HZ);
   
   auto next_time = std::chrono::steady_clock::now();
   
   while (rclcpp::ok() && running_.load()) {
-    // Run admittance control computation
-    controlLoop();
+    // New simplified integration and publishing
+    integrateAndPublish();
     
     // Maintain fixed rate with high precision
     next_time += period_ns;
     std::this_thread::sleep_until(next_time);
   }
   
-  RCLCPP_INFO(get_logger(), "Control thread stopped");
+  RCLCPP_INFO(get_logger(), "Integration thread stopped");
 }
 
 void AdmittanceNode::wrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg)
@@ -171,40 +208,63 @@ void AdmittanceNode::robotDescriptionCallback(const std_msgs::msg::String::Const
     robot_description_.length());
 }
 
-void AdmittanceNode::controlLoop()
+void AdmittanceNode::integrateAndPublish()
 {
-  // Calculate control period
+  // Calculate timing for integration
   static rclcpp::Time last_time = now();
   rclcpp::Time current_time = now();
   rclcpp::Duration period = current_time - last_time;
   
-  // Skip if period is invalid
   if (period.seconds() <= 0.0 || period.seconds() > 0.1) {
     return;
   }
-  
-  // Update last_time only after successful period validation
   last_time = current_time;
   
-  // Run admittance control computation
-  if (!computeAdmittanceStep(period)) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, 
-      "Admittance computation failed");
-    safeStop();
-    // Reset last_time on computation failure to maintain timing consistency
-    last_time = current_time;
-    return;
+  // Read latest computed velocities from node
+  std::vector<double> current_joint_velocities;
+  bool data_valid = false;
+  rclcpp::Time computation_time;
+  
+  {
+    std::lock_guard<std::mutex> lock(control_data_mutex_);
+    if (computed_control_.valid) {
+      current_joint_velocities = computed_control_.joint_velocities;
+      computation_time = computed_control_.computation_timestamp;
+      data_valid = true;
+    }
   }
   
-  // Update pre-allocated trajectory message
+  // Check data freshness (optional)
+  if (data_valid) {
+    auto data_age = current_time - computation_time;
+    if (data_age.seconds() > 0.01) { // 10ms threshold
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
+          "Stale computation data: %.3f ms old", data_age.seconds() * 1000);
+    }
+  } else {
+    // No valid data - use zero velocities
+    current_joint_velocities.assign(params_.joints.size(), 0.0);
+  }
+  
+  // ONLY DO INTEGRATION (moved from convertToJointSpace)
+  {
+    std::lock_guard<std::mutex> lock(joint_state_mutex_);
+    for (size_t i = 0; i < params_.joints.size() && 
+                       i < current_joint_velocities.size() && 
+                       i < joint_positions_.size(); ++i) {
+      // Integration: q = q₀ + v × dt
+      joint_positions_[i] += current_joint_velocities[i] * period.seconds();
+    }
+  }
+  
+  // ONLY DO MESSAGE ASSEMBLY AND PUBLISHING
   trajectory_msg_.header.stamp = current_time;
   
-  // Update trajectory point data
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
     trajectory_msg_.points[0].positions = joint_positions_;
   }
-  trajectory_msg_.points[0].velocities = joint_velocities_;
+  trajectory_msg_.points[0].velocities = current_joint_velocities;
   
   trajectory_pub_->publish(trajectory_msg_);
 }
