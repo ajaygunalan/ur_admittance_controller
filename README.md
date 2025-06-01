@@ -74,10 +74,15 @@ ros2 param set /admittance_node admittance.stiffness "[100,100,100,10,10,10]"
 ros2 param set /admittance_node admittance.enabled_axes "[true,true,false,false,false,true]"
 ```
 
-### Safety Tuning
+### Real-Time Parameter Changes
 ```bash
+# All parameter changes take effect immediately (no restart required)
+
 # Increase damping for stability
 ros2 param set /admittance_node admittance.damping_ratio "[1.0,1.0,1.0,1.0,1.0,1.0]"
+
+# Adjust virtual mass for responsiveness
+ros2 param set /admittance_node admittance.mass "[5.0,5.0,5.0,0.5,0.5,0.5]"
 
 # Adjust force sensitivity (lower = more sensitive)
 ros2 param set /admittance_node admittance.min_motion_threshold 0.5
@@ -87,10 +92,11 @@ ros2 param set /admittance_node max_linear_velocity 0.3
 ```
 
 ## Key Features
-- **Real-time**: 500Hz control thread, <2ms latency
+- **Real-time**: 500Hz control loop with precise timing
 - **Safety**: Velocity limits, deadband filtering, graceful fallbacks
 - **Integration**: Works with ur_simulation_gz + scaled_joint_trajectory_controller  
-- **Parameters**: Dynamic reconfiguration via generate_parameter_library
+- **Dynamic Parameters**: Immediate parameter updates via event-driven callback system
+- **Simplified Architecture**: Clean, maintainable codebase with minimal overhead
 
 ## Troubleshooting
 

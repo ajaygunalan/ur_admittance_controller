@@ -2,6 +2,8 @@
 
 ## Node Interface
 
+> **Note**: Parameter system updated (2025-06-01) for immediate response via event-driven callbacks
+
 ### Topics
 ```yaml
 # Inputs
@@ -43,10 +45,18 @@ ros2 topic pub /wrist_ft_sensor geometry_msgs/WrenchStamped \
   "{header: {frame_id: 'ft_sensor_link'}, wrench: {force: {x: 10.0}}}" --once
 ```
 
-### Runtime Configuration
+### Real-Time Parameter Updates
 ```bash
+# All parameter changes take effect IMMEDIATELY (no restart required)
+
 # Switch to impedance mode
 ros2 param set /admittance_node admittance.stiffness "[100,100,100,10,10,10]"
+
+# Adjust responsiveness
+ros2 param set /admittance_node admittance.mass "[5.0,5.0,5.0,0.5,0.5,0.5]"
+
+# Enable only specific axes
+ros2 param set /admittance_node admittance.enabled_axes "[true,true,false,false,false,true]"
 
 # Adjust sensitivity
 ros2 param set /admittance_node admittance.min_motion_threshold 0.5
