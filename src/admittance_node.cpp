@@ -23,7 +23,6 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   // Resize state vectors
   joint_positions_.resize(params_.joints.size(), 0.0);
   joint_velocities_.resize(params_.joints.size(), 0.0);
-  joint_position_references_.resize(params_.joints.size(), 0.0);
   current_pos_.resize(params_.joints.size(), 0.0);
   
   // Initialize control matrices

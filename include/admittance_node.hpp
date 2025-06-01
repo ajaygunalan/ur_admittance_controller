@@ -70,7 +70,6 @@ private:
   bool convertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
   bool handleDriftReset();
   bool publishPoseError();
-  void updateJointReferences();
   
   // Helper functions
   bool updateTransforms();
@@ -114,7 +113,6 @@ private:
   // State variables
   std::vector<double> joint_positions_;
   std::vector<double> joint_velocities_;
-  std::vector<double> joint_position_references_;
   std::vector<double> current_pos_;
   geometry_msgs::msg::WrenchStamped current_wrench_;
   std::mutex wrench_mutex_;

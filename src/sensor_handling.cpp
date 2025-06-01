@@ -82,11 +82,6 @@ bool AdmittanceNode::checkDeadband()
   // All forces below threshold - stop motion
   V_base_tip_base_.setZero();
   
-  // Update references to hold current position
-  {
-    std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    joint_position_references_ = joint_positions_;
-  }
   return false;
 }
 

@@ -474,15 +474,6 @@ bool AdmittanceNode::publishPoseError()
 }
 
 
-// Update command interfaces with computed joint positions
-void AdmittanceNode::updateJointReferences()
-{
-  // In the node version, joint references are updated directly
-  // and published in the control loop as trajectory messages
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    joint_position_references_[i] = joint_positions_[i];
-  }
-}
 
 void AdmittanceNode::publishMonitoringData()
 {
