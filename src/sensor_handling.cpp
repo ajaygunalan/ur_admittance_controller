@@ -33,7 +33,7 @@ Vector6d AdmittanceNode::transformWrench(const Vector6d& wrench_sensor_frame)
     t_cross << 0, -t.z(), t.y(),
                t.z(), 0, -t.x(),
                -t.y(), t.x(), 0;
-    adjoint.block<3, 3>(3, 0) = t_cross * R;
+    adjoint.block<3, 3>(3, 0) = -t_cross * R;  // FIXED: Correct sign for wrench transformation
     
     return adjoint * wrench_sensor_frame;
     

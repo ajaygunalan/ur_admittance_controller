@@ -15,8 +15,9 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
     this->get_node_parameters_interface());
   params_ = param_listener_->get_params();
   
-  // Resize state vectors
-  joint_positions_.resize(params_.joints.size(), 0.0);
+  // Resize state vectors - RACE CONDITION FIX
+  joint_positions_.resize(params_.joints.size(), 0.0);      // Sensor data
+  joint_positions_cmd_.resize(params_.joints.size(), 0.0);  // Command data  
   joint_velocities_.resize(params_.joints.size(), 0.0);
   current_pos_.resize(params_.joints.size(), 0.0);
   
@@ -152,13 +153,18 @@ void AdmittanceNode::jointStateCallback(const sensor_msgs::msg::JointState::Cons
 {
   std::lock_guard<std::mutex> lock(joint_state_mutex_);
   
-  // Update joint positions based on configured joint names
+  // Update sensor joint positions based on configured joint names
   for (size_t i = 0; i < params_.joints.size(); ++i) {
     auto it = std::find(msg->name.begin(), msg->name.end(), params_.joints[i]);
     if (it != msg->name.end()) {
       size_t idx = std::distance(msg->name.begin(), it);
       if (idx < msg->position.size()) {
-        joint_positions_[i] = msg->position[idx];
+        joint_positions_[i] = msg->position[idx];  // Sensor data only
+        
+        // Initialize command positions to sensor positions on first callback
+        if (joint_positions_cmd_[i] == 0.0) {
+          joint_positions_cmd_[i] = msg->position[idx];
+        }
       }
     }
   }

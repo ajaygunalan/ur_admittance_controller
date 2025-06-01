@@ -112,8 +112,9 @@ private:
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
   
-  // State variables
-  std::vector<double> joint_positions_;
+  // State variables - RACE CONDITION FIX: Separate sensor and command data
+  std::vector<double> joint_positions_;      // Sensor data only (from /joint_states)
+  std::vector<double> joint_positions_cmd_;  // Command data only (integrated positions)
   std::vector<double> joint_velocities_;
   std::vector<double> current_pos_;
   geometry_msgs::msg::WrenchStamped current_wrench_;
@@ -142,6 +143,11 @@ private:
   Matrix6d mass_inverse_;
   Matrix6d damping_;
   Matrix6d stiffness_;
+  
+  // OPTIMIZATION: Diagonal vector storage for better performance
+  Vector6d mass_inverse_diag_;
+  Vector6d damping_diag_;
+  Vector6d stiffness_diag_;
   
   // Transform caches
   Eigen::Isometry3d X_base_tip_current_;

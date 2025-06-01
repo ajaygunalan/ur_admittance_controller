@@ -54,8 +54,11 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
     return false;
   }
   
-  // Compute acceleration from admittance equation: a = M⁻¹ × (F_external - D·v - K·x)
-  Vector6d acceleration = mass_inverse_ * (wrench_filtered_ - damping_ * desired_vel_ - stiffness_ * error_tip_base_);
+  // OPTIMIZED: Component-wise acceleration computation using .array() operations
+  // a = M⁻¹ × (F_external - D·v - K·x) using element-wise multiplication
+  Vector6d acceleration = mass_inverse_diag_.array() * 
+    (wrench_filtered_.array() - damping_diag_.array() * desired_vel_.array() - 
+     stiffness_diag_.array() * error_tip_base_.array());
   
   if (acceleration.hasNaN()) {
     return false;
@@ -89,6 +92,7 @@ bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Ve
   cmd_vel_out = V_base_tip_base_;
   return true;
 }
+
 
 // Compute pose error between desired and current end-effector poses
 Vector6d AdmittanceNode::computePoseError_tip_base()
@@ -156,6 +160,9 @@ void AdmittanceNode::updateMassMatrix()
   // Build diagonal mass matrix and compute inverse efficiently using Eigen
   mass_.diagonal() = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6);
   mass_inverse_.diagonal() = mass_.diagonal().cwiseInverse();
+  
+  // OPTIMIZATION: Also populate diagonal vector for better performance
+  mass_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6).cwiseInverse();
 }
 
 
@@ -170,8 +177,18 @@ void AdmittanceNode::updateDampingMatrix()
                                  VIRTUAL_STIFFNESS : params_.admittance.stiffness[i];
     
     // Standard critical damping formula: D = 2*ζ*√(M*K)
-    damping_(i, i) = 2.0 * params_.admittance.damping_ratio[i] * 
-                     std::sqrt(params_.admittance.mass[i] * effective_stiffness);
+    double damping_value = 2.0 * params_.admittance.damping_ratio[i] * 
+                          std::sqrt(params_.admittance.mass[i] * effective_stiffness);
+    
+    damping_(i, i) = damping_value;
+    
+    // OPTIMIZATION: Also populate diagonal vector for better performance
+    damping_diag_(i) = damping_value;
+  }
+  
+  // OPTIMIZATION: Also populate stiffness diagonal vector
+  for (size_t i = 0; i < 6; ++i) {
+    stiffness_diag_(i) = params_.admittance.stiffness[i];
   }
 }
 
@@ -186,10 +203,10 @@ bool AdmittanceNode::convertToJointSpace(
       joint_velocities_.size() < params_.joints.size() ||
       joint_positions_.size() < params_.joints.size()) return false;
   
-  // Get current joint positions from stored values
+  // Get current joint positions from sensor data (read-only)
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    current_pos_ = joint_positions_;
+    current_pos_ = joint_positions_;  // Use sensor positions for IK
   }
   
   // Check KDL readiness
@@ -322,7 +339,7 @@ bool AdmittanceNode::unifiedControlStep(double dt)
       joint_velocities_[i] = 0.0;
     }
   } else {
-    // 5. Compute admittance control
+    // 5. Compute admittance control (OPTIMIZED version)
     Vector6d cmd_vel;
     rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
     if (computeAdmittanceControl(period, cmd_vel)) {
@@ -337,21 +354,21 @@ bool AdmittanceNode::unifiedControlStep(double dt)
     }
   }
   
-  // 7. Integrate joint positions (direct integration, no mutex overhead)
+  // 7. Integrate command positions (RACE CONDITION FIX: separate from sensor data)
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
     for (size_t i = 0; i < params_.joints.size() && 
                        i < joint_velocities_.size() && 
-                       i < joint_positions_.size(); ++i) {
-      joint_positions_[i] += joint_velocities_[i] * dt;
+                       i < joint_positions_cmd_.size(); ++i) {
+      joint_positions_cmd_[i] += joint_velocities_[i] * dt;  // Command integration only
     }
   }
   
-  // 8. Publish trajectory command
+  // 8. Publish trajectory command using command positions (RACE CONDITION FIX)
   trajectory_msg_.header.stamp = now();
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    trajectory_msg_.points[0].positions = joint_positions_;
+    trajectory_msg_.points[0].positions = joint_positions_cmd_;  // Use command positions
   }
   trajectory_msg_.points[0].velocities = joint_velocities_;
   trajectory_pub_->publish(trajectory_msg_);
