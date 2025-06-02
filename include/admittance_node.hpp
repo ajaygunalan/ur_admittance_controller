@@ -117,6 +117,8 @@ class AdmittanceNode : public rclcpp::Node {
   KDL::Chain kdl_chain_;                                      // Base-to-tip kinematic chain
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_; // WDLS velocity solver
   bool kinematics_ready_ = false;
+  // Control loop timing - member variable for thread safety
+  std::chrono::steady_clock::time_point last_control_time_;
 };
 
 }  // namespace ur_admittance_controller

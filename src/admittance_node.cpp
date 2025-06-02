@@ -66,8 +66,16 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   trajectory_msg_.points[0].velocities.resize(joint_count);
   trajectory_msg_.points[0].time_from_start = 
       rclcpp::Duration::from_seconds(0.0);  // Immediate execution for streaming control
+  
+  // Initialize control timing
+  last_control_time_ = std::chrono::steady_clock::now();
       
-  // Start high-frequency control timer using ROS2 standard approach
+  // Start control timer using ROS2 standard approach
+  // Note: We use wall_timer (system clock) instead of regular timer because:
+  // 1. We're interfacing with physical hardware (robot & F/T sensor)
+  // 2. Control commands must be sent in real-world time, not simulation time
+  // 3. The scaled_joint_trajectory_controller expects real-time commands
+  // This is standard practice for hardware-interfacing control nodes in ROS2
   RCLCPP_INFO(get_logger(), "Starting admittance control at %.0f Hz",
               constants::TARGET_CONTROL_RATE_HZ);
   control_timer_ = create_wall_timer(
@@ -81,14 +89,17 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 // Control timer callback (100Hz) - main admittance control loop
 void AdmittanceNode::ControlTimerCallback() {
   // Compute precise time step for this control iteration
-  static auto last_time = std::chrono::steady_clock::now();
   const auto current_time = std::chrono::steady_clock::now();
-  const auto period_ns = current_time - last_time;
+  const auto period_ns = current_time - last_control_time_;
   const double dt = period_ns.count() * 1e-9;  // Convert nanoseconds to seconds
 
   // Execute main admittance control algorithm
   if (UnifiedControlStep(dt)) {
-    last_time = current_time;
+    last_control_time_ = current_time;
+  } else {
+    // Handle control step failure - maintain previous command for safety
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "Control step failed, maintaining previous trajectory command");
   }
 }
 
