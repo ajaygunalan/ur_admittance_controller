@@ -1,7 +1,21 @@
-// UR Admittance Controller Node Definition
-#ifndef UR_ADMITTANCE_NODE_HPP
-#define UR_ADMITTANCE_NODE_HPP
+#pragma once
 
+// UR Admittance Controller - 6-DOF Force-Compliant Motion Control for Universal Robots
+// Implements real-time admittance control: M*accel + D*vel + K*pos = F_external
+
+// Related header
+#include "ur_admittance_controller/ur_admittance_controller_parameters.hpp"
+#include "admittance_node_types.hpp"
+#include "admittance_constants.hpp"
+
+// Standard library headers
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <mutex>
+#include <vector>
+
+// ROS2 headers
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/wrench_stamped.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
@@ -11,7 +25,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_eigen/tf2_eigen.hpp>
 
-// Kinematics
+// Third-party kinematics libraries
 #include <kdl_parser/kdl_parser.hpp>
 #include <kdl/tree.hpp>
 #include <kdl/chain.hpp>
@@ -20,158 +34,94 @@
 #include <kdl/chainiksolvervel_wdls.hpp>
 #include <urdf/model.h>
 
-// Reuse existing parameter system
-#include "ur_admittance_controller/ur_admittance_controller_parameters.hpp"
-
-// Reuse existing types
-#include "admittance_node_types.hpp"
-#include "admittance_constants.hpp"
-
-// Standard includes
-#include <atomic>
-#include <chrono>
-#include <memory>
-#include <optional>
-#include <mutex>
-#include <vector>
-#include <thread>
-
 namespace ur_admittance_controller {
 
-// Thread-safe data structure for node-thread communication
-struct ComputedControl {
-    std::vector<double> joint_velocities;
-    rclcpp::Time computation_timestamp;
-    bool valid = false;
-    
-    ComputedControl() : valid(false) {}
-    ComputedControl(size_t joint_count) 
-        : joint_velocities(joint_count, 0.0), valid(false) {}
-};
+// Main admittance control node providing 6-DOF force-compliant robot motion
+// Subscribes to F/T sensor data and publishes joint trajectory commands
+class AdmittanceNode : public rclcpp::Node {
+ public:
+  explicit AdmittanceNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+  ~AdmittanceNode() = default;
 
-class AdmittanceNode : public rclcpp::Node
-{
-public:
-  explicit AdmittanceNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  ~AdmittanceNode();
-
-private:
-  // Core control loop
-  void controlLoop();
-  
-  // Callback functions
-  void wrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
-  void jointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
-  void robotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg);
-  
-  
-  // Initialize components
-  bool loadKinematics();
-  bool initializeDesiredPose();  // Set desired pose to current robot pose
-  
-  // Core algorithm functions (from admittance_computations.cpp)
-  bool computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
-  Vector6d computePoseError_tip_base();
-  void updateMassMatrix();
-  void updateDampingMatrix();
-  
-  // Parameters handled automatically by generate_parameter_library
-  bool convertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
-  bool handleDriftReset();
-  // Helper functions
-  bool checkDeadband();
-  
-  // Unified control methods
-  bool unifiedControlStep(double dt);
-  bool validatePoseErrorSafety(const Vector6d& pose_error);
-  
-  // Direct transform functions (replacing cache system)
-  Vector6d transformWrench(const Vector6d& wrench_sensor_frame);
-  bool getCurrentEndEffectorPose(Eigen::Isometry3d& pose);
-  
-  // Subscriptions
+ private:
+  // ROS2 callback functions for sensor data processing
+  void WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
+  void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
+  void RobotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  // System initialization and setup
+  bool LoadKinematics();
+  bool InitializeDesiredPose();
+  // Core admittance control algorithms
+  bool ComputeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
+  Vector6d ComputePoseError_tip_base();
+  void UpdateMassMatrix();
+  void UpdateDampingMatrix();
+  // Coordinate transformations and motion processing
+  bool ConvertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
+  bool HandleDriftReset();
+  bool CheckDeadband();
+  // Main control loop execution
+  bool UnifiedControlStep(double dt);
+  bool ValidatePoseErrorSafety(const Vector6d& pose_error);
+  // Transform utilities for coordinate frame conversions
+  Vector6d TransformWrench(const Vector6d& wrench_sensor_frame);
+  bool GetCurrentEndEffectorPose(Eigen::Isometry3d& pose);
+  // ROS2 communication interfaces
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robot_description_sub_;
-  
-  // Publishers
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
-  
-  
-  
-  // Control timer for 500Hz admittance control (ROS2 standard)
+  // High-frequency control timer (500Hz) for real-time admittance control
   rclcpp::TimerBase::SharedPtr control_timer_;
-  void controlTimerCallback();
-  
-  // Parameters (reuse existing param structure)
+  void ControlTimerCallback();
+  // Dynamic parameter management system
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
   ur_admittance_controller::Params params_;
-  
-  // Transform handling
+  // TF2 transform system for coordinate frame management
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
-  
-  // State variables - RACE CONDITION FIX: Separate sensor and command data
-  std::vector<double> joint_positions_;      // Sensor data only (from /joint_states)
-  std::vector<double> joint_positions_cmd_;  // Command data only (integrated positions)
-  std::vector<double> joint_velocities_;
-  std::vector<double> current_pos_;
+  // Robot state variables with thread-safe access (Drake notation: q, v)
+  std::vector<double> q_;                    // Current sensor joint positions
+  std::vector<double> q_cmd_;                // Integrated command positions  
+  std::vector<double> v_;                    // Computed joint velocities
+  std::vector<double> q_current_;            // Working copy for kinematics
   geometry_msgs::msg::WrenchStamped current_wrench_;
   std::mutex wrench_mutex_;
   std::mutex joint_state_mutex_;
-  
-  // Robot description data
+  // URDF robot model data with thread-safe access
   std::string robot_description_;
   std::mutex robot_description_mutex_;
   std::atomic<bool> robot_description_received_{false};
-  
-  // Desired pose initialization
+  // Reference pose management for admittance control
   std::atomic<bool> desired_pose_initialized_{false};
   std::mutex desired_pose_mutex_;
-  
-  // Parameter callback removed - using auto-generated parameter handling
-  
-  // Control variables (to be ported from existing controller)
-  Vector6d F_sensor_base_;
-  Vector6d V_base_tip_base_;
-  Vector6d desired_vel_;
-  Vector6d desired_accel_;
-  
-  // Admittance parameters
-  Matrix6d mass_;
-  Matrix6d mass_inverse_;
-  Matrix6d damping_;
-  Matrix6d stiffness_;
-  
-  // OPTIMIZATION: Diagonal vector storage for better performance
-  Vector6d mass_inverse_diag_;
-  Vector6d damping_diag_;
-  Vector6d stiffness_diag_;
-  
-  // Transform caches
-  Eigen::Isometry3d X_base_tip_current_;
-  Eigen::Isometry3d X_base_tip_desired_;
-  
-  // Additional algorithm variables
-  Vector6d error_tip_base_;
-  Vector6d wrench_filtered_;
-  
-  
-  // Pre-allocated messages for performance
+  // Core admittance control state vectors (6-DOF: xyz + rpy) 
+  Vector6d F_sensor_base_;           // External forces/torques in base frame
+  Vector6d V_base_tip_base_;         // Commanded Cartesian velocity
+  Vector6d V_base_tip_desired_;      // Integrated velocity from admittance equation
+  Vector6d A_base_tip_desired_;      // Computed acceleration
+  // Admittance equation matrices: M*accel + D*vel + K*pos = F_external
+  Matrix6d M_;                  // Virtual mass matrix (6x6)
+  Matrix6d M_inverse_;          // Precomputed mass inverse
+  Matrix6d D_;                  // Damping matrix
+  Matrix6d K_;                  // Stiffness matrix
+  // Optimized diagonal storage for performance-critical computations
+  Vector6d M_inverse_diag_;     // Diagonal elements of mass^-1
+  Vector6d D_diag_;             // Diagonal elements of damping
+  Vector6d K_diag_;             // Diagonal elements of stiffness
+  // Pose representations for admittance control
+  Eigen::Isometry3d X_base_tip_current_;   // Current end-effector pose
+  Eigen::Isometry3d X_base_tip_desired_;   // Target reference pose
+  // Intermediate computation variables
+  Vector6d error_tip_base_;     // Pose error (desired - current)
+  Vector6d F_sensor_filtered_;  // Low-pass filtered F/T sensor data
+  // Pre-allocated ROS2 messages to avoid real-time allocations
   trajectory_msgs::msg::JointTrajectory trajectory_msg_;
-  
-  
-  // Direct KDL kinematics
-  KDL::Tree kdl_tree_;
-  KDL::Chain kdl_chain_;
-  std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_;
+  // KDL kinematics for inverse velocity solving
+  KDL::Tree kdl_tree_;                                        // Full robot kinematic tree
+  KDL::Chain kdl_chain_;                                      // Base-to-tip kinematic chain
+  std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_; // WDLS velocity solver
   bool kinematics_ready_ = false;
-  
-  
-  
-  // Drift reset (unused variables removed)
 };
 
 }  // namespace ur_admittance_controller
-
-#endif  // UR_ADMITTANCE_NODE_HPP

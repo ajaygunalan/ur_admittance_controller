@@ -1,4 +1,5 @@
 // Core admittance control algorithm implementation
+// Implements the classic admittance equation: M*accel + D*vel + K*pos = F_external
 
 #include "admittance_node.hpp"
 #include "admittance_constants.hpp"
@@ -9,143 +10,104 @@ namespace ur_admittance_controller {
 
 using namespace constants;
 
-// Inlined matrix utility functions
-namespace {
-
-// Removed unnecessary paramVectorToArray helper - using Eigen::Map directly
-
-
-
-// Removed computeDampingMatrix helper - logic moved directly into updateDampingMatrix()
-
-// Removed over-engineered mass inversion - now done directly with Eigen
-
-
-}  // namespace
-
-// Main admittance control step - REMOVED: Logic moved to computeAdmittanceControlInNode()
-
-// Compute admittance control using forward Euler integration
-//
-// MATHEMATICAL FRAMEWORK:
-// 1. Admittance equation: M·a + D·v + K·x = F_external  
-// 2. Solve for acceleration: a = M⁻¹ × (F_external - D·v - K·x)
-// 3. Integrate acceleration: v_new = v_old + a × dt
-//
-bool AdmittanceNode::computeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out)
-{
-  // Compute pose error between desired and current poses
-  error_tip_base_ = computePoseError_tip_base();
+// Solve admittance equation and integrate to compute Cartesian velocity commands
+// Mathematical model: M*acceleration + D*velocity + K*position_error = F_external
+// Solves for acceleration, then integrates: v_new = v_old + acceleration * dt
+bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out) {
+  // Calculate 6-DOF pose error (position + orientation)
+  error_tip_base_ = ComputePoseError_tip_base();
   if (error_tip_base_.hasNaN()) {
     return false;
   }
   
-  // Safety check: validate pose error is within safe limits
-  if (!validatePoseErrorSafety(error_tip_base_)) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, 
-      "Admittance control disabled due to unsafe pose error magnitude");
+  // Enforce safety limits on pose error magnitude
+  if (!ValidatePoseErrorSafety(error_tip_base_)) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
+                         "Safety stop: pose error exceeds safe limits");
     return false;
   }
   
-  
-  // Validate time step
-  double dt = period.seconds();
+  // Validate integration time step for numerical stability
+  const double dt = period.seconds();
   if (dt <= 0.0 || dt > 0.1) {
     return false;
   }
-  
-  // OPTIMIZED: Component-wise acceleration computation using .array() operations
-  // a = M⁻¹ × (F_external - D·v - K·x) using element-wise multiplication
-  Vector6d acceleration = mass_inverse_diag_.array() * 
-    (wrench_filtered_.array() - damping_diag_.array() * desired_vel_.array() - 
-     stiffness_diag_.array() * error_tip_base_.array());
-  
+  // Solve admittance equation for acceleration using optimized diagonal operations
+  // acceleration = M^-1 * (F_external - D*velocity - K*position_error)
+  const Vector6d acceleration = M_inverse_diag_.array() *
+      (F_sensor_filtered_.array() - D_diag_.array() * V_base_tip_desired_.array() -
+       K_diag_.array() * error_tip_base_.array());
   if (acceleration.hasNaN()) {
     return false;
   }
-  
-  // Forward Euler integration: v_new = v_old + a × dt
-  desired_vel_ = desired_vel_ + acceleration * dt;
-  
-  if (desired_vel_.hasNaN()) {
+  // Forward Euler integration to update velocity
+  V_base_tip_desired_ = V_base_tip_desired_ + acceleration * dt;
+  if (V_base_tip_desired_.hasNaN()) {
     return false;
   }
-  
-  // Apply axis enable/disable mask
+  // Apply selective compliance - disable motion on specified axes
   for (size_t i = 0; i < 6; ++i) {
     if (!params_.admittance.enabled_axes[i]) {
-      desired_vel_(i) = 0.0;
+      V_base_tip_desired_(i) = 0.0;
     }
   }
-  
-  // Check for drift and reset if velocity is near zero
-  if (desired_vel_.norm() < params_.admittance.drift_reset_threshold) {
-    if (!handleDriftReset()) {
+  // Handle drift compensation when motion is minimal
+  if (V_base_tip_desired_.norm() < params_.admittance.drift_reset_threshold) {
+    if (!HandleDriftReset()) {
       return false;
     }
     cmd_vel_out.setZero();
     return true;
   }
-  
-  // Output commanded velocity
-  V_base_tip_base_ = desired_vel_;
+  // Output final Cartesian velocity command
+  V_base_tip_base_ = V_base_tip_desired_;
   cmd_vel_out = V_base_tip_base_;
   return true;
 }
 
-
-// Compute pose error between desired and current end-effector poses
-Vector6d AdmittanceNode::computePoseError_tip_base()
-{
+// Compute 6-DOF pose error: [position_error; orientation_error]
+// Uses quaternion-based orientation error to avoid singularities
+Vector6d AdmittanceNode::ComputePoseError_tip_base() {
   Vector6d error = Vector6d::Zero();
-  
-  // Get desired pose with thread safety
+
+  // Safely access reference pose
   Eigen::Isometry3d desired_pose;
   {
     std::lock_guard<std::mutex> lock(desired_pose_mutex_);
     desired_pose = X_base_tip_desired_;
   }
-  
-  // Position error (simple difference)
+  // Compute position error as simple vector difference
   error.head<3>() = desired_pose.translation() - X_base_tip_current_.translation();
-  
-  // Extract rotation matrices
-  Eigen::Matrix3d R_current = X_base_tip_current_.rotation();
-  Eigen::Matrix3d R_desired = desired_pose.rotation();
-  
-  // Convert to quaternions and normalize
+  // Extract rotation matrices for orientation error computation
+  const Eigen::Matrix3d R_current = X_base_tip_current_.rotation();
+  const Eigen::Matrix3d R_desired = desired_pose.rotation();
+  // Convert to unit quaternions for robust orientation representation
   Eigen::Quaterniond q_current(R_current);
   q_current.normalize();
-  
+
   Eigen::Quaterniond q_desired(R_desired);
   q_desired.normalize();
-  
-  // Ensure quaternions are in the same hemisphere
+  // Ensure shortest rotation path by choosing same quaternion hemisphere
   if (q_current.dot(q_desired) < 0) {
     q_current.coeffs() = -q_current.coeffs();
   }
-  
-  // Compute error quaternion: q_error = q_desired * q_current^{-1}
+  // Compute orientation error quaternion: q_error = q_desired * q_current^-1
   Eigen::Quaterniond q_error = q_desired * q_current.inverse();
   q_error.normalize();
-  
-  // Convert to axis-angle representation
-  Eigen::AngleAxisd aa_error(q_error);
-  
-  // Handle near-zero rotation
+  // Convert error quaternion to axis-angle for linear control
+  const Eigen::AngleAxisd aa_error(q_error);
+  // Convert to 3D orientation error vector (axis * angle)
   if (aa_error.angle() < QUATERNION_EPSILON) {
-    error.tail<3>().setZero();
+    error.tail<3>().setZero();  // Handle numerical precision near identity
   } else {
-    // Orientation error as axis * angle
     error.tail<3>() = aa_error.axis() * aa_error.angle();
-    
-    // Clamp orientation error to maximum allowed
-    double error_norm = error.tail<3>().norm();
+
+    // Clamp orientation error to prevent excessive rotation commands
+    const double error_norm = error.tail<3>().norm();
     if (error_norm > MAX_ORIENTATION_ERROR) {
       error.tail<3>() *= MAX_ORIENTATION_ERROR / error_norm;
     }
   }
-  
   return error;
 }
 
@@ -154,59 +116,56 @@ Vector6d AdmittanceNode::computePoseError_tip_base()
 // Removed redundant manual parameter callback - using auto-generated parameter handling
 
 
+// Update 6x6 virtual mass matrix from parameters
+void AdmittanceNode::UpdateMassMatrix() {
+  // Build diagonal mass matrix from parameter array
+  M_.diagonal() = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6);
+  M_inverse_.diagonal() = M_.diagonal().cwiseInverse();
 
-void AdmittanceNode::updateMassMatrix()
-{
-  // Build diagonal mass matrix and compute inverse efficiently using Eigen
-  mass_.diagonal() = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6);
-  mass_inverse_.diagonal() = mass_.diagonal().cwiseInverse();
-  
-  // OPTIMIZATION: Also populate diagonal vector for better performance
-  mass_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6).cwiseInverse();
+  // Cache diagonal for optimized element-wise operations
+  M_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6).cwiseInverse();
 }
 
-
-void AdmittanceNode::updateDampingMatrix()
-{
+// Compute damping matrix using critical damping relationship: D = 2*ζ*√(M*K)
+void AdmittanceNode::UpdateDampingMatrix() {
   using namespace constants;
-  
-  // Compute damping matrix using direct parameter access
+
+  // Calculate critical damping for each DOF independently
   for (size_t i = 0; i < 6; ++i) {
-    // Use virtual stiffness for low/zero stiffness values  
-    double effective_stiffness = (params_.admittance.stiffness[i] <= 0.0) ? 
-                                 VIRTUAL_STIFFNESS : params_.admittance.stiffness[i];
-    
-    // Standard critical damping formula: D = 2*ζ*√(M*K)
-    double damping_value = 2.0 * params_.admittance.damping_ratio[i] * 
-                          std::sqrt(params_.admittance.mass[i] * effective_stiffness);
-    
-    damping_(i, i) = damping_value;
-    
-    // OPTIMIZATION: Also populate diagonal vector for better performance
-    damping_diag_(i) = damping_value;
+    // Use virtual stiffness when stiffness is zero (pure admittance mode)
+    const double effective_stiffness = (params_.admittance.stiffness[i] <= 0.0)
+                                           ? VIRTUAL_STIFFNESS
+                                           : params_.admittance.stiffness[i];
+
+    // Critical damping formula for stable second-order response
+    const double damping_value = 2.0 * params_.admittance.damping_ratio[i] *
+                                 std::sqrt(params_.admittance.mass[i] * effective_stiffness);
+
+    D_(i, i) = damping_value;
+    D_diag_(i) = damping_value;  // Cache for performance
   }
-  
-  // OPTIMIZATION: Also populate stiffness diagonal vector
+
+  // Update stiffness diagonal cache
   for (size_t i = 0; i < 6; ++i) {
-    stiffness_diag_(i) = params_.admittance.stiffness[i];
+    K_diag_(i) = params_.admittance.stiffness[i];
   }
 }
 
 
-// Convert Cartesian velocity to joint space using inverse kinematics
-bool AdmittanceNode::convertToJointSpace(
-    const Vector6d& cart_vel, 
-    const rclcpp::Duration& period)
-{
-  // Validate inputs and sizes
-  if (period.seconds() <= 0.0 || cart_vel.hasNaN() || params_.joints.empty() || 
-      joint_velocities_.size() < params_.joints.size() ||
-      joint_positions_.size() < params_.joints.size()) return false;
+// Transform Cartesian velocity to joint velocities using KDL inverse kinematics
+bool AdmittanceNode::ConvertToJointSpace(const Vector6d& cart_vel,
+                                        const rclcpp::Duration& period) {
+  // Validate input parameters and vector sizes
+  if (period.seconds() <= 0.0 || cart_vel.hasNaN() || params_.joints.empty() ||
+      v_.size() < params_.joints.size() ||
+      q_.size() < params_.joints.size()) {
+    return false;
+  }
   
   // Get current joint positions from sensor data (read-only)
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    current_pos_ = joint_positions_;  // Use sensor positions for IK
+    q_current_ = q_;  // Use sensor positions for IK
   }
   
   // Check KDL readiness
@@ -216,9 +175,9 @@ bool AdmittanceNode::convertToJointSpace(
   }
 
   // Convert to KDL types
-  KDL::JntArray q_current(kdl_chain_.getNrOfJoints());
-  for (size_t i = 0; i < std::min(current_pos_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
-    q_current(i) = current_pos_[i];
+  KDL::JntArray q_kdl(kdl_chain_.getNrOfJoints());
+  for (size_t i = 0; i < std::min(q_current_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
+    q_kdl(i) = q_current_[i];
   }
 
   // Send Cartesian velocity directly to KDL (CORRECT: velocity → velocity)
@@ -231,48 +190,38 @@ bool AdmittanceNode::convertToJointSpace(
   cart_twist.rot.z(cart_vel(5));
 
   // Solve for joint velocities using KDL
-  KDL::JntArray q_dot(kdl_chain_.getNrOfJoints());
-  if (ik_vel_solver_->CartToJnt(q_current, cart_twist, q_dot) < 0) {
+  KDL::JntArray v_kdl(kdl_chain_.getNrOfJoints());
+  if (ik_vel_solver_->CartToJnt(q_kdl, cart_twist, v_kdl) < 0) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "KDL IK velocity solver failed");
     return false;
   }
 
   // Store joint velocities directly (CORRECT: velocity → velocity)
-  for (size_t i = 0; i < std::min(joint_velocities_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
-    joint_velocities_[i] = q_dot(i);  // [rad/s]
-    if (std::isnan(joint_velocities_[i])) return false;
+  for (size_t i = 0; i < std::min(v_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
+    v_[i] = v_kdl(i);  // [rad/s]
+    if (std::isnan(v_[i])) return false;
   }
-  
-  // INTEGRATION REMOVED: Now done in thread's integrateAndPublish() method
-  // joint_positions_[i] = current_pos_[i] + joint_velocities_[i] * period.seconds();
   
   return true;
 }
 
-bool AdmittanceNode::handleDriftReset()
-{
-  desired_vel_.setZero();
+// Reset velocity states and update reference pose to eliminate drift
+bool AdmittanceNode::HandleDriftReset() {
+  // Clear velocity states
+  V_base_tip_desired_.setZero();
   V_base_tip_base_.setZero();
-  
-  // Update desired pose to current pose (reset reference)
+
+  // Reset reference pose to current pose (eliminates accumulated error)
   {
     std::lock_guard<std::mutex> lock(desired_pose_mutex_);
     X_base_tip_desired_ = X_base_tip_current_;
   }
-  
-  RCLCPP_DEBUG(get_logger(), "Drift reset: desired pose updated to current pose");
-  
+
+  RCLCPP_DEBUG(get_logger(), "Drift compensation: reference pose updated");
   return true;
 }
 
-
-
-
-
-// Removed unused safeStop() function
-
-bool AdmittanceNode::validatePoseErrorSafety(const Vector6d& pose_error)
-{
+bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
   using namespace constants;
   
   // Check position error magnitude
@@ -295,12 +244,11 @@ bool AdmittanceNode::validatePoseErrorSafety(const Vector6d& pose_error)
 }
 
 // Unified control step - everything in one blazing-fast function
-bool AdmittanceNode::unifiedControlStep(double dt)
-{
+bool AdmittanceNode::UnifiedControlStep(double dt) {
   // 1. Lazy kinematics initialization
   if (!kinematics_ready_) {
     if (robot_description_received_.load()) {
-      loadKinematics();
+      LoadKinematics();
     }
     if (!kinematics_ready_) {
       return false;
@@ -309,7 +257,7 @@ bool AdmittanceNode::unifiedControlStep(double dt)
   
   // 2. Initialize desired pose to current robot pose (only once)
   if (!desired_pose_initialized_.load()) {
-    if (!initializeDesiredPose()) {
+    if (!InitializeDesiredPose()) {
       return false;
     }
   }
@@ -317,34 +265,34 @@ bool AdmittanceNode::unifiedControlStep(double dt)
   // 2.5. Check for parameter updates (auto-generated parameter library)
   if (param_listener_->is_old(params_)) {
     params_ = param_listener_->get_params();
-    updateMassMatrix();
-    updateDampingMatrix();
+    UpdateMassMatrix();
+    UpdateDampingMatrix();
     // Update stiffness matrix
     for (size_t i = 0; i < 6; ++i) {
-      stiffness_(i, i) = params_.admittance.stiffness[i];
+      K_(i, i) = params_.admittance.stiffness[i];
     }
   }
   
   // 3. Update current pose
-  if (!getCurrentEndEffectorPose(X_base_tip_current_)) {
+  if (!GetCurrentEndEffectorPose(X_base_tip_current_)) {
     return false;
   }
   
   // 4. Check deadband
-  if (!checkDeadband()) {
+  if (!CheckDeadband()) {
     V_base_tip_base_.setZero();
-    desired_vel_.setZero();
+    V_base_tip_desired_.setZero();
     // Zero velocities - robot stops
-    for (size_t i = 0; i < joint_velocities_.size(); ++i) {
-      joint_velocities_[i] = 0.0;
+    for (size_t i = 0; i < v_.size(); ++i) {
+      v_[i] = 0.0;
     }
   } else {
     // 5. Compute admittance control (OPTIMIZED version)
     Vector6d cmd_vel;
     rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
-    if (computeAdmittanceControl(period, cmd_vel)) {
+    if (ComputeAdmittanceControl(period, cmd_vel)) {
       // 6. Convert to joint space
-      if (convertToJointSpace(cmd_vel, period)) {
+      if (ConvertToJointSpace(cmd_vel, period)) {
         V_base_tip_base_ = cmd_vel;
       } else {
         return false;
@@ -358,9 +306,9 @@ bool AdmittanceNode::unifiedControlStep(double dt)
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
     for (size_t i = 0; i < params_.joints.size() && 
-                       i < joint_velocities_.size() && 
-                       i < joint_positions_cmd_.size(); ++i) {
-      joint_positions_cmd_[i] += joint_velocities_[i] * dt;  // Command integration only
+                       i < v_.size() && 
+                       i < q_cmd_.size(); ++i) {
+      q_cmd_[i] += v_[i] * dt;  // Command integration only
     }
   }
   
@@ -368,9 +316,9 @@ bool AdmittanceNode::unifiedControlStep(double dt)
   trajectory_msg_.header.stamp = now();
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    trajectory_msg_.points[0].positions = joint_positions_cmd_;  // Use command positions
+    trajectory_msg_.points[0].positions = q_cmd_;  // Use command positions
   }
-  trajectory_msg_.points[0].velocities = joint_velocities_;
+  trajectory_msg_.points[0].velocities = v_;
   trajectory_pub_->publish(trajectory_msg_);
   
   return true;
