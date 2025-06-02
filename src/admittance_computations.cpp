@@ -125,6 +125,15 @@ void AdmittanceNode::UpdateMassMatrix() {
   M_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6).cwiseInverse();
 }
 
+// Update stiffness matrix and diagonal cache from parameters
+void AdmittanceNode::UpdateStiffnessMatrix() {
+  // Update both matrix and diagonal cache consistently
+  for (size_t i = 0; i < 6; ++i) {
+    K_(i, i) = params_.admittance.stiffness[i];
+    K_diag_(i) = params_.admittance.stiffness[i];
+  }
+}
+
 // Compute damping matrix using critical damping relationship: D = 2*ζ*√(M*K)
 void AdmittanceNode::UpdateDampingMatrix() {
   using namespace constants;
@@ -143,13 +152,15 @@ void AdmittanceNode::UpdateDampingMatrix() {
     D_(i, i) = damping_value;
     D_diag_(i) = damping_value;  // Cache for performance
   }
-
-  // Update stiffness diagonal cache
-  for (size_t i = 0; i < 6; ++i) {
-    K_diag_(i) = params_.admittance.stiffness[i];
-  }
 }
 
+// Update all admittance matrices (M, D, K) consistently
+void AdmittanceNode::UpdateAdmittanceMatrices() {
+  // Update in correct order: M and K first, then D (which depends on both)
+  UpdateMassMatrix();      // M depends on nothing
+  UpdateStiffnessMatrix(); // K depends on nothing  
+  UpdateDampingMatrix();   // D depends on M and K
+}
 
 // Transform Cartesian velocity to joint velocities using KDL inverse kinematics
 bool AdmittanceNode::ConvertToJointSpace(const Vector6d& cart_vel,
@@ -258,12 +269,7 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
   // 2.5. Check for parameter updates (auto-generated parameter library)
   if (param_listener_->is_old(params_)) {
     params_ = param_listener_->get_params();
-    UpdateMassMatrix();
-    UpdateDampingMatrix();
-    // Update stiffness matrix
-    for (size_t i = 0; i < 6; ++i) {
-      K_(i, i) = params_.admittance.stiffness[i];
-    }
+    UpdateAdmittanceMatrices();
   }
   
   // 3. Update current pose

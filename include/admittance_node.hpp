@@ -55,6 +55,8 @@ class AdmittanceNode : public rclcpp::Node {
   Vector6d ComputePoseError_tip_base();
   void UpdateMassMatrix();
   void UpdateDampingMatrix();
+  void UpdateStiffnessMatrix();
+  void UpdateAdmittanceMatrices();
   // Coordinate transformations and motion processing
   bool ConvertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
   bool HandleDriftReset();

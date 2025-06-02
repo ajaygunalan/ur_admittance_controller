@@ -56,13 +56,8 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   if (!LoadKinematics()) {
     RCLCPP_ERROR(get_logger(), "Failed to initialize kinematics - robot_state_publisher may not be ready");
   }
-  // Configure admittance matrices from parameters
-  UpdateMassMatrix();
-  UpdateDampingMatrix();
-  // Set up stiffness matrix from parameters (6-DOF: xyz + rpy)
-  for (size_t i = 0; i < 6; ++i) {
-    K_(i, i) = params_.admittance.stiffness[i];
-  }
+  // Configure all admittance matrices from parameters
+  UpdateAdmittanceMatrices();
   // Pre-allocate trajectory message to avoid real-time memory allocation
   trajectory_msg_.joint_names = params_.joints;
   trajectory_msg_.points.resize(1);
