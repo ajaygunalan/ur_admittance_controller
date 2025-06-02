@@ -85,52 +85,36 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions & options)
   
   // No more thread communication overhead
   
-  // Start unified control thread - optimized for controller_manager rate
-  RCLCPP_INFO(get_logger(), "Starting unified control thread at %.0fHz (optimized for controller_manager)", 
+  // Start unified control timer - optimized for controller_manager rate
+  RCLCPP_INFO(get_logger(), "Starting unified control timer at %.0fHz (ROS2 standard)", 
     constants::TARGET_CONTROL_RATE_HZ);
-  running_.store(true);
-  control_thread_ = std::thread(&AdmittanceNode::controlThreadFunction, this);
+  control_timer_ = create_wall_timer(
+    std::chrono::duration<double>(constants::MIN_CONTROL_PERIOD_SEC),
+    std::bind(&AdmittanceNode::controlTimerCallback, this));
     
   RCLCPP_INFO(get_logger(), "Admittance Node initialized successfully");
 }
 
-AdmittanceNode::~AdmittanceNode()
-{
-  // Stop control thread if running
-  if (running_.load()) {
-    running_.store(false);
-    if (control_thread_.joinable()) {
-      control_thread_.join();
-    }
-  }
-}
+AdmittanceNode::~AdmittanceNode() = default;
+// ROS2 automatically cleans up timer when node is destroyed
 
-// Removed wasteful timer callback - merged into unified control thread
+// ROS2 timer callback - runs at 500Hz automatically
 
-void AdmittanceNode::controlThreadFunction()
+void AdmittanceNode::controlTimerCallback()
 {
-  RCLCPP_INFO(get_logger(), "Unified control thread running at %.0fHz (matched to controller_manager)", 
-    constants::TARGET_CONTROL_RATE_HZ);
+  // Timer automatically runs at 500Hz (2ms intervals)
+  // Calculate dt for this specific callback
+  static auto last_time = std::chrono::steady_clock::now();
+  auto current_time = std::chrono::steady_clock::now();
+  auto period_ns = current_time - last_time;
+  double dt = period_ns.count() * 1e-9;  // Convert to seconds
   
-  auto last_time = std::chrono::steady_clock::now();
-  
-  while (rclcpp::ok() && running_.load()) {
-    auto current_time = std::chrono::steady_clock::now();
-    auto period_ns = current_time - last_time;
-    double dt = period_ns.count() * 1e-9;  // Convert to seconds
-    
-    // Run at 500Hz to match controller_manager rate (prevent wasted CPU cycles)
-    if (dt >= constants::MIN_CONTROL_PERIOD_SEC) {  // 2ms = 500Hz optimal rate
-      if (unifiedControlStep(dt)) {
-        last_time = current_time;
-      }
-    }
-    
-    // Brief yield to prevent complete CPU starvation of other threads
-    std::this_thread::yield();
+  // Execute unified control step
+  if (unifiedControlStep(dt)) {
+    last_time = current_time;
   }
   
-  RCLCPP_INFO(get_logger(), "Unified control thread stopped");
+  // Note: No while loop, no yield needed - ROS2 timer handles scheduling
 }
 
 void AdmittanceNode::wrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg)

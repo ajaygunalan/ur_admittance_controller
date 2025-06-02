@@ -99,10 +99,9 @@ private:
   
   
   
-  // Unified control thread - maximum speed, no rate limiting
-  std::thread control_thread_;
-  std::atomic<bool> running_{false};
-  void controlThreadFunction();
+  // Control timer for 500Hz admittance control (ROS2 standard)
+  rclcpp::TimerBase::SharedPtr control_timer_;
+  void controlTimerCallback();
   
   // Parameters (reuse existing param structure)
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
