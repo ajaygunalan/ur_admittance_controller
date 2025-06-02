@@ -69,13 +69,17 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       "/admittance_node/desired_pose",
       10,
       std::bind(&AdmittanceNode::DesiredPoseCallback, this, std::placeholders::_1));
-  // Note: URDF robot model obtained directly from parameter server in LoadKinematics()
+  // Subscribe to robot description from robot_state_publisher
+  robot_description_sub_ = create_subscription<std_msgs::msg::String>(
+      "/robot_description",
+      rclcpp::QoS(1).transient_local().reliable(),
+      std::bind(&AdmittanceNode::RobotDescriptionCallback, this, std::placeholders::_1));
   // Publish joint trajectory commands to UR controller
   trajectory_pub_ = create_publisher<trajectory_msgs::msg::JointTrajectory>(
       "/scaled_joint_trajectory_controller/joint_trajectory", 1);
-  // Initialize kinematics directly from parameter server
+  // Try to initialize kinematics (will succeed if robot_description is already published)
   if (!LoadKinematics()) {
-    throw std::runtime_error("Failed to initialize kinematics - cannot start controller without kinematics");
+    RCLCPP_WARN(get_logger(), "Waiting for robot_description to be published...");
   }
   // Configure all admittance matrices from parameters
   UpdateAdmittanceMatrices();
@@ -103,10 +107,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       std::chrono::duration<double>(constants::MIN_CONTROL_PERIOD_SEC),
       std::bind(&AdmittanceNode::ControlTimerCallback, this));
   
-  // Initialize desired pose to current robot pose (one time only)
-  if (!InitializeDesiredPose()) {
-    RCLCPP_WARN(get_logger(), "Could not initialize desired pose yet - will retry");
-  }
+  // Don't initialize desired pose here - wait for TF to be ready
   
   RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
 }
@@ -115,6 +116,16 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 
 // Control timer callback (100Hz) - main admittance control loop
 void AdmittanceNode::ControlTimerCallback() {
+  // Skip control if kinematics not ready
+  if (!kinematics_initialized_) {
+    return;
+  }
+  
+  // Try to initialize desired pose if not done yet
+  if (!desired_pose_initialized_ && !InitializeDesiredPose()) {
+    return;  // Wait for valid TF transform
+  }
+  
   // Compute precise time step for this control iteration
   const auto current_time = std::chrono::steady_clock::now();
   const auto period_ns = current_time - last_control_time_;
@@ -141,10 +152,22 @@ void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::Con
 
   // Transform wrench from sensor frame to robot base frame
   Vector6d wrench_transformed = TransformWrench(raw_wrench);
+  
+  // Initialize force bias on first reading (gravity compensation)
+  if (!force_bias_initialized_) {
+    force_bias_ = wrench_transformed;
+    force_bias_initialized_ = true;
+    RCLCPP_INFO(get_logger(), "Force sensor bias recorded: F=[%.2f, %.2f, %.2f] N, T=[%.2f, %.2f, %.2f] Nm",
+                force_bias_(0), force_bias_(1), force_bias_(2),
+                force_bias_(3), force_bias_(4), force_bias_(5));
+  }
+  
+  // Apply bias compensation (subtract gravity and sensor offsets)
+  Vector6d wrench_compensated = wrench_transformed - force_bias_;
 
   // Apply exponential moving average filter to reduce sensor noise
   const double alpha = params_.admittance.filter_coefficient;
-  Vector6d filtered_wrench = alpha * wrench_transformed + (1.0 - alpha) * Wrench_tcp_base_;
+  Vector6d filtered_wrench = alpha * wrench_compensated + (1.0 - alpha) * Wrench_tcp_base_;
   
   // Apply deadband at source - only update if above threshold
   bool above_threshold = false;
@@ -190,21 +213,25 @@ void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::Cons
   }
 }
 
-// Note: RobotDescriptionCallback removed - getting URDF directly from parameter server
-
-
-
-// Initialize KDL kinematics from URDF parameter (leverages robot_state_publisher)
-bool AdmittanceNode::LoadKinematics() {
-  // Get robot description directly from parameter server (robot_state_publisher sets this)
-  std::string urdf_string;
-  if (!get_parameter("robot_description", urdf_string)) {
-    RCLCPP_WARN(get_logger(), "robot_description parameter not found - robot_state_publisher not ready?");
-    return false;
+// Callback for robot description updates from robot_state_publisher
+void AdmittanceNode::RobotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg) {
+  RCLCPP_INFO(get_logger(), "Received robot description from topic");
+  robot_description_ = msg->data;
+  
+  // Initialize kinematics if not already done
+  if (!kinematics_initialized_ && LoadKinematics()) {
+    kinematics_initialized_ = true;
+    RCLCPP_INFO(get_logger(), "Kinematics successfully initialized from robot description");
   }
+}
 
+// Initialize KDL kinematics from URDF
+bool AdmittanceNode::LoadKinematics() {
+  // Use cached URDF from robot_description topic subscription
+  std::string urdf_string = robot_description_;
+  
   if (urdf_string.empty()) {
-    RCLCPP_ERROR(get_logger(), "robot_description parameter is empty");
+    RCLCPP_WARN(get_logger(), "robot_description not yet received from topic");
     return false;
   }
 
@@ -254,7 +281,19 @@ bool AdmittanceNode::InitializeDesiredPose() {
 
   // Get current end-effector pose from transforms
   Eigen::Isometry3d current_pose = Eigen::Isometry3d::Identity();
-  GetCurrentEndEffectorPose(current_pose);
+  
+  // Try to get valid transform with timeout
+  try {
+    const auto transform = tf_buffer_->lookupTransform(
+        params_.base_link,
+        params_.tip_link,
+        tf2::TimePointZero,
+        std::chrono::seconds(1));  // Wait up to 1 second
+    current_pose = tf2::transformToEigen(transform);
+  } catch (const tf2::TransformException& ex) {
+    RCLCPP_WARN(get_logger(), "Cannot initialize desired pose yet - TF not ready: %s", ex.what());
+    return false;  // Try again later
+  }
 
   // Set reference pose to current pose (ensures zero initial error)
   X_tcp_base_desired_ = current_pose;

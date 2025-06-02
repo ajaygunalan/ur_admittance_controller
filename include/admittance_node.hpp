@@ -47,6 +47,7 @@ class AdmittanceNode : public rclcpp::Node {
   void WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
   void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
   void DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
+  void RobotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   // System initialization and setup
   bool LoadKinematics();
   bool InitializeDesiredPose();
@@ -69,6 +70,7 @@ class AdmittanceNode : public rclcpp::Node {
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robot_description_sub_;
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
   // Control timer (100Hz) for trajectory streaming admittance control
   rclcpp::TimerBase::SharedPtr control_timer_;
@@ -86,11 +88,13 @@ class AdmittanceNode : public rclcpp::Node {
   std::vector<double> q_cmd_;                // Integrated command positions  
   std::vector<double> q_dot_cmd_;            // Computed command joint velocities
   geometry_msgs::msg::WrenchStamped current_wrench_;
-  // Note: URDF robot model obtained directly from parameter server (no caching needed)
+  // URDF robot model storage
+  std::string robot_description_;
+  bool kinematics_initialized_ = false;
   // Reference pose management for admittance control
   bool desired_pose_initialized_ = false;
   // Core admittance control state vectors (6-DOF: xyz + rpy) 
-  Vector6d Wrench_tcp_base_;         // External forces/torques in base frame (filtered)
+  Vector6d Wrench_tcp_base_;         // External forces/torques in base frame (filtered & bias-compensated)
   Vector6d V_tcp_base_commanded_;    // Commanded Cartesian velocity output
   Vector6d V_tcp_base_desired_;      // Internal velocity state from admittance equation
   // Admittance equation matrices: M*accel + D*vel + K*pos = F_external
@@ -115,6 +119,9 @@ class AdmittanceNode : public rclcpp::Node {
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_; // WDLS velocity solver
   // Control loop timing - member variable for thread safety
   std::chrono::steady_clock::time_point last_control_time_;
+  // Force sensor bias compensation
+  bool force_bias_initialized_ = false;
+  Vector6d force_bias_ = Vector6d::Zero();
 };
 
 }  // namespace ur_admittance_controller
