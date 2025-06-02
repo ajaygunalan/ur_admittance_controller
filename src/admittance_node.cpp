@@ -75,7 +75,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       "/scaled_joint_trajectory_controller/joint_trajectory", 1);
   // Initialize kinematics directly from parameter server
   if (!LoadKinematics()) {
-    RCLCPP_ERROR(get_logger(), "Failed to initialize kinematics - robot_state_publisher may not be ready");
+    throw std::runtime_error("Failed to initialize kinematics - cannot start controller without kinematics");
   }
   // Configure all admittance matrices from parameters
   UpdateAdmittanceMatrices();
@@ -216,8 +216,6 @@ bool AdmittanceNode::LoadKinematics() {
     // Set damping factor for singularity robustness
     constexpr double kDampingFactor = 0.01;
     ik_vel_solver_->setLambda(kDampingFactor);
-
-    kinematics_ready_ = true;
 
     RCLCPP_INFO(get_logger(), "KDL kinematics ready: %s -> %s (%d joints, %d segments)",
                 params_.base_link.c_str(), params_.tip_link.c_str(),

@@ -164,12 +164,6 @@ bool AdmittanceNode::ConvertToJointSpace(const Vector6d& cart_vel,
   // Get current joint positions from sensor data (already in q_current_)
   // No need to copy - q_current_ is already updated by JointStateCallback
   
-  // Check KDL readiness
-  if (!kinematics_ready_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "KDL kinematics not ready, waiting for initialization");
-    return false;
-  }
-
   // Convert to KDL types
   KDL::JntArray q_kdl(kdl_chain_.getNrOfJoints());
   for (size_t i = 0; i < std::min(q_current_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
@@ -226,14 +220,7 @@ bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
 
 // Unified control step - everything in one blazing-fast function
 bool AdmittanceNode::UnifiedControlStep(double dt) {
-  // 1. Check kinematics readiness (initialized in constructor)
-  if (!kinematics_ready_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, 
-                         "Kinematics not ready - LoadKinematics() failed in constructor");
-    return false;
-  }
-  
-  // 2. Update current pose
+  // 1. Update current pose
   if (!GetCurrentEndEffectorPose(X_tcp_base_current_)) {
     return false;
   }
