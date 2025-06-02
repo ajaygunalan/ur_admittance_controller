@@ -51,14 +51,7 @@ bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Ve
       V_tcp_base_desired_(i) = 0.0;
     }
   }
-  // Handle drift compensation when motion is minimal
-  if (V_tcp_base_desired_.norm() < params_.admittance.drift_reset_threshold) {
-    if (!HandleDriftReset()) {
-      return false;
-    }
-    cmd_vel_out.setZero();
-    return true;
-  }
+  // No drift reset - user controls desired pose via topic
   // Output final Cartesian velocity command
   cmd_vel_out = V_tcp_base_desired_;
   return true;
@@ -69,12 +62,8 @@ bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Ve
 Vector6d AdmittanceNode::ComputePoseError_tip_base() {
   Vector6d error = Vector6d::Zero();
 
-  // Safely access reference pose
-  Eigen::Isometry3d desired_pose;
-  {
-    std::lock_guard<std::mutex> lock(desired_pose_mutex_);
-    desired_pose = X_tcp_base_desired_;
-  }
+  // Access reference pose (no mutex needed - single threaded)
+  Eigen::Isometry3d desired_pose = X_tcp_base_desired_;
   // Compute position error as simple vector difference
   error.head<3>() = desired_pose.translation() - X_tcp_base_current_.translation();
   // Extract rotation matrices for orientation error computation
@@ -212,21 +201,6 @@ bool AdmittanceNode::ConvertToJointSpace(const Vector6d& cart_vel,
   return true;
 }
 
-// Reset velocity states and update reference pose to eliminate drift
-bool AdmittanceNode::HandleDriftReset() {
-  // Clear velocity states
-  V_tcp_base_desired_.setZero();
-  V_tcp_base_commanded_.setZero();
-
-  // Reset reference pose to current pose (eliminates accumulated error)
-  {
-    std::lock_guard<std::mutex> lock(desired_pose_mutex_);
-    X_tcp_base_desired_ = X_tcp_base_current_;
-  }
-
-  RCLCPP_DEBUG(get_logger(), "Drift compensation: reference pose updated");
-  return true;
-}
 
 bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
   using namespace constants;
@@ -259,14 +233,7 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
     return false;
   }
   
-  // 2. Initialize desired pose to current robot pose (only once)
-  if (!desired_pose_initialized_.load()) {
-    if (!InitializeDesiredPose()) {
-      return false;
-    }
-  }
-  
-  // 2.5. Check for parameter updates (auto-generated parameter library)
+  // 2. Check for parameter updates (auto-generated parameter library)
   if (param_listener_->is_old(params_)) {
     params_ = param_listener_->get_params();
     UpdateAdmittanceMatrices();
@@ -298,22 +265,16 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
     }
   }
   
-  // 7. Integrate command positions (RACE CONDITION FIX: separate from sensor data)
-  {
-    std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    for (size_t i = 0; i < params_.joints.size() && 
-                       i < q_dot_cmd_.size() && 
-                       i < q_cmd_.size(); ++i) {
-      q_cmd_[i] += q_dot_cmd_[i] * dt;  // Command integration only
-    }
+  // 7. Integrate command positions
+  for (size_t i = 0; i < params_.joints.size() && 
+                     i < q_dot_cmd_.size() && 
+                     i < q_cmd_.size(); ++i) {
+    q_cmd_[i] += q_dot_cmd_[i] * dt;  // Command integration
   }
   
-  // 8. Publish trajectory command using command positions (RACE CONDITION FIX)
+  // 8. Publish trajectory command using command positions
   trajectory_msg_.header.stamp = now();
-  {
-    std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    trajectory_msg_.points[0].positions = q_cmd_;  // Use command positions
-  }
+  trajectory_msg_.points[0].positions = q_cmd_;  // Use command positions
   trajectory_msg_.points[0].velocities = q_dot_cmd_;
   trajectory_pub_->publish(trajectory_msg_);
   

@@ -48,6 +48,11 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       "/joint_states",
       10,
       std::bind(&AdmittanceNode::JointStateCallback, this, std::placeholders::_1));
+  // Subscribe to desired pose updates
+  desired_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+      "/admittance_node/desired_pose",
+      10,
+      std::bind(&AdmittanceNode::DesiredPoseCallback, this, std::placeholders::_1));
   // Note: URDF robot model obtained directly from parameter server in LoadKinematics()
   // Publish joint trajectory commands to UR controller
   trajectory_pub_ = create_publisher<trajectory_msgs::msg::JointTrajectory>(
@@ -81,6 +86,12 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   control_timer_ = create_wall_timer(
       std::chrono::duration<double>(constants::MIN_CONTROL_PERIOD_SEC),
       std::bind(&AdmittanceNode::ControlTimerCallback, this));
+  
+  // Initialize desired pose to current robot pose (one time only)
+  if (!InitializeDesiredPose()) {
+    RCLCPP_WARN(get_logger(), "Could not initialize desired pose yet - will retry");
+  }
+  
   RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
 }
 
@@ -105,7 +116,6 @@ void AdmittanceNode::ControlTimerCallback() {
 
 // Process incoming force/torque sensor data with filtering and coordinate transforms
 void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  std::lock_guard<std::mutex> lock(wrench_mutex_);
   current_wrench_ = *msg;
 
   // Extract 6-DOF wrench data (forces + torques)
@@ -121,9 +131,8 @@ void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::Con
   Wrench_tcp_base_ = alpha * wrench_transformed + (1.0 - alpha) * Wrench_tcp_base_;
 }
 
-// Update robot joint state from sensor feedback with thread-safe access
+// Update robot joint state from sensor feedback
 void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
-  std::lock_guard<std::mutex> lock(joint_state_mutex_);
 
   // Map joint positions and velocities by name to handle different joint ordering
   for (size_t i = 0; i < params_.joints.size(); ++i) {
@@ -209,7 +218,7 @@ bool AdmittanceNode::LoadKinematics() {
 
 // Set reference pose to current robot position (zero initial error)
 bool AdmittanceNode::InitializeDesiredPose() {
-  if (desired_pose_initialized_.load()) {
+  if (desired_pose_initialized_) {
     return true;  // Already initialized
   }
 
@@ -222,12 +231,8 @@ bool AdmittanceNode::InitializeDesiredPose() {
   }
 
   // Set reference pose to current pose (ensures zero initial error)
-  {
-    std::lock_guard<std::mutex> lock(desired_pose_mutex_);
-    X_tcp_base_desired_ = current_pose;
-  }
-
-  desired_pose_initialized_.store(true);
+  X_tcp_base_desired_ = current_pose;
+  desired_pose_initialized_ = true;
 
   const auto& pos = current_pose.translation();
   RCLCPP_INFO(get_logger(), "Reference pose initialized at [%.3f, %.3f, %.3f] m",
@@ -236,6 +241,32 @@ bool AdmittanceNode::InitializeDesiredPose() {
   return true;
 }
 
+// Handle desired pose updates from ROS2 topic
+void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
+  // Convert geometry_msgs::Pose to Eigen::Isometry3d
+  Eigen::Isometry3d new_desired_pose = Eigen::Isometry3d::Identity();
+  
+  // Set translation
+  new_desired_pose.translation() << msg->pose.position.x,
+                                    msg->pose.position.y,
+                                    msg->pose.position.z;
+  
+  // Set rotation from quaternion
+  Eigen::Quaterniond q(msg->pose.orientation.w,
+                       msg->pose.orientation.x,
+                       msg->pose.orientation.y,
+                       msg->pose.orientation.z);
+  q.normalize();
+  new_desired_pose.linear() = q.toRotationMatrix();
+  
+  // Update desired pose (no mutex needed - single threaded)
+  X_tcp_base_desired_ = new_desired_pose;
+  
+  RCLCPP_INFO(get_logger(), "Desired pose updated to [%.3f, %.3f, %.3f]",
+              new_desired_pose.translation().x(),
+              new_desired_pose.translation().y(),
+              new_desired_pose.translation().z());
+}
 
 }  // namespace ur_admittance_controller
 
