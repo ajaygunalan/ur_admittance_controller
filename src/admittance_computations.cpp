@@ -218,12 +218,10 @@ bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
 
 // Unified control step - everything in one blazing-fast function
 bool AdmittanceNode::UnifiedControlStep(double dt) {
-  // 1. Update current pose
-  if (!GetCurrentEndEffectorPose(X_tcp_base_current_)) {
-    return false;
-  }
+  // Update current pose from TF2
+  GetCurrentEndEffectorPose(X_tcp_base_current_);
   
-  // 4. Check deadband
+  // Check deadband
   if (!CheckDeadband()) {
     V_tcp_base_commanded_.setZero();
     // Note: Keep V_tcp_base_desired_ for dynamics continuity

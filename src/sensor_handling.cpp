@@ -42,7 +42,7 @@ Vector6d AdmittanceNode::TransformWrench(const Vector6d& wrench_sensor_frame) {
 }
 
 // Get current end-effector pose in base frame using TF2 transforms
-bool AdmittanceNode::GetCurrentEndEffectorPose(Eigen::Isometry3d& pose) {
+void AdmittanceNode::GetCurrentEndEffectorPose(Eigen::Isometry3d& pose) {
   try {
     // Look up transform from base to end-effector
     const auto transform = tf_buffer_->lookupTransform(
@@ -52,12 +52,11 @@ bool AdmittanceNode::GetCurrentEndEffectorPose(Eigen::Isometry3d& pose) {
         std::chrono::milliseconds(50));
     // Convert to Eigen pose representation
     pose = tf2::transformToEigen(transform);
-    return true;
-
   } catch (const tf2::TransformException& ex) {
+    // If transform fails, pose stays at previous value
+    // This is fine - better than stopping the controller
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
                          "Transform lookup failed (base->tip): %s", ex.what());
-    return false;
   }
 }
 

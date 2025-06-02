@@ -237,12 +237,8 @@ bool AdmittanceNode::InitializeDesiredPose() {
   }
 
   // Get current end-effector pose from transforms
-  Eigen::Isometry3d current_pose;
-  if (!GetCurrentEndEffectorPose(current_pose)) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                         "Waiting for transforms to initialize reference pose");
-    return false;
-  }
+  Eigen::Isometry3d current_pose = Eigen::Isometry3d::Identity();
+  GetCurrentEndEffectorPose(current_pose);
 
   // Set reference pose to current pose (ensures zero initial error)
   X_tcp_base_desired_ = current_pose;

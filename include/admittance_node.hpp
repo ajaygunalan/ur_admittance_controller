@@ -65,7 +65,7 @@ class AdmittanceNode : public rclcpp::Node {
   bool ValidatePoseErrorSafety(const Vector6d& pose_error);
   // Transform utilities for coordinate frame conversions
   Vector6d TransformWrench(const Vector6d& wrench_sensor_frame);
-  bool GetCurrentEndEffectorPose(Eigen::Isometry3d& pose);
+  void GetCurrentEndEffectorPose(Eigen::Isometry3d& pose);
   // ROS2 communication interfaces
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
