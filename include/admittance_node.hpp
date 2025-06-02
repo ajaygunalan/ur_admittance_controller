@@ -51,7 +51,7 @@ class AdmittanceNode : public rclcpp::Node {
   bool LoadKinematics();
   bool InitializeDesiredPose();
   // Core admittance control algorithms
-  bool ComputeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
+  bool ComputeAdmittance(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
   Vector6d X_tcp_base_error();
   void UpdateMassMatrix();
   void UpdateDampingMatrix();
@@ -61,7 +61,7 @@ class AdmittanceNode : public rclcpp::Node {
   bool CartesianVelocityToJointVelocity(const Vector6d& cartesian_velocity);
   bool CheckDeadband();
   // Main control loop execution
-  bool UnifiedControlStep(double dt);
+  bool ControlStep(double dt);
   bool ValidatePoseErrorSafety(const Vector6d& pose_error);
   // Transform utilities for coordinate frame conversions
   Vector6d TransformWrench(const Vector6d& wrench_sensor_frame);

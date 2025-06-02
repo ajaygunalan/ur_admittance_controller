@@ -121,7 +121,7 @@ void AdmittanceNode::ControlTimerCallback() {
   const double dt = period_ns.count() * 1e-9;  // Convert nanoseconds to seconds
 
   // Execute main admittance control algorithm
-  if (UnifiedControlStep(dt)) {
+  if (ControlStep(dt)) {
     last_control_time_ = current_time;
   } else {
     // Handle control step failure - maintain previous command for safety

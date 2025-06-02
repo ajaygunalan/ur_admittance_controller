@@ -13,7 +13,7 @@ using namespace constants;
 // Solve admittance equation and integrate to compute Cartesian velocity commands
 // Mathematical model: M*acceleration + D*velocity + K*position_error = F_external
 // Solves for acceleration, then integrates: v_new = v_old + acceleration * dt
-bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out) {
+bool AdmittanceNode::ComputeAdmittance(const rclcpp::Duration& period, Vector6d& cmd_vel_out) {
   // Calculate 6-DOF pose error (position + orientation)
   error_tcp_base_ = X_tcp_base_error();
   if (error_tcp_base_.hasNaN()) {
@@ -216,8 +216,8 @@ bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
   return true;
 }
 
-// Unified control step - everything in one blazing-fast function
-bool AdmittanceNode::UnifiedControlStep(double dt) {
+// Main control step - executes complete admittance control algorithm
+bool AdmittanceNode::ControlStep(double dt) {
   // Update current pose from TF2
   GetCurrentEndEffectorPose(X_tcp_base_current_);
   
@@ -230,9 +230,9 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
       q_dot_cmd_[i] = 0.0;
     }
   } else {
-    // 5. Compute admittance control (OPTIMIZED version)
+    // 5. Compute admittance control
     rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
-    if (ComputeAdmittanceControl(period, V_tcp_base_commanded_)) {
+    if (ComputeAdmittance(period, V_tcp_base_commanded_)) {
       // 6. Convert to joint space
       if (!CartesianVelocityToJointVelocity(V_tcp_base_commanded_)) {
         return false;
