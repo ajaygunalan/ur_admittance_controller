@@ -65,7 +65,7 @@ bool AdmittanceNode::GetCurrentEndEffectorPose(Eigen::Isometry3d& pose) {
 bool AdmittanceNode::CheckDeadband() {
   // Check if any force/torque component exceeds minimum threshold
   for (size_t i = 0; i < 6; ++i) {
-    if (std::abs(F_sensor_filtered_(i)) > params_.admittance.min_motion_threshold) {
+    if (std::abs(Wrench_tcp_base_(i)) > params_.admittance.min_motion_threshold) {
       return true;  // Motion should be allowed
     }
   }

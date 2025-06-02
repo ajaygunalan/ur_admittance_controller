@@ -15,13 +15,13 @@ using namespace constants;
 // Solves for acceleration, then integrates: v_new = v_old + acceleration * dt
 bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out) {
   // Calculate 6-DOF pose error (position + orientation)
-  error_tip_base_ = ComputePoseError_tip_base();
-  if (error_tip_base_.hasNaN()) {
+  error_tcp_base_ = ComputePoseError_tip_base();
+  if (error_tcp_base_.hasNaN()) {
     return false;
   }
   
   // Enforce safety limits on pose error magnitude
-  if (!ValidatePoseErrorSafety(error_tip_base_)) {
+  if (!ValidatePoseErrorSafety(error_tcp_base_)) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
                          "Safety stop: pose error exceeds safe limits");
     return false;
@@ -35,24 +35,24 @@ bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Ve
   // Solve admittance equation for acceleration using optimized diagonal operations
   // acceleration = M^-1 * (F_external - D*velocity - K*position_error)
   const Vector6d acceleration = M_inverse_diag_.array() *
-      (F_sensor_filtered_.array() - D_diag_.array() * V_base_tip_desired_.array() -
-       K_diag_.array() * error_tip_base_.array());
+      (Wrench_tcp_base_.array() - D_diag_.array() * V_tcp_base_desired_.array() -
+       K_diag_.array() * error_tcp_base_.array());
   if (acceleration.hasNaN()) {
     return false;
   }
   // Forward Euler integration to update velocity
-  V_base_tip_desired_ = V_base_tip_desired_ + acceleration * dt;
-  if (V_base_tip_desired_.hasNaN()) {
+  V_tcp_base_desired_ = V_tcp_base_desired_ + acceleration * dt;
+  if (V_tcp_base_desired_.hasNaN()) {
     return false;
   }
   // Apply selective compliance - disable motion on specified axes
   for (size_t i = 0; i < 6; ++i) {
     if (!params_.admittance.enabled_axes[i]) {
-      V_base_tip_desired_(i) = 0.0;
+      V_tcp_base_desired_(i) = 0.0;
     }
   }
   // Handle drift compensation when motion is minimal
-  if (V_base_tip_desired_.norm() < params_.admittance.drift_reset_threshold) {
+  if (V_tcp_base_desired_.norm() < params_.admittance.drift_reset_threshold) {
     if (!HandleDriftReset()) {
       return false;
     }
@@ -60,8 +60,7 @@ bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Ve
     return true;
   }
   // Output final Cartesian velocity command
-  V_base_tip_base_ = V_base_tip_desired_;
-  cmd_vel_out = V_base_tip_base_;
+  cmd_vel_out = V_tcp_base_desired_;
   return true;
 }
 
@@ -74,12 +73,12 @@ Vector6d AdmittanceNode::ComputePoseError_tip_base() {
   Eigen::Isometry3d desired_pose;
   {
     std::lock_guard<std::mutex> lock(desired_pose_mutex_);
-    desired_pose = X_base_tip_desired_;
+    desired_pose = X_tcp_base_desired_;
   }
   // Compute position error as simple vector difference
-  error.head<3>() = desired_pose.translation() - X_base_tip_current_.translation();
+  error.head<3>() = desired_pose.translation() - X_tcp_base_current_.translation();
   // Extract rotation matrices for orientation error computation
-  const Eigen::Matrix3d R_current = X_base_tip_current_.rotation();
+  const Eigen::Matrix3d R_current = X_tcp_base_current_.rotation();
   const Eigen::Matrix3d R_desired = desired_pose.rotation();
   // Convert to unit quaternions for robust orientation representation
   Eigen::Quaterniond q_current(R_current);
@@ -157,16 +156,13 @@ bool AdmittanceNode::ConvertToJointSpace(const Vector6d& cart_vel,
                                         const rclcpp::Duration& period) {
   // Validate input parameters and vector sizes
   if (period.seconds() <= 0.0 || cart_vel.hasNaN() || params_.joints.empty() ||
-      v_.size() < params_.joints.size() ||
-      q_.size() < params_.joints.size()) {
+      q_dot_cmd_.size() < params_.joints.size() ||
+      q_current_.size() < params_.joints.size()) {
     return false;
   }
   
-  // Get current joint positions from sensor data (read-only)
-  {
-    std::lock_guard<std::mutex> lock(joint_state_mutex_);
-    q_current_ = q_;  // Use sensor positions for IK
-  }
+  // Get current joint positions from sensor data (already in q_current_)
+  // No need to copy - q_current_ is already updated by JointStateCallback
   
   // Check KDL readiness
   if (!kinematics_ready_) {
@@ -197,9 +193,9 @@ bool AdmittanceNode::ConvertToJointSpace(const Vector6d& cart_vel,
   }
 
   // Store joint velocities directly (CORRECT: velocity → velocity)
-  for (size_t i = 0; i < std::min(v_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
-    v_[i] = v_kdl(i);  // [rad/s]
-    if (std::isnan(v_[i])) return false;
+  for (size_t i = 0; i < std::min(q_dot_cmd_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
+    q_dot_cmd_[i] = v_kdl(i);  // [rad/s]
+    if (std::isnan(q_dot_cmd_[i])) return false;
   }
   
   return true;
@@ -208,13 +204,13 @@ bool AdmittanceNode::ConvertToJointSpace(const Vector6d& cart_vel,
 // Reset velocity states and update reference pose to eliminate drift
 bool AdmittanceNode::HandleDriftReset() {
   // Clear velocity states
-  V_base_tip_desired_.setZero();
-  V_base_tip_base_.setZero();
+  V_tcp_base_desired_.setZero();
+  V_tcp_base_commanded_.setZero();
 
   // Reset reference pose to current pose (eliminates accumulated error)
   {
     std::lock_guard<std::mutex> lock(desired_pose_mutex_);
-    X_base_tip_desired_ = X_base_tip_current_;
+    X_tcp_base_desired_ = X_tcp_base_current_;
   }
 
   RCLCPP_DEBUG(get_logger(), "Drift compensation: reference pose updated");
@@ -271,27 +267,24 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
   }
   
   // 3. Update current pose
-  if (!GetCurrentEndEffectorPose(X_base_tip_current_)) {
+  if (!GetCurrentEndEffectorPose(X_tcp_base_current_)) {
     return false;
   }
   
   // 4. Check deadband
   if (!CheckDeadband()) {
-    V_base_tip_base_.setZero();
-    V_base_tip_desired_.setZero();
+    V_tcp_base_commanded_.setZero();
+    // Note: Keep V_tcp_base_desired_ for dynamics continuity
     // Zero velocities - robot stops
-    for (size_t i = 0; i < v_.size(); ++i) {
-      v_[i] = 0.0;
+    for (size_t i = 0; i < q_dot_cmd_.size(); ++i) {
+      q_dot_cmd_[i] = 0.0;
     }
   } else {
     // 5. Compute admittance control (OPTIMIZED version)
-    Vector6d cmd_vel;
     rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
-    if (ComputeAdmittanceControl(period, cmd_vel)) {
+    if (ComputeAdmittanceControl(period, V_tcp_base_commanded_)) {
       // 6. Convert to joint space
-      if (ConvertToJointSpace(cmd_vel, period)) {
-        V_base_tip_base_ = cmd_vel;
-      } else {
+      if (!ConvertToJointSpace(V_tcp_base_commanded_, period)) {
         return false;
       }
     } else {
@@ -303,9 +296,9 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
   {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
     for (size_t i = 0; i < params_.joints.size() && 
-                       i < v_.size() && 
+                       i < q_dot_cmd_.size() && 
                        i < q_cmd_.size(); ++i) {
-      q_cmd_[i] += v_[i] * dt;  // Command integration only
+      q_cmd_[i] += q_dot_cmd_[i] * dt;  // Command integration only
     }
   }
   
@@ -315,7 +308,7 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
     std::lock_guard<std::mutex> lock(joint_state_mutex_);
     trajectory_msg_.points[0].positions = q_cmd_;  // Use command positions
   }
-  trajectory_msg_.points[0].velocities = v_;
+  trajectory_msg_.points[0].velocities = q_dot_cmd_;
   trajectory_pub_->publish(trajectory_msg_);
   
   return true;

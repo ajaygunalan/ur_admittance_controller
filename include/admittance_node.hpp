@@ -78,11 +78,11 @@ class AdmittanceNode : public rclcpp::Node {
   // TF2 transform system for coordinate frame management
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
-  // Robot state variables with thread-safe access (Drake notation: q, v)
-  std::vector<double> q_;                    // Current sensor joint positions
+  // Robot state variables with thread-safe access (Drake notation: q, q_dot)
+  std::vector<double> q_current_;            // Current sensor joint positions
+  std::vector<double> q_dot_current_;        // Current sensor joint velocities
   std::vector<double> q_cmd_;                // Integrated command positions  
-  std::vector<double> v_;                    // Computed joint velocities
-  std::vector<double> q_current_;            // Working copy for kinematics
+  std::vector<double> q_dot_cmd_;            // Computed command joint velocities
   geometry_msgs::msg::WrenchStamped current_wrench_;
   std::mutex wrench_mutex_;
   std::mutex joint_state_mutex_;
@@ -91,10 +91,9 @@ class AdmittanceNode : public rclcpp::Node {
   std::atomic<bool> desired_pose_initialized_{false};
   std::mutex desired_pose_mutex_;
   // Core admittance control state vectors (6-DOF: xyz + rpy) 
-  Vector6d F_sensor_base_;           // External forces/torques in base frame
-  Vector6d V_base_tip_base_;         // Commanded Cartesian velocity
-  Vector6d V_base_tip_desired_;      // Integrated velocity from admittance equation
-  Vector6d A_base_tip_desired_;      // Computed acceleration
+  Vector6d Wrench_tcp_base_;         // External forces/torques in base frame (filtered)
+  Vector6d V_tcp_base_commanded_;    // Commanded Cartesian velocity output
+  Vector6d V_tcp_base_desired_;      // Internal velocity state from admittance equation
   // Admittance equation matrices: M*accel + D*vel + K*pos = F_external
   Matrix6d M_;                  // Virtual mass matrix (6x6)
   Matrix6d M_inverse_;          // Precomputed mass inverse
@@ -105,11 +104,10 @@ class AdmittanceNode : public rclcpp::Node {
   Vector6d D_diag_;             // Diagonal elements of damping
   Vector6d K_diag_;             // Diagonal elements of stiffness
   // Pose representations for admittance control
-  Eigen::Isometry3d X_base_tip_current_;   // Current end-effector pose
-  Eigen::Isometry3d X_base_tip_desired_;   // Target reference pose
+  Eigen::Isometry3d X_tcp_base_current_;   // Current TCP pose
+  Eigen::Isometry3d X_tcp_base_desired_;   // Target reference TCP pose
   // Intermediate computation variables
-  Vector6d error_tip_base_;     // Pose error (desired - current)
-  Vector6d F_sensor_filtered_;  // Low-pass filtered F/T sensor data
+  Vector6d error_tcp_base_;     // Pose error (desired - current)
   // Pre-allocated ROS2 messages to avoid real-time allocations
   trajectory_msgs::msg::JointTrajectory trajectory_msg_;
   // KDL kinematics for inverse velocity solving
