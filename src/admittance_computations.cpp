@@ -245,14 +245,11 @@ bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
 
 // Unified control step - everything in one blazing-fast function
 bool AdmittanceNode::UnifiedControlStep(double dt) {
-  // 1. Lazy kinematics initialization
+  // 1. Check kinematics readiness (initialized in constructor)
   if (!kinematics_ready_) {
-    if (robot_description_received_.load()) {
-      LoadKinematics();
-    }
-    if (!kinematics_ready_) {
-      return false;
-    }
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, 
+                         "Kinematics not ready - LoadKinematics() failed in constructor");
+    return false;
   }
   
   // 2. Initialize desired pose to current robot pose (only once)

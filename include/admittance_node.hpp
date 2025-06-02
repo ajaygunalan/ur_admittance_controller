@@ -47,7 +47,6 @@ class AdmittanceNode : public rclcpp::Node {
   // ROS2 callback functions for sensor data processing
   void WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
   void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
-  void RobotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg);
   // System initialization and setup
   bool LoadKinematics();
   bool InitializeDesiredPose();
@@ -69,7 +68,6 @@ class AdmittanceNode : public rclcpp::Node {
   // ROS2 communication interfaces
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robot_description_sub_;
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
   // High-frequency control timer (500Hz) for real-time admittance control
   rclcpp::TimerBase::SharedPtr control_timer_;
@@ -88,10 +86,7 @@ class AdmittanceNode : public rclcpp::Node {
   geometry_msgs::msg::WrenchStamped current_wrench_;
   std::mutex wrench_mutex_;
   std::mutex joint_state_mutex_;
-  // URDF robot model data with thread-safe access
-  std::string robot_description_;
-  std::mutex robot_description_mutex_;
-  std::atomic<bool> robot_description_received_{false};
+  // Note: URDF robot model obtained directly from parameter server (no caching needed)
   // Reference pose management for admittance control
   std::atomic<bool> desired_pose_initialized_{false};
   std::mutex desired_pose_mutex_;

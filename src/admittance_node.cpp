@@ -50,15 +50,14 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       "/joint_states",
       10,
       std::bind(&AdmittanceNode::JointStateCallback, this, std::placeholders::_1));
-  // Subscribe to URDF robot model with persistent QoS
-  robot_description_sub_ = create_subscription<std_msgs::msg::String>(
-      "/robot_description",
-      rclcpp::QoS(1).transient_local(),
-      std::bind(&AdmittanceNode::RobotDescriptionCallback, this, std::placeholders::_1));
+  // Note: URDF robot model obtained directly from parameter server in LoadKinematics()
   // Publish joint trajectory commands to UR controller
   trajectory_pub_ = create_publisher<trajectory_msgs::msg::JointTrajectory>(
       "/scaled_joint_trajectory_controller/joint_trajectory", 1);
-  // Note: Kinematics setup occurs lazily when robot_description is received
+  // Initialize kinematics directly from parameter server
+  if (!LoadKinematics()) {
+    RCLCPP_ERROR(get_logger(), "Failed to initialize kinematics - robot_state_publisher may not be ready");
+  }
   // Configure admittance matrices from parameters
   UpdateMassMatrix();
   UpdateDampingMatrix();
@@ -137,34 +136,21 @@ void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::Cons
   }
 }
 
-// Process URDF robot model for kinematics setup
-void AdmittanceNode::RobotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg) {
-  std::lock_guard<std::mutex> lock(robot_description_mutex_);
-  robot_description_ = msg->data;
-  robot_description_received_.store(true);
-
-  RCLCPP_INFO(get_logger(), "Received URDF robot description (%zu bytes) - kinematics ready",
-              robot_description_.length());
-}
+// Note: RobotDescriptionCallback removed - getting URDF directly from parameter server
 
 
 
-// Initialize KDL kinematics from URDF for inverse velocity solving
+// Initialize KDL kinematics from URDF parameter (leverages robot_state_publisher)
 bool AdmittanceNode::LoadKinematics() {
-  // Ensure robot description is available
-  if (!robot_description_received_.load()) {
-    RCLCPP_WARN(get_logger(), "Waiting for robot description to setup kinematics");
+  // Get robot description directly from parameter server (robot_state_publisher sets this)
+  std::string urdf_string;
+  if (!get_parameter("robot_description", urdf_string)) {
+    RCLCPP_WARN(get_logger(), "robot_description parameter not found - robot_state_publisher not ready?");
     return false;
   }
 
-  std::string urdf_string;
-  {
-    std::lock_guard<std::mutex> lock(robot_description_mutex_);
-    urdf_string = robot_description_;
-  }
-
   if (urdf_string.empty()) {
-    RCLCPP_ERROR(get_logger(), "Empty robot description - cannot setup kinematics");
+    RCLCPP_ERROR(get_logger(), "robot_description parameter is empty");
     return false;
   }
 
