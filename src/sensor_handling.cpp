@@ -60,18 +60,6 @@ void AdmittanceNode::GetCurrentEndEffectorPose(Eigen::Isometry3d& pose) {
   }
 }
 
-// Check if filtered forces/torques exceed motion threshold (deadband)
-bool AdmittanceNode::CheckDeadband() {
-  // Check if any force/torque component exceeds minimum threshold
-  for (size_t i = 0; i < 6; ++i) {
-    if (std::abs(Wrench_tcp_base_(i)) > params_.admittance.min_motion_threshold) {
-      return true;  // Motion should be allowed
-    }
-  }
-
-  // All forces below threshold - robot should remain stationary
-  return false;
-}
 
 
 }  // namespace ur_admittance_controller

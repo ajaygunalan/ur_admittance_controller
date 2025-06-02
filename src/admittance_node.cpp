@@ -144,7 +144,23 @@ void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::Con
 
   // Apply exponential moving average filter to reduce sensor noise
   const double alpha = params_.admittance.filter_coefficient;
-  Wrench_tcp_base_ = alpha * wrench_transformed + (1.0 - alpha) * Wrench_tcp_base_;
+  Vector6d filtered_wrench = alpha * wrench_transformed + (1.0 - alpha) * Wrench_tcp_base_;
+  
+  // Apply deadband at source - only update if above threshold
+  bool above_threshold = false;
+  for (size_t i = 0; i < 6; ++i) {
+    if (std::abs(filtered_wrench(i)) > params_.admittance.min_motion_threshold) {
+      above_threshold = true;
+      break;
+    }
+  }
+  
+  // Only update wrench if above deadband
+  if (above_threshold) {
+    Wrench_tcp_base_ = filtered_wrench;
+  } else {
+    Wrench_tcp_base_.setZero();
+  }
 }
 
 // Update robot joint state from sensor feedback

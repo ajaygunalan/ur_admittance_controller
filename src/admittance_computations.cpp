@@ -221,39 +221,38 @@ bool AdmittanceNode::ControlStep(double dt) {
   // Update current pose from TF2
   GetCurrentEndEffectorPose(X_tcp_base_current_);
   
-  // Check deadband
-  if (!CheckDeadband()) {
-    V_tcp_base_commanded_.setZero();
-    // Note: Keep V_tcp_base_desired_ for dynamics continuity
-    // Zero velocities - robot stops
-    for (size_t i = 0; i < q_dot_cmd_.size(); ++i) {
-      q_dot_cmd_[i] = 0.0;
-    }
-  } else {
-    // 5. Compute admittance control
-    rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
-    if (ComputeAdmittance(period, V_tcp_base_commanded_)) {
-      // 6. Convert to joint space
-      if (!CartesianVelocityToJointVelocity(V_tcp_base_commanded_)) {
-        return false;
-      }
-    } else {
-      return false;
-    }
+  // Compute pose error to check if motion is needed
+  Vector6d pose_error = X_tcp_base_error();
+  
+  // Check if we need to move at all
+  bool has_force = (Wrench_tcp_base_.norm() > 1e-6);  // Deadband already applied in sensor callback
+  bool has_pose_error = (pose_error.head<3>().norm() > 0.001);  // 1mm position threshold
+  
+  if (!has_force && !has_pose_error) {
+    // No force and negligible pose error - robot stays still
+    return true;  // Success, but no motion needed
   }
   
-  // 7. Integrate command positions
-  for (size_t i = 0; i < params_.joints.size() && 
-                     i < q_dot_cmd_.size() && 
-                     i < q_cmd_.size(); ++i) {
-    q_cmd_[i] += q_dot_cmd_[i] * dt;  // Command integration
+  // Compute admittance response
+  rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
+  if (!ComputeAdmittance(period, V_tcp_base_commanded_) ||
+      !CartesianVelocityToJointVelocity(V_tcp_base_commanded_)) {
+    return false;
   }
   
-  // 8. Publish trajectory command using command positions
-  trajectory_msg_.header.stamp = now();
-  trajectory_msg_.points[0].positions = q_cmd_;  // Use command positions
-  trajectory_msg_.points[0].velocities = q_dot_cmd_;
-  trajectory_pub_->publish(trajectory_msg_);
+  // Only integrate and publish if we have non-zero velocities
+  if (V_tcp_base_commanded_.norm() > 1e-6) {
+    // Integrate joint positions
+    for (size_t i = 0; i < q_cmd_.size(); ++i) {
+      q_cmd_[i] += q_dot_cmd_[i] * dt;
+    }
+    
+    // Publish trajectory command
+    trajectory_msg_.header.stamp = now();
+    trajectory_msg_.points[0].positions = q_cmd_;
+    trajectory_msg_.points[0].velocities = q_dot_cmd_;
+    trajectory_pub_->publish(trajectory_msg_);
+  }
   
   return true;
 }
