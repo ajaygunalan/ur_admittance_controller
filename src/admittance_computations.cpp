@@ -15,7 +15,7 @@ using namespace constants;
 // Solves for acceleration, then integrates: v_new = v_old + acceleration * dt
 bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out) {
   // Calculate 6-DOF pose error (position + orientation)
-  error_tcp_base_ = ComputePoseError_tip_base();
+  error_tcp_base_ = X_tcp_base_error();
   if (error_tcp_base_.hasNaN()) {
     return false;
   }
@@ -59,7 +59,7 @@ bool AdmittanceNode::ComputeAdmittanceControl(const rclcpp::Duration& period, Ve
 
 // Compute 6-DOF pose error: [position_error; orientation_error]
 // Uses quaternion-based orientation error to avoid singularities
-Vector6d AdmittanceNode::ComputePoseError_tip_base() {
+Vector6d AdmittanceNode::X_tcp_base_error() {
   Vector6d error = Vector6d::Zero();
 
   // Access reference pose (no mutex needed - single threaded)

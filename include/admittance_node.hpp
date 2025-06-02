@@ -52,7 +52,7 @@ class AdmittanceNode : public rclcpp::Node {
   bool InitializeDesiredPose();
   // Core admittance control algorithms
   bool ComputeAdmittanceControl(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
-  Vector6d ComputePoseError_tip_base();
+  Vector6d X_tcp_base_error();
   void UpdateMassMatrix();
   void UpdateDampingMatrix();
   void UpdateStiffnessMatrix();
