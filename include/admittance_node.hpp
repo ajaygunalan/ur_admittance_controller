@@ -71,7 +71,7 @@ class AdmittanceNode : public rclcpp::Node {
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
-  // High-frequency control timer (500Hz) for real-time admittance control
+  // Control timer (100Hz) for trajectory streaming admittance control
   rclcpp::TimerBase::SharedPtr control_timer_;
   void ControlTimerCallback();
   // Dynamic parameter management system

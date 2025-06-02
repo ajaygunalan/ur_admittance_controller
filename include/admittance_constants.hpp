@@ -22,10 +22,10 @@ constexpr double REGULARIZATION_FACTOR = 1e-8;
 constexpr double MAX_SAFE_POSITION_ERROR = 0.5;     // 50cm maximum position jump
 constexpr double MAX_SAFE_ORIENTATION_ERROR = 0.5;  // ~28.6° maximum orientation jump
 
-// Control Thread Timing - OPTIMIZED FOR 500Hz
-constexpr double TARGET_CONTROL_RATE_HZ = 500.0;           // 500Hz to match controller_manager
-constexpr double MIN_CONTROL_PERIOD_SEC = 1.0 / TARGET_CONTROL_RATE_HZ;  // 0.002s
-constexpr double MIN_CONTROL_PERIOD_NS = MIN_CONTROL_PERIOD_SEC * 1e9;   // 2,000,000 ns
+// Control Thread Timing - Optimized for trajectory streaming
+constexpr double TARGET_CONTROL_RATE_HZ = 100.0;           // 100Hz for stable trajectory streaming
+constexpr double MIN_CONTROL_PERIOD_SEC = 1.0 / TARGET_CONTROL_RATE_HZ;  // 0.01s (10ms)
+constexpr double MIN_CONTROL_PERIOD_NS = MIN_CONTROL_PERIOD_SEC * 1e9;   // 10,000,000 ns
 
 
 }  // namespace ur_admittance_controller::constants

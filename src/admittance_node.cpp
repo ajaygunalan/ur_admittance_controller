@@ -58,13 +58,15 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   }
   // Configure all admittance matrices from parameters
   UpdateAdmittanceMatrices();
+
   // Pre-allocate trajectory message to avoid real-time memory allocation
   trajectory_msg_.joint_names = params_.joints;
   trajectory_msg_.points.resize(1);
   trajectory_msg_.points[0].positions.resize(joint_count);
   trajectory_msg_.points[0].velocities.resize(joint_count);
   trajectory_msg_.points[0].time_from_start = 
-      rclcpp::Duration::from_seconds(constants::MIN_CONTROL_PERIOD_SEC);
+      rclcpp::Duration::from_seconds(0.0);  // Immediate execution for streaming control
+      
   // Start high-frequency control timer using ROS2 standard approach
   RCLCPP_INFO(get_logger(), "Starting admittance control at %.0f Hz",
               constants::TARGET_CONTROL_RATE_HZ);
@@ -76,7 +78,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 
 // ROS2 handles automatic cleanup of timers and subscriptions
 
-// High-frequency control timer callback (500Hz) - main admittance control loop
+// Control timer callback (100Hz) - main admittance control loop
 void AdmittanceNode::ControlTimerCallback() {
   // Compute precise time step for this control iteration
   static auto last_time = std::chrono::steady_clock::now();
