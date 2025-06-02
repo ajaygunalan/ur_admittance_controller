@@ -58,7 +58,7 @@ class AdmittanceNode : public rclcpp::Node {
   void UpdateStiffnessMatrix();
   void UpdateAdmittanceMatrices();
   // Coordinate transformations and motion processing
-  bool ConvertToJointSpace(const Vector6d& cartesian_velocity, const rclcpp::Duration& period);
+  bool CartesianVelocityToJointVelocity(const Vector6d& cartesian_velocity);
   bool CheckDeadband();
   // Main control loop execution
   bool UnifiedControlStep(double dt);

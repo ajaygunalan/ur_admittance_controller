@@ -152,12 +152,10 @@ void AdmittanceNode::UpdateAdmittanceMatrices() {
 }
 
 // Transform Cartesian velocity to joint velocities using KDL inverse kinematics
-bool AdmittanceNode::ConvertToJointSpace(const Vector6d& cart_vel,
-                                        const rclcpp::Duration& period) {
-  // Validate input parameters and vector sizes
-  if (period.seconds() <= 0.0 || cart_vel.hasNaN() || params_.joints.empty() ||
-      q_dot_cmd_.size() < params_.joints.size() ||
-      q_current_.size() < params_.joints.size()) {
+bool AdmittanceNode::CartesianVelocityToJointVelocity(const Vector6d& cart_vel) {
+  // Only check for NaN - other checks are redundant (arrays sized in constructor)
+  if (cart_vel.hasNaN()) {
+    RCLCPP_ERROR(get_logger(), "NaN detected in Cartesian velocity command");
     return false;
   }
   
@@ -238,7 +236,7 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
     rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
     if (ComputeAdmittanceControl(period, V_tcp_base_commanded_)) {
       // 6. Convert to joint space
-      if (!ConvertToJointSpace(V_tcp_base_commanded_, period)) {
+      if (!CartesianVelocityToJointVelocity(V_tcp_base_commanded_)) {
         return false;
       }
     } else {
