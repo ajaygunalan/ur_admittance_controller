@@ -1,68 +1,46 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <!-- Package Information -->
   <name>ur_admittance_controller</name>
   <version>2.0.0</version>
-  <description>
-    ROS2 Admittance Node for Universal Robots
-    
-    This package provides a standalone 6-DOF admittance control node for
-    Universal Robots manipulators. It enables compliant robot behavior by
-    transforming force/torque sensor measurements into motion commands using
-    a configurable mass-spring-damper model.
-    
-    Key features:
-    - Pure admittance and impedance control modes
-    - Safe startup with gradual stiffness engagement  
-    - Real-time safe operation
-    - Configurable mass, damping, and stiffness matrices
-    - Direct interface with trajectory controllers
-  </description>
+  <description>6-DOF force-compliant motion control for Universal Robots using admittance control</description>
   
-  <!-- Package Metadata -->
-  <maintainer email="ajay@example.com">Ajay</maintainer>
-  <author email="ajay@example.com">Ajay</author>
+  <maintainer email="your_email@example.com">UR Robotics Team</maintainer>
   <license>Apache-2.0</license>
   
-  <!-- URLs -->
-  <url type="website">https://github.com/UniversalRobots/ur_admittance_controller</url>
-  <url type="bugtracker">https://github.com/UniversalRobots/ur_admittance_controller/issues</url>
-  <url type="repository">https://github.com/UniversalRobots/ur_admittance_controller</url>
-  <!-- Build Tool Dependencies -->
   <buildtool_depend>ament_cmake</buildtool_depend>
   
-  <!-- Core Dependencies -->
-  <!-- ROS2 Core -->
+  <!-- Core ROS2 dependencies -->
   <depend>rclcpp</depend>
   <depend>pluginlib</depend>
+  <depend>generate_parameter_library</depend>
   
-  <!-- Message Types -->
+  <!-- Message dependencies -->
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>trajectory_msgs</depend>
   
-  <!-- Kinematics and Transforms -->
-  <depend>orocos_kdl</depend>
-  <depend>urdf</depend>
+  <!-- Transform dependencies -->
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_eigen</depend>
   
-  <!-- Parameter Generation -->
-  <depend>generate_parameter_library</depend>
-  <!-- Kinematics -->
+  <!-- Kinematics dependencies -->
   <depend>kdl_parser</depend>
+  <depend>urdf</depend>
+  <depend>orocos_kdl_vendor</depend>
   
-  <!-- Test Dependencies -->
+  <!-- System dependencies -->
+  <depend>eigen</depend>
+  
+  <!-- Testing dependencies -->
   <test_depend>ament_cmake_gmock</test_depend>
   <test_depend>controller_manager</test_depend>
   <test_depend>ros2_control_test_assets</test_depend>
-  <!-- Package Export -->
+  
   <export>
-    <!-- Specify build type -->
     <build_type>ament_cmake</build_type>
-    
   </export>
 </package>

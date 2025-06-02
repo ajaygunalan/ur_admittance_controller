@@ -64,7 +64,6 @@ class AdmittanceNode : public rclcpp::Node {
   bool ControlStep(double dt);
   bool ValidatePoseErrorSafety(const Vector6d& pose_error);
   // Transform utilities for coordinate frame conversions
-  Vector6d TransformWrench(const Vector6d& wrench_sensor_frame);
   void GetCurrentEndEffectorPose(Eigen::Isometry3d& pose);
   // ROS2 communication interfaces
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
@@ -93,6 +92,7 @@ class AdmittanceNode : public rclcpp::Node {
   bool kinematics_initialized_ = false;
   // Reference pose management for admittance control
   bool desired_pose_initialized_ = false;
+  bool joint_states_received_ = false;  // Track if robot is loaded
   // Core admittance control state vectors (6-DOF: xyz + rpy) 
   Vector6d Wrench_tcp_base_;         // External forces/torques in base frame (filtered & bias-compensated)
   Vector6d V_tcp_base_commanded_;    // Commanded Cartesian velocity output
@@ -119,9 +119,6 @@ class AdmittanceNode : public rclcpp::Node {
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_; // WDLS velocity solver
   // Control loop timing - member variable for thread safety
   std::chrono::steady_clock::time_point last_control_time_;
-  // Force sensor bias compensation
-  bool force_bias_initialized_ = false;
-  Vector6d force_bias_ = Vector6d::Zero();
 };
 
 }  // namespace ur_admittance_controller

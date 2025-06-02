@@ -22,12 +22,21 @@ colcon build && source install/setup.bash
 # Terminal 1: Launch UR5e + F/T sensor in Gazebo
 ros2 launch ur_simulation_gz ur_sim_control.launch.py
 
-# Terminal 2: Launch admittance control  
-ros2 launch ur_admittance_controller ur_admittance.launch.py
+# Terminal 2: Start wrench filter node (processes raw F/T sensor data)
+ros2 run ur_admittance_controller wrench_node
 
-# Terminal 3: Apply force (robot moves)
-ros2 topic pub /wrist_ft_sensor geometry_msgs/WrenchStamped \
-  "{header: {frame_id: 'ft_sensor_link'}, wrench: {force: {x: 10.0}}}" --once
+# Terminal 3: Start admittance controller
+ros2 run ur_admittance_controller admittance_node
+
+# Terminal 4: Apply force (robot moves)
+ros2 topic pub /wrench_tcp_base_raw geometry_msgs/WrenchStamped \
+  "{header: {frame_id: 'base_link'}, wrench: {force: {x: 10.0}}}" --once
+```
+
+#### Alternative: Launch both nodes together
+```bash
+# Terminal 2: Launch both wrench filter and admittance control
+ros2 launch ur_admittance_controller ur_admittance.launch.py
 ```
 
 ### Hardware
@@ -43,7 +52,7 @@ ros2 launch ur_admittance_controller ur_admittance.launch.py use_sim:=false
 
 ### Data Flow
 ```
-[F/T Sensor] → [Admittance Node] → [scaled_joint_trajectory_controller] → [Robot]
+[F/T Sensor] → /wrench_tcp_base_raw → [Wrench Node] → /wrench_tcp_base → [Admittance Node] → [Controller] → [Robot]
 ```
 
 ### Package Structure
@@ -51,7 +60,7 @@ ros2 launch ur_admittance_controller ur_admittance.launch.py use_sim:=false
 src/
 ├── admittance_node.cpp          # Main node + control loop
 ├── admittance_computations.cpp  # Core dynamics (M·ẍ + D·ẋ + K·x = F)
-└── sensor_handling.cpp          # F/T processing + transforms
+└── wrench_node.cpp              # F/T sensor filtering (bias removal + low-pass)
 
 config/
 └── admittance_config.yaml       # Parameter definitions
@@ -101,9 +110,10 @@ ros2 param set /admittance_node max_linear_velocity 0.3
 ## Troubleshooting
 
 ### Robot doesn't move
-1. Check force threshold: `ros2 param get /admittance_node admittance.min_motion_threshold`
-2. Verify F/T data: `ros2 topic echo /wrist_ft_sensor --once`
-3. Check enabled axes: `ros2 param get /admittance_node admittance.enabled_axes`
+1. Check force threshold: `ros2 param get /wrench_node min_motion_threshold`
+2. Verify raw F/T data: `ros2 topic echo /wrench_tcp_base_raw --once`
+3. Verify filtered F/T data: `ros2 topic echo /wrench_tcp_base --once`
+4. Check enabled axes: `ros2 param get /admittance_node admittance.enabled_axes`
 
 ### Jerky motion
 1. Increase damping: `ros2 param set /admittance_node admittance.damping_ratio "[1.2,1.2,1.2,1.2,1.2,1.2]"`

@@ -136,7 +136,7 @@ ros2 param set /admittance_node admittance.min_motion_threshold 1.0
 #### **Subscriptions (Streamlined)**
 ```yaml
 /joint_states:            sensor_msgs/JointState     # Current robot joint positions  
-/wrist_ft_sensor:         geometry_msgs/WrenchStamped # Force/torque measurements
+/wrench_tcp_base:         geometry_msgs/WrenchStamped # Filtered force/torque from wrench_node
 ```
 
 #### **Parameter Server Access**

@@ -34,6 +34,7 @@ find_package(generate_parameter_library REQUIRED)
 
 # Message packages
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
@@ -80,11 +81,22 @@ set(NODE_DEPENDENCIES
 add_executable(admittance_node
   src/admittance_node.cpp
   src/admittance_computations.cpp
-  src/sensor_handling.cpp
 )
 
-# Include directories for node
+# ==============================================================================
+# Build Wrench Node
+# ==============================================================================
+add_executable(wrench_node
+  src/wrench_node.cpp
+)
+
+# Include directories for nodes
 target_include_directories(admittance_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_include_directories(wrench_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
@@ -95,7 +107,12 @@ target_link_libraries(admittance_node
   Eigen3::Eigen
 )
 
+target_link_libraries(wrench_node
+  Eigen3::Eigen
+)
+
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
+ament_target_dependencies(wrench_node rclcpp geometry_msgs std_srvs)
 
 # ==============================================================================
 # Installation
@@ -109,9 +126,9 @@ install(
   ARCHIVE DESTINATION lib
 )
 
-# Install the new admittance node executable
+# Install the node executables
 install(
-  TARGETS admittance_node
+  TARGETS admittance_node wrench_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

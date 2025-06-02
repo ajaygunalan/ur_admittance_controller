@@ -216,6 +216,25 @@ bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
   return true;
 }
 
+// Get current end-effector pose in base frame using TF2 transforms
+void AdmittanceNode::GetCurrentEndEffectorPose(Eigen::Isometry3d& pose) {
+  try {
+    // Look up transform from base to end-effector
+    const auto transform = tf_buffer_->lookupTransform(
+        params_.base_link,
+        params_.tip_link,
+        tf2::TimePointZero,
+        std::chrono::milliseconds(50));
+    // Convert to Eigen pose representation
+    pose = tf2::transformToEigen(transform);
+  } catch (const tf2::TransformException& ex) {
+    // If transform fails, pose stays at previous value
+    // This is fine - better than stopping the controller
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "Transform lookup failed (base->tip): %s", ex.what());
+  }
+}
+
 // Main control step - executes complete admittance control algorithm
 bool AdmittanceNode::ControlStep(double dt) {
   // Update current pose from TF2
@@ -225,7 +244,7 @@ bool AdmittanceNode::ControlStep(double dt) {
   Vector6d pose_error = X_tcp_base_error();
   
   // Check if we need to move at all
-  bool has_force = (Wrench_tcp_base_.norm() > 1e-6);  // Deadband already applied in sensor callback
+  bool has_force = (Wrench_tcp_base_.norm() > 1e-6);  // Wrench already filtered by wrench_node
   bool has_pose_error = (pose_error.head<3>().norm() > 0.001);  // 1mm position threshold
   
   if (!has_force && !has_pose_error) {

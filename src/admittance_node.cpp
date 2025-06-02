@@ -54,9 +54,9 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
   
-  // Subscribe to force/torque sensor data with high-priority QoS
+  // Subscribe to filtered force/torque data from wrench_node
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
-      "/wrist_ft_sensor",
+      "/wrench_tcp_base",
       rclcpp::SensorDataQoS(),
       std::bind(&AdmittanceNode::WrenchCallback, this, std::placeholders::_1));
   // Subscribe to robot joint state feedback
@@ -107,9 +107,10 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       std::chrono::duration<double>(constants::MIN_CONTROL_PERIOD_SEC),
       std::bind(&AdmittanceNode::ControlTimerCallback, this));
   
-  // Don't initialize desired pose here - wait for TF to be ready
+  // Don't initialize desired pose here - wait for robot to be fully loaded
   
-  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
+  RCLCPP_INFO(get_logger(), "UR Admittance Controller initialized - waiting for robot to load...");
+  // Message moved to after initialization completes
 }
 
 // ROS2 handles automatic cleanup of timers and subscriptions
@@ -118,6 +119,11 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 void AdmittanceNode::ControlTimerCallback() {
   // Skip control if kinematics not ready
   if (!kinematics_initialized_) {
+    return;
+  }
+  
+  // Skip control if robot not loaded yet (no joint states)
+  if (!joint_states_received_) {
     return;
   }
   
@@ -141,53 +147,23 @@ void AdmittanceNode::ControlTimerCallback() {
   }
 }
 
-// Process incoming force/torque sensor data with filtering and coordinate transforms
+// Receive filtered force/torque sensor data
 void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
   current_wrench_ = *msg;
 
   // Extract 6-DOF wrench data (forces + torques)
-  Vector6d raw_wrench;
-  raw_wrench << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
-      msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
-
-  // Transform wrench from sensor frame to robot base frame
-  Vector6d wrench_transformed = TransformWrench(raw_wrench);
-  
-  // Initialize force bias on first reading (gravity compensation)
-  if (!force_bias_initialized_) {
-    force_bias_ = wrench_transformed;
-    force_bias_initialized_ = true;
-    RCLCPP_INFO(get_logger(), "Force sensor bias recorded: F=[%.2f, %.2f, %.2f] N, T=[%.2f, %.2f, %.2f] Nm",
-                force_bias_(0), force_bias_(1), force_bias_(2),
-                force_bias_(3), force_bias_(4), force_bias_(5));
-  }
-  
-  // Apply bias compensation (subtract gravity and sensor offsets)
-  Vector6d wrench_compensated = wrench_transformed - force_bias_;
-
-  // Apply exponential moving average filter to reduce sensor noise
-  const double alpha = params_.admittance.filter_coefficient;
-  Vector6d filtered_wrench = alpha * wrench_compensated + (1.0 - alpha) * Wrench_tcp_base_;
-  
-  // Apply deadband at source - only update if above threshold
-  bool above_threshold = false;
-  for (size_t i = 0; i < 6; ++i) {
-    if (std::abs(filtered_wrench(i)) > params_.admittance.min_motion_threshold) {
-      above_threshold = true;
-      break;
-    }
-  }
-  
-  // Only update wrench if above deadband
-  if (above_threshold) {
-    Wrench_tcp_base_ = filtered_wrench;
-  } else {
-    Wrench_tcp_base_.setZero();
-  }
+  // Data is already filtered and in base frame from wrench_node
+  Wrench_tcp_base_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
+                      msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
 }
 
 // Update robot joint state from sensor feedback
 void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
+  // Mark that we're receiving joint states (robot is loaded)
+  if (!joint_states_received_) {
+    joint_states_received_ = true;
+    RCLCPP_INFO(get_logger(), "Joint states received - robot is loaded in simulation");
+  }
 
   // Map joint positions and velocities by name to handle different joint ordering
   for (size_t i = 0; i < params_.joints.size(); ++i) {
@@ -302,6 +278,9 @@ bool AdmittanceNode::InitializeDesiredPose() {
   const auto& pos = current_pose.translation();
   RCLCPP_INFO(get_logger(), "Reference pose initialized at [%.3f, %.3f, %.3f] m",
               pos.x(), pos.y(), pos.z());
+  
+  // Now we're fully ready!
+  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
 
   return true;
 }
