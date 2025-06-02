@@ -77,6 +77,7 @@ class AdmittanceNode : public rclcpp::Node {
   // Dynamic parameter management system
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
   ur_admittance_controller::Params params_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_cb_handle_;
   // TF2 transform system for coordinate frame management
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;

@@ -233,13 +233,7 @@ bool AdmittanceNode::UnifiedControlStep(double dt) {
     return false;
   }
   
-  // 2. Check for parameter updates (auto-generated parameter library)
-  if (param_listener_->is_old(params_)) {
-    params_ = param_listener_->get_params();
-    UpdateAdmittanceMatrices();
-  }
-  
-  // 3. Update current pose
+  // 2. Update current pose
   if (!GetCurrentEndEffectorPose(X_tcp_base_current_)) {
     return false;
   }

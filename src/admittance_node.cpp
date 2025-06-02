@@ -13,6 +13,22 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       this->get_node_parameters_interface());
   params_ = param_listener_->get_params();
   
+  // Set up parameter callback to update matrices when parameters change
+  // The generate_parameter_library handles this internally, but we need to 
+  // register our own callback for when parameters are actually updated
+  parameter_cb_handle_ = this->add_on_set_parameters_callback(
+    [this](const std::vector<rclcpp::Parameter>& parameters) {
+      // Let the auto-generated library validate the parameters
+      auto result = param_listener_->update(parameters);
+      if (result.successful) {
+        // Get the updated parameters and reconfigure matrices
+        params_ = param_listener_->get_params();
+        UpdateAdmittanceMatrices();
+        RCLCPP_INFO(get_logger(), "Parameters updated - admittance matrices reconfigured");
+      }
+      return result;
+    });
+  
   // Initialize robot state vectors with appropriate sizes (Drake notation: q, q_dot)
   const auto joint_count = params_.joints.size();
   q_current_.resize(joint_count, 0.0);            // Current sensor positions
