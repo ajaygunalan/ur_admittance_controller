@@ -32,6 +32,7 @@
 #include <kdl/chainiksolver.hpp>
 #include <kdl/chainiksolvervel_pinv.hpp>
 #include <kdl/chainiksolvervel_wdls.hpp>
+#include <kdl/chainfksolverpos_recursive.hpp>
 #include <urdf/model.h>
 
 namespace ur_admittance_controller {
@@ -152,6 +153,15 @@ class AdmittanceNode : public rclcpp::Node {
   KDL::Tree kdl_tree_;                                        // Full robot kinematic tree
   KDL::Chain kdl_chain_;                                      // Base-to-tip kinematic chain
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_; // WDLS velocity solver
+  
+  // Forward kinematics solver (ROS1-style direct computation)
+  std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_pos_solver_;
+  
+  // Flag to ensure we compute FK after joint states are updated
+  bool joint_states_updated_ = false;
+  
+  // Compute forward kinematics from joint positions (industry standard naming)
+  void computeForwardKinematics();
 };
 
 }  // namespace ur_admittance_controller

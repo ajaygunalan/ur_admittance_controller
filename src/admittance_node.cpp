@@ -142,8 +142,8 @@ bool AdmittanceNode::initialize() {
 
 // Main control cycle - called from main loop at 100Hz
 void AdmittanceNode::control_cycle() {
-  // Update current TCP pose from TF
-  getEndEffectorPose(X_tcp_base_current_);
+  // Compute forward kinematics from joint positions (industry standard approach)
+  computeForwardKinematics();
   
   // Compute admittance dynamics
   if (!compute_admittance()) {
@@ -197,6 +197,9 @@ void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::Co
       }
     }
   }
+  
+  // Set flag for FK computation
+  joint_states_updated_ = true;
 }
 
 // Callback for robot description updates from robot_state_publisher
@@ -246,9 +249,13 @@ bool AdmittanceNode::load_kinematics() {
     constexpr double kDampingFactor = 0.01;
     ik_vel_solver_->setLambda(kDampingFactor);
 
+    // Create forward kinematics solver (ROS1-style direct computation)
+    fk_pos_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(kdl_chain_);
+
     RCLCPP_INFO(get_logger(), "KDL kinematics ready: %s -> %s (%d joints, %d segments)",
                 params_.base_link.c_str(), params_.tip_link.c_str(),
                 kdl_chain_.getNrOfJoints(), kdl_chain_.getNrOfSegments());
+    RCLCPP_INFO(get_logger(), "Forward kinematics solver initialized (industry standard direct computation)");
 
     return true;
 

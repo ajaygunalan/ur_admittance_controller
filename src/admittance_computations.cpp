@@ -13,25 +13,23 @@ using namespace constants;
 // Solve admittance equation and integrate to compute Cartesian velocity commands
 // Mathematical model: M*acceleration + D*velocity + K*position_error = F_external
 // Solves for acceleration, then integrates: v_new = v_old + acceleration * dt
-bool AdmittanceNode::ComputeAdmittance(const rclcpp::Duration& period, Vector6d& cmd_vel_out) {
+bool AdmittanceNode::compute_admittance() {
   // Calculate 6-DOF pose error (position + orientation)
-  error_tcp_base_ = X_tcp_base_error();
+  error_tcp_base_ = compute_pose_error();
   if (error_tcp_base_.hasNaN()) {
     return false;
   }
   
   // Enforce safety limits on pose error magnitude
-  if (!ValidatePoseErrorSafety(error_tcp_base_)) {
+  if (!check_pose_limits(error_tcp_base_)) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
                          "Safety stop: pose error exceeds safe limits");
     return false;
   }
   
-  // Validate integration time step for numerical stability
-  const double dt = period.seconds();
-  if (dt <= 0.0 || dt > 0.1) {
-    return false;
-  }
+  // Fixed dt for 100Hz control loop (like ROS1 loop_rate_.expectedCycleTime())
+  constexpr double dt = 0.01;  // 10ms
+  
   // Solve admittance equation for acceleration using optimized diagonal operations
   // acceleration = M^-1 * (F_external - D*velocity - K*position_error)
   const Vector6d acceleration = M_inverse_diag_.array() *
@@ -52,14 +50,14 @@ bool AdmittanceNode::ComputeAdmittance(const rclcpp::Duration& period, Vector6d&
     }
   }
   // No drift reset - user controls desired pose via topic
-  // Output final Cartesian velocity command
-  cmd_vel_out = V_tcp_base_desired_;
+  // V_tcp_base_commanded_ is now our output velocity
+  V_tcp_base_commanded_ = V_tcp_base_desired_;
   return true;
 }
 
 // Compute 6-DOF pose error: [position_error; orientation_error]
 // Uses quaternion-based orientation error to avoid singularities
-Vector6d AdmittanceNode::X_tcp_base_error() {
+Vector6d AdmittanceNode::compute_pose_error() {
   Vector6d error = Vector6d::Zero();
 
   // Access reference pose (no mutex needed - single threaded)
@@ -105,7 +103,7 @@ Vector6d AdmittanceNode::X_tcp_base_error() {
 
 
 // Update 6x6 virtual mass matrix from parameters
-void AdmittanceNode::UpdateMassMatrix() {
+void AdmittanceNode::update_mass_matrix() {
   // Build diagonal mass matrix from parameter array
   M_.diagonal() = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6);
   M_inverse_.diagonal() = M_.diagonal().cwiseInverse();
@@ -115,7 +113,7 @@ void AdmittanceNode::UpdateMassMatrix() {
 }
 
 // Update stiffness matrix and diagonal cache from parameters
-void AdmittanceNode::UpdateStiffnessMatrix() {
+void AdmittanceNode::update_stiffness_matrix() {
   // Update both matrix and diagonal cache consistently
   for (size_t i = 0; i < 6; ++i) {
     K_(i, i) = params_.admittance.stiffness[i];
@@ -124,7 +122,7 @@ void AdmittanceNode::UpdateStiffnessMatrix() {
 }
 
 // Compute damping matrix using critical damping relationship: D = 2*ζ*√(M*K)
-void AdmittanceNode::UpdateDampingMatrix() {
+void AdmittanceNode::update_damping_matrix() {
   using namespace constants;
 
   // Calculate critical damping for each DOF independently
@@ -144,15 +142,15 @@ void AdmittanceNode::UpdateDampingMatrix() {
 }
 
 // Update all admittance matrices (M, D, K) consistently
-void AdmittanceNode::UpdateAdmittanceMatrices() {
+void AdmittanceNode::update_admittance_parameters() {
   // Update in correct order: M and K first, then D (which depends on both)
-  UpdateMassMatrix();      // M depends on nothing
-  UpdateStiffnessMatrix(); // K depends on nothing  
-  UpdateDampingMatrix();   // D depends on M and K
+  update_mass_matrix();      // M depends on nothing
+  update_stiffness_matrix(); // K depends on nothing  
+  update_damping_matrix();   // D depends on M and K
 }
 
 // Transform Cartesian velocity to joint velocities using KDL inverse kinematics
-bool AdmittanceNode::CartesianVelocityToJointVelocity(const Vector6d& cart_vel) {
+bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
   // Only check for NaN - other checks are redundant (arrays sized in constructor)
   if (cart_vel.hasNaN()) {
     RCLCPP_ERROR(get_logger(), "NaN detected in Cartesian velocity command");
@@ -194,7 +192,7 @@ bool AdmittanceNode::CartesianVelocityToJointVelocity(const Vector6d& cart_vel) 
 }
 
 
-bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
+bool AdmittanceNode::check_pose_limits(const Vector6d& pose_error) {
   using namespace constants;
   
   // Check position error magnitude
@@ -216,8 +214,10 @@ bool AdmittanceNode::ValidatePoseErrorSafety(const Vector6d& pose_error) {
   return true;
 }
 
+// DEPRECATED: Using direct forward kinematics computation instead of TF lookups
 // Get current end-effector pose in base frame using TF2 transforms
-void AdmittanceNode::GetCurrentEndEffectorPose(Eigen::Isometry3d& pose) {
+[[deprecated("Use computeForwardKinematics() for better performance - direct FK computation")]]
+void AdmittanceNode::getEndEffectorPose(Eigen::Isometry3d& pose) {
   try {
     // Look up transform from base to end-effector
     const auto transform = tf_buffer_->lookupTransform(
@@ -235,45 +235,57 @@ void AdmittanceNode::GetCurrentEndEffectorPose(Eigen::Isometry3d& pose) {
   }
 }
 
-// Main control step - executes complete admittance control algorithm
-bool AdmittanceNode::ControlStep(double dt) {
-  // Update current pose from TF2
-  GetCurrentEndEffectorPose(X_tcp_base_current_);
-  
-  // Compute pose error to check if motion is needed
-  Vector6d pose_error = X_tcp_base_error();
-  
-  // Check if we need to move at all
-  bool has_force = (Wrench_tcp_base_.norm() > 1e-6);  // Wrench already filtered by wrench_node
-  bool has_pose_error = (pose_error.head<3>().norm() > 0.001);  // 1mm position threshold
-  
-  if (!has_force && !has_pose_error) {
-    // No force and negligible pose error - robot stays still
-    return true;  // Success, but no motion needed
+// Compute forward kinematics from joint positions (industry standard naming)
+void AdmittanceNode::computeForwardKinematics() {
+  // Only compute if we have fresh joint data
+  if (!joint_states_updated_) {
+    return;
   }
   
-  // Compute admittance response
-  rclcpp::Duration period = rclcpp::Duration::from_seconds(dt);
-  if (!ComputeAdmittance(period, V_tcp_base_commanded_) ||
-      !CartesianVelocityToJointVelocity(V_tcp_base_commanded_)) {
-    return false;
+  // Check if FK solver is initialized
+  if (!fk_pos_solver_) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "Forward kinematics solver not initialized");
+    return;
   }
   
-  // Only integrate and publish if we have non-zero velocities
-  if (V_tcp_base_commanded_.norm() > 1e-6) {
-    // Integrate joint positions
-    for (size_t i = 0; i < q_cmd_.size(); ++i) {
-      q_cmd_[i] += q_dot_cmd_[i] * dt;
-    }
-    
-    // Publish trajectory command
-    trajectory_msg_.header.stamp = now();
-    trajectory_msg_.points[0].positions = q_cmd_;
-    trajectory_msg_.points[0].velocities = q_dot_cmd_;
-    trajectory_pub_->publish(trajectory_msg_);
+  // Convert std::vector to KDL::JntArray
+  KDL::JntArray q_kdl(kdl_chain_.getNrOfJoints());
+  for (size_t i = 0; i < q_current_.size() && i < static_cast<size_t>(kdl_chain_.getNrOfJoints()); ++i) {
+    q_kdl(i) = q_current_[i];
   }
   
-  return true;
+  // Compute forward kinematics
+  KDL::Frame tcp_frame;
+  int fk_result = fk_pos_solver_->JntToCart(q_kdl, tcp_frame);
+  
+  if (fk_result < 0) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000,
+                          "Forward kinematics computation failed with error: %d", fk_result);
+    return;
+  }
+  
+  // Update TCP pose - Translation
+  X_tcp_base_current_.translation() << tcp_frame.p.x(), 
+                                       tcp_frame.p.y(), 
+                                       tcp_frame.p.z();
+  
+  // Update TCP pose - Rotation (KDL to Eigen quaternion to rotation matrix)
+  double x, y, z, w;
+  tcp_frame.M.GetQuaternion(x, y, z, w);
+  Eigen::Quaterniond q(w, x, y, z);
+  X_tcp_base_current_.linear() = q.toRotationMatrix();
+  
+  // Reset flag
+  joint_states_updated_ = false;
+  
+  // Optional: Log timing for performance monitoring
+  static rclcpp::Time last_log_time = get_clock()->now();
+  if ((get_clock()->now() - last_log_time).seconds() > 5.0) {
+    RCLCPP_DEBUG(get_logger(), "Forward kinematics computed successfully");
+    last_log_time = get_clock()->now();
+  }
 }
+
 
 }  // namespace ur_admittance_controller

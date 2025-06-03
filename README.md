@@ -33,10 +33,11 @@ ros2 topic pub /wrench_tcp_base_raw geometry_msgs/WrenchStamped \
   "{header: {frame_id: 'base_link'}, wrench: {force: {x: 10.0}}}" --once
 ```
 
-#### Alternative: Launch both nodes together
+#### Alternative: Use launch file for admittance node
 ```bash
-# Terminal 2: Launch both wrench filter and admittance control
+# Terminal 3: Launch admittance control with launch file (includes startup delay)
 ros2 launch ur_admittance_controller ur_admittance.launch.py
+# Note: You still need to run wrench_node separately in Terminal 2
 ```
 
 ### Hardware
