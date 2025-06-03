@@ -142,21 +142,6 @@ bool AdmittanceNode::initialize() {
 
 // Main control cycle - called from main loop at 100Hz
 void AdmittanceNode::control_cycle() {
-  // Skip control if kinematics not ready
-  if (!kinematics_initialized_) {
-    return;
-  }
-  
-  // Skip control if robot not loaded yet (no joint states)
-  if (!joint_states_received_) {
-    return;
-  }
-  
-  // Try to initialize desired pose if not done yet
-  if (!desired_pose_initialized_ && !initialize_desired_pose()) {
-    return;  // Wait for valid TF transform
-  }
-  
   // Update current TCP pose from TF
   getEndEffectorPose(X_tcp_base_current_);
   
