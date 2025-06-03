@@ -20,6 +20,7 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_eigen/tf2_eigen.hpp>
@@ -41,39 +42,59 @@ class AdmittanceNode : public rclcpp::Node {
  public:
   explicit AdmittanceNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
   ~AdmittanceNode() = default;
+  
+  // Main control cycle - called from main loop at 100Hz
+  void control_cycle();
+
+  // Publishing functions (ROS1 style organization)
+  void publish_arm_state_in_world();
+  void publish_debugging_signals();
 
  private:
   // ROS2 callback functions for sensor data processing
-  void WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
-  void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
-  void DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
-  void RobotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg);
+  void wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
+  void joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
+  void desired_pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
+  void robot_description_callback(const std_msgs::msg::String::ConstSharedPtr msg);
+  
   // System initialization and setup
-  bool LoadKinematics();
-  bool InitializeDesiredPose();
+  bool load_kinematics();
+  bool initialize_desired_pose();
+  void wait_for_transformations();
+  
   // Core admittance control algorithms
-  bool ComputeAdmittance(const rclcpp::Duration& period, Vector6d& cmd_vel_out);
-  Vector6d X_tcp_base_error();
-  void UpdateMassMatrix();
-  void UpdateDampingMatrix();
-  void UpdateStiffnessMatrix();
-  void UpdateAdmittanceMatrices();
+  bool compute_admittance();
+  Vector6d compute_pose_error();
+  void update_mass_matrix();
+  void update_damping_matrix();
+  void update_stiffness_matrix();
+  void update_admittance_parameters();
+  
   // Coordinate transformations and motion processing
-  bool CartesianVelocityToJointVelocity(const Vector6d& cartesian_velocity);
-  // Main control loop execution
-  bool ControlStep(double dt);
-  bool ValidatePoseErrorSafety(const Vector6d& pose_error);
+  bool compute_joint_velocities(const Vector6d& cartesian_velocity);
+  void send_commands_to_robot();
+  
+  // Safety validation and limits
+  bool check_pose_limits(const Vector6d& pose_error);
+  void limit_to_workspace();
+  void limit_joint_velocities();
+  void apply_admittance_ratio(double ratio);
+  
   // Transform utilities for coordinate frame conversions
-  void GetCurrentEndEffectorPose(Eigen::Isometry3d& pose);
+  void getEndEffectorPose(Eigen::Isometry3d& pose);
+  bool get_transform_matrix(Eigen::Isometry3d& transform,
+                           const std::string& from_frame,
+                           const std::string& to_frame,
+                           const std::chrono::milliseconds& timeout = std::chrono::milliseconds(50));
+  bool get_rotation_matrix_6d(Matrix6d& rotation_matrix,
+                             const std::string& from_frame,
+                             const std::string& to_frame);
   // ROS2 communication interfaces
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robot_description_sub_;
-  rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
-  // Control timer (100Hz) for trajectory streaming admittance control
-  rclcpp::TimerBase::SharedPtr control_timer_;
-  void ControlTimerCallback();
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr velocity_pub_;
   // Dynamic parameter management system
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
   ur_admittance_controller::Params params_;
@@ -84,7 +105,7 @@ class AdmittanceNode : public rclcpp::Node {
   // Robot state variables with thread-safe access (Drake notation: q, q_dot)
   std::vector<double> q_current_;            // Current sensor joint positions
   std::vector<double> q_dot_current_;        // Current sensor joint velocities
-  std::vector<double> q_cmd_;                // Integrated command positions  
+  // q_cmd_ removed - velocity controller doesn't need position integration  
   std::vector<double> q_dot_cmd_;            // Computed command joint velocities
   geometry_msgs::msg::WrenchStamped current_wrench_;
   // URDF robot model storage
@@ -112,13 +133,17 @@ class AdmittanceNode : public rclcpp::Node {
   // Intermediate computation variables
   Vector6d error_tcp_base_;     // Pose error (desired - current)
   // Pre-allocated ROS2 messages to avoid real-time allocations
-  trajectory_msgs::msg::JointTrajectory trajectory_msg_;
+  std_msgs::msg::Float64MultiArray velocity_msg_;
+  
+  // Workspace and velocity limits (from ROS1)
+  Vector6d workspace_limits_;  // [x_min, x_max, y_min, y_max, z_min, z_max]
+  double arm_max_vel_;         // Maximum Cartesian velocity
+  double arm_max_acc_;         // Maximum Cartesian acceleration
+  double admittance_ratio_;    // Scaling factor for external wrench (0-1)
   // KDL kinematics for inverse velocity solving
   KDL::Tree kdl_tree_;                                        // Full robot kinematic tree
   KDL::Chain kdl_chain_;                                      // Base-to-tip kinematic chain
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_; // WDLS velocity solver
-  // Control loop timing - member variable for thread safety
-  std::chrono::steady_clock::time_point last_control_time_;
 };
 
 }  // namespace ur_admittance_controller

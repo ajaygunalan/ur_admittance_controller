@@ -1,5 +1,6 @@
 #include "admittance_node.hpp"
 #include <chrono>
+#include <thread>
 
 namespace ur_admittance_controller {
 
@@ -23,7 +24,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       if (result.successful) {
         // Get the updated parameters and reconfigure matrices
         params_ = param_listener_->get_params();
-        UpdateAdmittanceMatrices();
+        this->update_admittance_parameters();
         RCLCPP_INFO(get_logger(), "Parameters updated - admittance matrices reconfigured");
       }
       return result;
@@ -33,7 +34,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   const auto joint_count = params_.joints.size();
   q_current_.resize(joint_count, 0.0);            // Current sensor positions
   q_dot_current_.resize(joint_count, 0.0);        // Current sensor velocities
-  q_cmd_.resize(joint_count, 0.0);                // Integrated command positions
+  // q_cmd_ removed - velocity controller doesn't need position integration
   q_dot_cmd_.resize(joint_count, 0.0);            // Computed command velocities
   
   // Initialize 6-DOF admittance control matrices (xyz + rpy)
@@ -58,54 +59,42 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
       "/wrench_tcp_base",
       rclcpp::SensorDataQoS(),
-      std::bind(&AdmittanceNode::WrenchCallback, this, std::placeholders::_1));
+      std::bind(&AdmittanceNode::wrench_callback, this, std::placeholders::_1));
   // Subscribe to robot joint state feedback
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "/joint_states",
       10,
-      std::bind(&AdmittanceNode::JointStateCallback, this, std::placeholders::_1));
+      std::bind(&AdmittanceNode::joint_state_callback, this, std::placeholders::_1));
   // Subscribe to desired pose updates
   desired_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       "/admittance_node/desired_pose",
       10,
-      std::bind(&AdmittanceNode::DesiredPoseCallback, this, std::placeholders::_1));
+      std::bind(&AdmittanceNode::desired_pose_callback, this, std::placeholders::_1));
   // Subscribe to robot description from robot_state_publisher
   robot_description_sub_ = create_subscription<std_msgs::msg::String>(
       "/robot_description",
       rclcpp::QoS(1).transient_local().reliable(),
-      std::bind(&AdmittanceNode::RobotDescriptionCallback, this, std::placeholders::_1));
-  // Publish joint trajectory commands to UR controller
-  trajectory_pub_ = create_publisher<trajectory_msgs::msg::JointTrajectory>(
-      "/scaled_joint_trajectory_controller/joint_trajectory", 1);
+      std::bind(&AdmittanceNode::robot_description_callback, this, std::placeholders::_1));
+  // Publish joint velocity commands to UR controller
+  velocity_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
+      "/forward_velocity_controller/commands", 1);
   // Try to initialize kinematics (will succeed if robot_description is already published)
-  if (!LoadKinematics()) {
+  if (!load_kinematics()) {
     RCLCPP_WARN(get_logger(), "Waiting for robot_description to be published...");
   }
   // Configure all admittance matrices from parameters
-  UpdateAdmittanceMatrices();
+  update_admittance_parameters();
 
-  // Pre-allocate trajectory message to avoid real-time memory allocation
-  trajectory_msg_.joint_names = params_.joints;
-  trajectory_msg_.points.resize(1);
-  trajectory_msg_.points[0].positions.resize(joint_count);
-  trajectory_msg_.points[0].velocities.resize(joint_count);
-  trajectory_msg_.points[0].time_from_start = 
-      rclcpp::Duration::from_seconds(0.0);  // Immediate execution for streaming control
+  // Pre-allocate velocity message to avoid real-time memory allocation
+  velocity_msg_.data.resize(params_.joints.size());
   
-  // Initialize control timing
-  last_control_time_ = std::chrono::steady_clock::now();
-      
-  // Start control timer using ROS2 standard approach
-  // Note: We use wall_timer (system clock) instead of regular timer because:
-  // 1. We're interfacing with physical hardware (robot & F/T sensor)
-  // 2. Control commands must be sent in real-world time, not simulation time
-  // 3. The scaled_joint_trajectory_controller expects real-time commands
-  // This is standard practice for hardware-interfacing control nodes in ROS2
-  RCLCPP_INFO(get_logger(), "Starting admittance control at %.0f Hz",
-              constants::TARGET_CONTROL_RATE_HZ);
-  control_timer_ = create_wall_timer(
-      std::chrono::duration<double>(constants::MIN_CONTROL_PERIOD_SEC),
-      std::bind(&AdmittanceNode::ControlTimerCallback, this));
+  // Initialize workspace and velocity limits (TODO: load from parameters)
+  workspace_limits_ << -1.0, 1.0,   // X limits [m]
+                       -1.0, 1.0,   // Y limits [m]
+                       0.0, 1.5;    // Z limits [m]
+  arm_max_vel_ = 0.5;  // Maximum Cartesian velocity [m/s]
+  arm_max_acc_ = 1.0;  // Maximum Cartesian acceleration [m/s^2]
+  admittance_ratio_ = 1.0;  // Full admittance by default
   
   // Don't initialize desired pose here - wait for robot to be fully loaded
   
@@ -115,8 +104,8 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 
 // ROS2 handles automatic cleanup of timers and subscriptions
 
-// Control timer callback (100Hz) - main admittance control loop
-void AdmittanceNode::ControlTimerCallback() {
+// Main control cycle - called from main loop at 100Hz
+void AdmittanceNode::control_cycle() {
   // Skip control if kinematics not ready
   if (!kinematics_initialized_) {
     return;
@@ -128,27 +117,30 @@ void AdmittanceNode::ControlTimerCallback() {
   }
   
   // Try to initialize desired pose if not done yet
-  if (!desired_pose_initialized_ && !InitializeDesiredPose()) {
+  if (!desired_pose_initialized_ && !initialize_desired_pose()) {
     return;  // Wait for valid TF transform
   }
   
-  // Compute precise time step for this control iteration
-  const auto current_time = std::chrono::steady_clock::now();
-  const auto period_ns = current_time - last_control_time_;
-  const double dt = period_ns.count() * 1e-9;  // Convert nanoseconds to seconds
-
-  // Execute main admittance control algorithm
-  if (ControlStep(dt)) {
-    last_control_time_ = current_time;
-  } else {
-    // Handle control step failure - maintain previous command for safety
+  // Update current TCP pose from TF
+  getEndEffectorPose(X_tcp_base_current_);
+  
+  // Compute admittance dynamics
+  if (!compute_admittance()) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "Control step failed, maintaining previous trajectory command");
+                         "Admittance computation failed");
+    return;
   }
+  
+  // Apply safety limits
+  limit_to_workspace();
+  limit_joint_velocities();
+  
+  // Send velocity commands to robot
+  send_commands_to_robot();
 }
 
 // Receive filtered force/torque sensor data
-void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
+void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
   current_wrench_ = *msg;
 
   // Extract 6-DOF wrench data (forces + torques)
@@ -158,7 +150,7 @@ void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::Con
 }
 
 // Update robot joint state from sensor feedback
-void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
+void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
   // Mark that we're receiving joint states (robot is loaded)
   if (!joint_states_received_) {
     joint_states_received_ = true;
@@ -175,10 +167,7 @@ void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::Cons
       if (idx < msg->position.size()) {
         q_current_[i] = msg->position[idx];  // Store current sensor position
 
-        // Initialize command positions on first callback to avoid jumps
-        if (q_cmd_[i] == 0.0) {
-          q_cmd_[i] = msg->position[idx];
-        }
+        // Velocity controller doesn't need position initialization
       }
       
       // Update velocity if available
@@ -190,19 +179,19 @@ void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::Cons
 }
 
 // Callback for robot description updates from robot_state_publisher
-void AdmittanceNode::RobotDescriptionCallback(const std_msgs::msg::String::ConstSharedPtr msg) {
+void AdmittanceNode::robot_description_callback(const std_msgs::msg::String::ConstSharedPtr msg) {
   RCLCPP_INFO(get_logger(), "Received robot description from topic");
   robot_description_ = msg->data;
   
   // Initialize kinematics if not already done
-  if (!kinematics_initialized_ && LoadKinematics()) {
+  if (!kinematics_initialized_ && load_kinematics()) {
     kinematics_initialized_ = true;
     RCLCPP_INFO(get_logger(), "Kinematics successfully initialized from robot description");
   }
 }
 
 // Initialize KDL kinematics from URDF
-bool AdmittanceNode::LoadKinematics() {
+bool AdmittanceNode::load_kinematics() {
   // Use cached URDF from robot_description topic subscription
   std::string urdf_string = robot_description_;
   
@@ -250,7 +239,7 @@ bool AdmittanceNode::LoadKinematics() {
 
 
 // Set reference pose to current robot position (zero initial error)
-bool AdmittanceNode::InitializeDesiredPose() {
+bool AdmittanceNode::initialize_desired_pose() {
   if (desired_pose_initialized_) {
     return true;  // Already initialized
   }
@@ -286,7 +275,7 @@ bool AdmittanceNode::InitializeDesiredPose() {
 }
 
 // Handle desired pose updates from ROS2 topic
-void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
+void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
   // Convert geometry_msgs::Pose to Eigen::Isometry3d
   Eigen::Isometry3d new_desired_pose = Eigen::Isometry3d::Identity();
   
@@ -312,17 +301,147 @@ void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::
               new_desired_pose.translation().z());
 }
 
+// Send velocity commands to robot
+void AdmittanceNode::send_commands_to_robot() {
+  // Convert Cartesian velocity to joint velocities
+  if (!compute_joint_velocities(V_tcp_base_commanded_)) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "IK velocity solver failed");
+    return;
+  }
+  
+  // Publish joint velocity commands
+  for (size_t i = 0; i < velocity_msg_.data.size(); ++i) {
+    velocity_msg_.data[i] = q_dot_cmd_[i];
+  }
+  velocity_pub_->publish(velocity_msg_);
+}
+
+// Apply workspace limits to Cartesian motion
+void AdmittanceNode::limit_to_workspace() {
+  // TODO: Implement workspace boundary checking
+  // Check if current position is within workspace_limits_
+  // workspace_limits_ = [x_min, x_max, y_min, y_max, z_min, z_max]
+  
+  // For now, just pass through
+  // Future implementation will check boundaries and limit velocities
+}
+
+// Apply velocity limits to joint commands
+void AdmittanceNode::limit_joint_velocities() {
+  // TODO: Implement joint velocity saturation
+  // Check if joint velocities exceed arm_max_vel_
+  // Scale down proportionally if needed
+  
+  // For now, just pass through
+  // Future implementation will apply velocity limits
+}
+
+// Apply admittance ratio to scale force response
+void AdmittanceNode::apply_admittance_ratio(double ratio) {
+  // TODO: Scale external wrench by admittance ratio
+  // Wrench_tcp_base_ = ratio * Wrench_tcp_base_raw_
+  // Allows variable compliance (0 = no response, 1 = full response)
+  
+  admittance_ratio_ = std::clamp(ratio, 0.0, 1.0);
+}
+
+// Transform utility functions (ROS1 style)
+bool AdmittanceNode::get_transform_matrix(Eigen::Isometry3d& transform,
+                                         const std::string& from_frame,
+                                         const std::string& to_frame,
+                                         const std::chrono::milliseconds& timeout) {
+  try {
+    const auto tf_stamped = tf_buffer_->lookupTransform(
+        from_frame, to_frame,
+        tf2::TimePointZero,
+        timeout
+    );
+    transform = tf2::transformToEigen(tf_stamped);
+    return true;
+  } catch (const tf2::TransformException& ex) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                        "Transform lookup failed (%s → %s): %s",
+                        from_frame.c_str(), to_frame.c_str(), ex.what());
+    return false;
+  }
+}
+
+// Get 6x6 rotation matrix for wrench transformation (ROS1 pattern)
+bool AdmittanceNode::get_rotation_matrix_6d(Matrix6d& rotation_matrix,
+                                           const std::string& from_frame,
+                                           const std::string& to_frame) {
+  Eigen::Isometry3d transform;
+  if (get_transform_matrix(transform, from_frame, to_frame)) {
+    rotation_matrix.setZero();
+    rotation_matrix.topLeftCorner(3, 3) = transform.rotation();
+    rotation_matrix.bottomRightCorner(3, 3) = transform.rotation();
+    return true;
+  }
+  return false;
+}
+
+// Wait for all required transforms to be available
+void AdmittanceNode::wait_for_transformations() {
+  RCLCPP_INFO(get_logger(), "Waiting for required transforms...");
+  
+  const std::vector<std::pair<std::string, std::string>> required_transforms = {
+    {params_.base_link, params_.tip_link},
+    {"world", params_.base_link}  // Add more as needed
+  };
+  
+  for (const auto& [from, to] : required_transforms) {
+    while (!tf_buffer_->canTransform(from, to, tf2::TimePointZero)) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                          "Waiting for transform: %s → %s", 
+                          from.c_str(), to.c_str());
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }
+  
+  RCLCPP_INFO(get_logger(), "All transforms ready");
+}
+
+// Publish arm state in world frame (for visualization/debugging)
+void AdmittanceNode::publish_arm_state_in_world() {
+  // TODO: Implement publishing of end-effector pose/twist in world frame
+  // Similar to ROS1's publish_arm_state_in_world()
+  // This would publish geometry_msgs::PoseStamped and TwistStamped
+}
+
+// Publish debugging signals (forces, equilibrium, etc.)
+void AdmittanceNode::publish_debugging_signals() {
+  // TODO: Implement publishing of debug information
+  // - External wrench
+  // - Control wrench  
+  // - Equilibrium position
+  // - Admittance ratio
+}
+
 }  // namespace ur_admittance_controller
 
 // Main entry point - initialize ROS2 and start admittance control node
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
-
+  
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
-
-  RCLCPP_INFO(node->get_logger(), "Starting UR Admittance Controller - Ready for force interaction!");
-  rclcpp::spin(node);
+  rclcpp::Rate rate(100);  // 100Hz control loop
+  
+  RCLCPP_INFO(node->get_logger(), "Starting UR Admittance Controller at 100Hz...");
+  
+  // Main control loop - standard ROS2 pattern
+  while (rclcpp::ok()) {
+    // Process pending callbacks (subscriptions, services)
+    rclcpp::spin_some(node);
+    
+    // Run control computation
+    node->control_cycle();
+    
+    // Maintain 100Hz rate
+    rate.sleep();
+  }
+  
+  RCLCPP_INFO(node->get_logger(), "Shutting down UR Admittance Controller");
   rclcpp::shutdown();
-
   return 0;
 }
