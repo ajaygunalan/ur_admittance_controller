@@ -45,6 +45,9 @@ class AdmittanceNode : public rclcpp::Node {
   
   // Main control cycle - called from main loop at 100Hz
   void control_cycle();
+  
+  // Initialization - must be called before control loop
+  bool initialize();
 
   // Publishing functions (ROS1 style organization)
   void publish_arm_state_in_world();
@@ -61,6 +64,11 @@ class AdmittanceNode : public rclcpp::Node {
   bool load_kinematics();
   bool initialize_desired_pose();
   void wait_for_transformations();
+  
+  // Initialization sequence methods
+  void wait_for_robot_ready();
+  void wait_for_kinematics();
+  void wait_for_initial_pose();
   
   // Core admittance control algorithms
   bool compute_admittance();

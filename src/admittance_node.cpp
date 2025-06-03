@@ -98,11 +98,47 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   
   // Don't initialize desired pose here - wait for robot to be fully loaded
   
-  RCLCPP_INFO(get_logger(), "UR Admittance Controller initialized - waiting for robot to load...");
-  // Message moved to after initialization completes
+  RCLCPP_INFO(get_logger(), "UR Admittance Controller node created");
 }
 
 // ROS2 handles automatic cleanup of timers and subscriptions
+
+// Initialize the admittance controller - must be called before control loop
+bool AdmittanceNode::initialize() {
+  RCLCPP_INFO(get_logger(), "=== Starting Admittance Controller Initialization ===");
+  
+  // Step 1: Wait for robot to be ready
+  wait_for_robot_ready();
+  if (!rclcpp::ok()) {
+    RCLCPP_ERROR(get_logger(), "Shutdown requested during robot initialization");
+    return false;
+  }
+  
+  // Step 2: Initialize kinematics
+  wait_for_kinematics();
+  if (!rclcpp::ok()) {
+    RCLCPP_ERROR(get_logger(), "Shutdown requested during kinematics initialization");
+    return false;
+  }
+  
+  // Step 3: Wait for transforms
+  wait_for_transformations();
+  if (!rclcpp::ok()) {
+    RCLCPP_ERROR(get_logger(), "Shutdown requested while waiting for transforms");
+    return false;
+  }
+  
+  // Step 4: Initialize reference pose
+  wait_for_initial_pose();
+  if (!rclcpp::ok()) {
+    RCLCPP_ERROR(get_logger(), "Shutdown requested during pose initialization");
+    return false;
+  }
+  
+  RCLCPP_INFO(get_logger(), "=== Initialization Complete - Ready for Control ===");
+  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
+  return true;
+}
 
 // Main control cycle - called from main loop at 100Hz
 void AdmittanceNode::control_cycle() {
@@ -267,9 +303,6 @@ bool AdmittanceNode::initialize_desired_pose() {
   const auto& pos = current_pose.translation();
   RCLCPP_INFO(get_logger(), "Reference pose initialized at [%.3f, %.3f, %.3f] m",
               pos.x(), pos.y(), pos.z());
-  
-  // Now we're fully ready!
-  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
 
   return true;
 }
@@ -343,7 +376,7 @@ void AdmittanceNode::apply_admittance_ratio(double ratio) {
   // Wrench_tcp_base_ = ratio * Wrench_tcp_base_raw_
   // Allows variable compliance (0 = no response, 1 = full response)
   
-  admittance_ratio_ = std::clamp(ratio, 0.0, 1.0);
+  admittance_ratio_ = std::max(0.0, std::min(1.0, ratio));
 }
 
 // Transform utility functions (ROS1 style)
@@ -381,22 +414,65 @@ bool AdmittanceNode::get_rotation_matrix_6d(Matrix6d& rotation_matrix,
   return false;
 }
 
+// Wait for robot to be ready (joint states available)
+void AdmittanceNode::wait_for_robot_ready() {
+  RCLCPP_INFO(get_logger(), "Waiting for robot to be ready...");
+  
+  while (!joint_states_received_ && rclcpp::ok()) {
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "Waiting for joint states...");
+    rclcpp::spin_some(shared_from_this());
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  
+  RCLCPP_INFO(get_logger(), "Joint states received - robot is ready");
+}
+
+// Wait for kinematics to be initialized
+void AdmittanceNode::wait_for_kinematics() {
+  RCLCPP_INFO(get_logger(), "Waiting for kinematics initialization...");
+  
+  while (!kinematics_initialized_ && rclcpp::ok()) {
+    if (load_kinematics()) {
+      kinematics_initialized_ = true;
+      RCLCPP_INFO(get_logger(), "Kinematics initialized successfully");
+      break;
+    }
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "Waiting for robot_description...");
+    rclcpp::spin_some(shared_from_this());
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+
+// Wait for initial pose to be set
+void AdmittanceNode::wait_for_initial_pose() {
+  RCLCPP_INFO(get_logger(), "Initializing reference pose...");
+  
+  while (!desired_pose_initialized_ && rclcpp::ok()) {
+    if (initialize_desired_pose()) {
+      RCLCPP_INFO(get_logger(), "Reference pose initialized successfully");
+      break;
+    }
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "Waiting for valid transform to initialize pose...");
+    rclcpp::spin_some(shared_from_this());
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+
 // Wait for all required transforms to be available
 void AdmittanceNode::wait_for_transformations() {
   RCLCPP_INFO(get_logger(), "Waiting for required transforms...");
   
-  const std::vector<std::pair<std::string, std::string>> required_transforms = {
-    {params_.base_link, params_.tip_link},
-    {"world", params_.base_link}  // Add more as needed
-  };
-  
-  for (const auto& [from, to] : required_transforms) {
-    while (!tf_buffer_->canTransform(from, to, tf2::TimePointZero)) {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                          "Waiting for transform: %s → %s", 
-                          from.c_str(), to.c_str());
-      std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
+  // Wait for base->tip transform (most important)
+  while (!tf_buffer_->canTransform(params_.base_link, params_.tip_link, 
+                                   tf2::TimePointZero) && rclcpp::ok()) {
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                         "Waiting for transform: %s → %s", 
+                         params_.base_link.c_str(), params_.tip_link.c_str());
+    rclcpp::spin_some(shared_from_this());
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   
   RCLCPP_INFO(get_logger(), "All transforms ready");
@@ -425,9 +501,16 @@ int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
-  rclcpp::Rate rate(100);  // 100Hz control loop
   
-  RCLCPP_INFO(node->get_logger(), "Starting UR Admittance Controller at 100Hz...");
+  // Initialize the controller and wait for robot to be ready
+  if (!node->initialize()) {
+    RCLCPP_ERROR(node->get_logger(), "Failed to initialize admittance controller");
+    rclcpp::shutdown();
+    return 1;
+  }
+  
+  rclcpp::Rate rate(100);  // 100Hz control loop
+  RCLCPP_INFO(node->get_logger(), "Starting control loop at 100Hz...");
   
   // Main control loop - standard ROS2 pattern
   while (rclcpp::ok()) {
