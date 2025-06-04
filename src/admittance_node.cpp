@@ -62,8 +62,8 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 
   velocity_msg_.data.resize(params_.joints.size());
   
-  workspace_limits_ << -1.0, 1.0, -1.0, 1.0, 0.0, 1.5;
-  arm_max_vel_ = 0.5;
+  workspace_limits_ << -0.5, 0.5, -0.5, 0.5, 0.0, 0.7;
+  arm_max_vel_ = 1.5;
   arm_max_acc_ = 1.0;
   admittance_ratio_ = 1.0;
   

@@ -10,7 +10,7 @@ ur_admittance_controller:
   admittance:
     mass:
       type: double_array
-      default_value: [8.0, 8.0, 8.0, 0.8, 0.8, 0.8]
+      default_value: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
       description: "Virtual inertia [X,Y,Z,Rx,Ry,Rz] in [kg,kg,kg,kg⋅m²,kg⋅m²,kg⋅m²]"
       validation:
         fixed_size<>: [6]
@@ -18,7 +18,7 @@ ur_admittance_controller:
 
     stiffness:
       type: double_array
-      default_value: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      default_value: [10.0, 20.0, 10.0, 10.0, 10.0, 10.0]
       description: "Position stiffness [X,Y,Z,Rx,Ry,Rz] in [N/m,N/m,N/m,Nm/rad,Nm/rad,Nm/rad]"
       validation:
         fixed_size<>: [6]
