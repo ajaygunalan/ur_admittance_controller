@@ -56,16 +56,6 @@ ur_admittance_controller:
       default_value: 0.001
       description: "Velocity threshold for drift reset [m/s]"
 
-  max_linear_velocity:
-    type: double
-    default_value: 0.5
-    description: "Maximum linear velocity [m/s]"
-
-  max_angular_velocity:
-    type: double
-    default_value: 1.0
-    description: "Maximum angular velocity [rad/s]"
-
   dynamic_parameters:
     type: bool
     default_value: true
