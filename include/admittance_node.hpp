@@ -72,7 +72,6 @@ class AdmittanceNode : public rclcpp::Node {
   
   // Safety validation and limits
   void limit_to_workspace();
-  void limit_joint_velocities();
   
   // ROS2 communication interfaces
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
