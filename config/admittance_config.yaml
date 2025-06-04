@@ -93,18 +93,3 @@ ur_admittance_controller:
     default_value: "ft_sensor_link"
     description: "F/T sensor frame"
     read_only: true
-
-# Initial joint configuration for zero-error startup
-# These positions place the end-effector at the equilibrium position
-initial_joint_positions:
-  - 2.137181473386596    # shoulder_pan_joint
-  - -1.4998039803657388  # shoulder_lift_joint  
-  - 1.549433454173772    # elbow_joint
-  - -1.720668606474913   # wrist_1_joint
-  - -1.5707963267948966  # wrist_2_joint
-  - 0.5664094686907195   # wrist_3_joint
-
-# Equilibrium configuration (desired pose)
-equilibrium:
-  position: [0.1, 0.4, 0.5]  # meters [x, y, z]
-  orientation: [0.0, 0.0, 0.0, 1.0]  # quaternion [x, y, z, w]
