@@ -6,7 +6,6 @@
 // Related header
 #include "ur_admittance_controller/ur_admittance_controller_parameters.hpp"
 #include "admittance_node_types.hpp"
-#include "admittance_constants.hpp"
 
 // Standard library headers
 #include <atomic>
@@ -45,7 +44,7 @@ class AdmittanceNode : public rclcpp::Node {
   void control_cycle();
   
   // Initialization - must be called before control loop
-  bool initialize();
+  void initialize();
 
  private:
   // ROS2 callback functions for sensor data processing
@@ -54,10 +53,10 @@ class AdmittanceNode : public rclcpp::Node {
   void desired_pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
   
   // System initialization and setup
-  bool load_kinematics(const std::string& urdf_string);
+  bool load_kinematics();
   
   // Initialization sequence methods
-  void wait_for_robot_ready();
+  bool checkJointStates();
   
   // Core admittance control algorithms
   void compute_admittance();

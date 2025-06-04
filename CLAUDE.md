@@ -114,8 +114,8 @@ ros2 param set /admittance_node admittance.mass "[5.0, 5.0, 5.0, 0.5, 0.5, 0.5]"
 ros2 param set /admittance_node admittance.stiffness "[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"  # Pure admittance
 ros2 param set /admittance_node admittance.stiffness "[100.0, 100.0, 100.0, 10.0, 10.0, 10.0]"  # Impedance
 
-# Adjust damping for stability
-ros2 param set /admittance_node admittance.damping_ratio "[0.8, 0.8, 0.8, 0.8, 0.8, 0.8]"
+# Adjust damping for stability (explicit values in Ns/m and Nms/rad)
+ros2 param set /admittance_node admittance.damping "[12.0, 12.0, 12.0, 10.0, 10.0, 10.0]"
 
 # Enable/disable specific axes
 ros2 param set /admittance_node admittance.enabled_axes "[true, true, false, false, false, true]"

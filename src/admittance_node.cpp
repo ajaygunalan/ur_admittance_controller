@@ -1,6 +1,7 @@
 #include "admittance_node.hpp"
 #include <chrono>
 #include <thread>
+#include <rclcpp/wait_for_message.hpp>
 
 namespace ur_admittance_controller {
 
@@ -24,17 +25,6 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
     });
   
   this->declare_parameter("robot_description", "");
-  std::string robot_description;
-  this->get_parameter("robot_description", robot_description);
-  
-  if (!robot_description.empty()) {
-    kinematics_initialized_ = load_kinematics(robot_description);
-    if (!kinematics_initialized_) {
-      RCLCPP_ERROR(get_logger(), "Failed to initialize kinematics from robot_description parameter");
-    }
-  } else {
-    RCLCPP_WARN(get_logger(), "robot_description parameter is empty - kinematics not initialized");
-  }
   
   const auto joint_count = params_.joints.size();
   q_current_.resize(joint_count, 0.0);
@@ -80,32 +70,12 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
                eq_pos[0], eq_pos[1], eq_pos[2]);
 }
 
-bool AdmittanceNode::initialize() {
-  if (!kinematics_initialized_) {
-    RCLCPP_ERROR(get_logger(), 
-                 "Kinematics not initialized. Check that:\n"
-                 "  1. robot_state_publisher is running\n"
-                 "  2. robot_description parameter contains valid URDF\n"
-                 "  3. base_link (%s) and tip_link (%s) exist in URDF",
-                 params_.base_link.c_str(), params_.tip_link.c_str());
-    return false;
-  }
+void AdmittanceNode::initialize() {
+  if (!load_kinematics()) RCLCPP_ERROR(get_logger(), "Kinematics loading failed");
   
-  try {
-    wait_for_robot_ready();
-  } catch (const std::runtime_error& e) {
-    RCLCPP_ERROR(get_logger(), "Initialization failed: %s", e.what());
-    return false;
-  }
+  if (!checkJointStates()) RCLCPP_ERROR(get_logger(), "Joint states not received - is robot driver running?");
   
-  if (!rclcpp::ok()) {
-    RCLCPP_ERROR(get_logger(), "Shutdown requested during initialization");
-    return false;
-  }
-  
-  RCLCPP_INFO(get_logger(), "=== Initialization Complete - Ready for Control ===");
   RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
-  return true;
 }
 
 void AdmittanceNode::control_cycle() {
@@ -140,9 +110,10 @@ void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::Co
 }
 
 // Initialize KDL kinematics from URDF
-bool AdmittanceNode::load_kinematics(const std::string& urdf_string) {
-  if (urdf_string.empty()) {
-    RCLCPP_WARN(get_logger(), "Empty URDF string provided");
+bool AdmittanceNode::load_kinematics() {
+  std::string urdf_string;
+  if (!get_parameter("robot_description", urdf_string) || urdf_string.empty()) {
+    RCLCPP_ERROR(get_logger(), "robot_description parameter not found or empty");
     return false;
   }
 
@@ -152,6 +123,11 @@ bool AdmittanceNode::load_kinematics(const std::string& urdf_string) {
       RCLCPP_ERROR(get_logger(), "Failed to parse URDF into KDL tree");
       return false;
     }
+
+    // Log tree information for diagnostics
+    RCLCPP_DEBUG(get_logger(), "KDL Tree: %d joints, %d segments, root: %s",
+                 kdl_tree_.getNrOfJoints(), kdl_tree_.getNrOfSegments(),
+                 kdl_tree_.getRootSegment()->first.c_str());
 
     // Extract kinematic chain from base to end-effector
     if (!kdl_tree_.getChain(params_.base_link, params_.tip_link, kdl_chain_)) {
@@ -295,41 +271,10 @@ void AdmittanceNode::limit_to_workspace() {
   }
 }
 
-// Wait for robot to be ready (joint states available) with timeout
-void AdmittanceNode::wait_for_robot_ready() {
-  // Waiting for robot to be ready - progress will be shown below
-  
-  // Modern ROS2 pattern: Use timeout instead of infinite loop
-  const auto timeout_duration = std::chrono::seconds(10);
-  const auto start_time = std::chrono::steady_clock::now();
-  
-  while (!joint_states_received_ && rclcpp::ok()) {
-    // Check for timeout
-    const auto elapsed = std::chrono::steady_clock::now() - start_time;
-    if (elapsed > timeout_duration) {
-      RCLCPP_ERROR(get_logger(), 
-                   "Timeout waiting for joint states after %ld seconds. "
-                   "Is the robot driver running?",
-                   std::chrono::duration_cast<std::chrono::seconds>(elapsed).count());
-      throw std::runtime_error("Joint states timeout");
-    }
-    
-    // Log progress less frequently (every 2 seconds instead of 1)
-    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-                         "Waiting for joint states... (%.1f/%.1f seconds)",
-                         std::chrono::duration<double>(elapsed).count(),
-                         std::chrono::duration<double>(timeout_duration).count());
-    
-    // Process callbacks
-    rclcpp::spin_some(shared_from_this());
-    
-    // Use shorter sleep for more responsive initialization
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
-  
-  if (joint_states_received_) {
-    RCLCPP_INFO(get_logger(), "✓ Joint states received - robot is ready");
-  }
+// Check if joint states have been received
+bool AdmittanceNode::checkJointStates() {
+  sensor_msgs::msg::JointState msg;
+  return rclcpp::wait_for_message(msg, shared_from_this(), "/joint_states", std::chrono::seconds(10));
 }
 
 
@@ -344,11 +289,7 @@ int main(int argc, char* argv[]) {
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
   
   // Initialize the controller and wait for robot to be ready
-  if (!node->initialize()) {
-    RCLCPP_ERROR(node->get_logger(), "Failed to initialize admittance controller");
-    rclcpp::shutdown();
-    return 1;
-  }
+  node->initialize();
   
   // Control frequency and period (elegant like ROS1)
   const double frequency = 100.0;  // Hz

@@ -88,8 +88,8 @@ ros2 param set /admittance_node admittance.enabled_axes "[true,true,false,false,
 ```bash
 # All parameter changes take effect immediately (no restart required)
 
-# Increase damping for stability
-ros2 param set /admittance_node admittance.damping_ratio "[1.0,1.0,1.0,1.0,1.0,1.0]"
+# Adjust damping for stability (explicit values in Ns/m and Nms/rad)
+ros2 param set /admittance_node admittance.damping "[15.0,15.0,15.0,12.0,12.0,12.0]"
 
 # Adjust virtual mass for responsiveness
 ros2 param set /admittance_node admittance.mass "[5.0,5.0,5.0,0.5,0.5,0.5]"
@@ -117,7 +117,7 @@ ros2 param set /admittance_node max_linear_velocity 0.3
 4. Check enabled axes: `ros2 param get /admittance_node admittance.enabled_axes`
 
 ### Jerky motion
-1. Increase damping: `ros2 param set /admittance_node admittance.damping_ratio "[1.2,1.2,1.2,1.2,1.2,1.2]"`
+1. Increase damping: `ros2 param set /admittance_node admittance.damping "[20.0,20.0,20.0,15.0,15.0,15.0]"`
 2. Increase virtual mass: `ros2 param set /admittance_node admittance.mass "[12,12,12,1.5,1.5,1.5]"`
 
 ## Documentation

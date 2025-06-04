@@ -1,11 +1,8 @@
 #include "admittance_node.hpp"
-#include "admittance_constants.hpp"
 #include <algorithm>
 #include <cmath>
 
 namespace ur_admittance_controller {
-
-using namespace constants;
 
 void AdmittanceNode::compute_admittance() {
   Vector6d error = compute_pose_error();
@@ -57,17 +54,8 @@ void AdmittanceNode::update_stiffness_matrix() {
 }
 
 void AdmittanceNode::update_damping_matrix() {
-  using namespace constants;
-
   for (size_t i = 0; i < 6; ++i) {
-    const double effective_stiffness = (params_.admittance.stiffness[i] <= 0.0)
-                                           ? VIRTUAL_STIFFNESS
-                                           : params_.admittance.stiffness[i];
-
-    const double damping_value = 2.0 * params_.admittance.damping_ratio[i] *
-                                 std::sqrt(params_.admittance.mass[i] * effective_stiffness);
-
-    D_diag_(i) = damping_value;
+    D_diag_(i) = params_.admittance.damping[i];
   }
 }
 
@@ -110,12 +98,6 @@ bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
 
 void AdmittanceNode::computeForwardKinematics() {
   if (!joint_states_updated_) {
-    return;
-  }
-  
-  if (!fk_pos_solver_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "Forward kinematics solver not initialized");
     return;
   }
   
