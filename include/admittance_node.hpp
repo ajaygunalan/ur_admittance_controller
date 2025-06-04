@@ -160,6 +160,9 @@ class AdmittanceNode : public rclcpp::Node {
   // Flag to ensure we compute FK after joint states are updated
   bool joint_states_updated_ = false;
   
+  // Control loop period (elegant like ROS1's expectedCycleTime)
+  rclcpp::Duration control_period_{std::chrono::milliseconds(10)};  // 100Hz default
+  
   // Compute forward kinematics from joint positions (industry standard naming)
   void computeForwardKinematics();
 };

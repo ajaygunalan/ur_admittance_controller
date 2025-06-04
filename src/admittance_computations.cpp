@@ -10,90 +10,60 @@ namespace ur_admittance_controller {
 
 using namespace constants;
 
-// Solve admittance equation and integrate to compute Cartesian velocity commands
-// Mathematical model: M*acceleration + D*velocity + K*position_error = F_external
-// Solves for acceleration, then integrates: v_new = v_old + acceleration * dt
 bool AdmittanceNode::compute_admittance() {
-  // Calculate 6-DOF pose error (position + orientation)
+  
   error_tcp_base_ = compute_pose_error();
-  if (error_tcp_base_.hasNaN()) {
-    return false;
-  }
   
-  // Enforce safety limits on pose error magnitude
-  if (!check_pose_limits(error_tcp_base_)) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
-                         "Safety stop: pose error exceeds safe limits");
-    return false;
-  }
-  
-  // Fixed dt for 100Hz control loop (like ROS1 loop_rate_.expectedCycleTime())
-  constexpr double dt = 0.01;  // 10ms
-  
-  // Solve admittance equation for acceleration using optimized diagonal operations
-  // acceleration = M^-1 * (F_external - D*velocity - K*position_error)
-  const Vector6d acceleration = M_inverse_diag_.array() *
+  // Admittance equation: M*a = F_external - D*v - K*x
+  Vector6d acceleration = M_inverse_diag_.array() *
       (Wrench_tcp_base_.array() - D_diag_.array() * V_tcp_base_desired_.array() -
        K_diag_.array() * error_tcp_base_.array());
-  if (acceleration.hasNaN()) {
-    return false;
+  
+  // Limit linear acceleration for safety
+  double acc_norm = acceleration.head<3>().norm();
+  if (acc_norm > arm_max_acc_) {
+    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1000,
+                                "Admittance generates high arm acceleration! norm: " << acc_norm);
+    acceleration.head<3>() *= (arm_max_acc_ / acc_norm);
   }
-  // Forward Euler integration to update velocity
-  V_tcp_base_desired_ = V_tcp_base_desired_ + acceleration * dt;
-  if (V_tcp_base_desired_.hasNaN()) {
-    return false;
-  }
-  // Apply selective compliance - disable motion on specified axes
-  for (size_t i = 0; i < 6; ++i) {
-    if (!params_.admittance.enabled_axes[i]) {
-      V_tcp_base_desired_(i) = 0.0;
-    }
-  }
-  // No drift reset - user controls desired pose via topic
-  // V_tcp_base_commanded_ is now our output velocity
+  
+  // Integrate for velocity
+  const double dt = control_period_.seconds();
+  V_tcp_base_desired_ += acceleration * dt;
+  
+  // // Apply axis selection
+  // for (size_t i = 0; i < 6; ++i) {
+  //   if (!params_.admittance.enabled_axes[i]) {
+  //     V_tcp_base_desired_(i) = 0.0;
+  //   }
+  // }
+  
   V_tcp_base_commanded_ = V_tcp_base_desired_;
   return true;
 }
 
-// Compute 6-DOF pose error: [position_error; orientation_error]
-// Uses quaternion-based orientation error to avoid singularities
 Vector6d AdmittanceNode::compute_pose_error() {
-  Vector6d error = Vector6d::Zero();
-
-  // Access reference pose (no mutex needed - single threaded)
-  Eigen::Isometry3d desired_pose = X_tcp_base_desired_;
-  // Compute position error as simple vector difference
-  error.head<3>() = desired_pose.translation() - X_tcp_base_current_.translation();
-  // Extract rotation matrices for orientation error computation
-  const Eigen::Matrix3d R_current = X_tcp_base_current_.rotation();
-  const Eigen::Matrix3d R_desired = desired_pose.rotation();
-  // Convert to unit quaternions for robust orientation representation
-  Eigen::Quaterniond q_current(R_current);
-  q_current.normalize();
-
-  Eigen::Quaterniond q_desired(R_desired);
-  q_desired.normalize();
-  // Ensure shortest rotation path by choosing same quaternion hemisphere
+  Vector6d error;
+  
+  // Position error (ROS1 convention: current - desired)
+  error.head<3>() = X_tcp_base_current_.translation() - X_tcp_base_desired_.translation();
+  
+  // Orientation error (ROS1 convention: current * desired.inverse())
+  Eigen::Quaterniond q_current(X_tcp_base_current_.rotation());
+  Eigen::Quaterniond q_desired(X_tcp_base_desired_.rotation());
+  
+  // Ensure shortest path (same hemisphere check as ROS1)
   if (q_current.dot(q_desired) < 0) {
     q_current.coeffs() = -q_current.coeffs();
   }
-  // Compute orientation error quaternion: q_error = q_desired * q_current^-1
-  Eigen::Quaterniond q_error = q_desired * q_current.inverse();
-  q_error.normalize();
-  // Convert error quaternion to axis-angle for linear control
-  const Eigen::AngleAxisd aa_error(q_error);
-  // Convert to 3D orientation error vector (axis * angle)
-  if (aa_error.angle() < QUATERNION_EPSILON) {
-    error.tail<3>().setZero();  // Handle numerical precision near identity
-  } else {
-    error.tail<3>() = aa_error.axis() * aa_error.angle();
-
-    // Clamp orientation error to prevent excessive rotation commands
-    const double error_norm = error.tail<3>().norm();
-    if (error_norm > MAX_ORIENTATION_ERROR) {
-      error.tail<3>() *= MAX_ORIENTATION_ERROR / error_norm;
-    }
-  }
+  
+  // Error quaternion: current * desired.inverse() (matches ROS1)
+  Eigen::Quaterniond q_error = q_current * q_desired.inverse();
+  
+  // Convert to axis-angle for consistent behavior across all angles
+  Eigen::AngleAxisd aa_error(q_error);
+  error.tail<3>() = aa_error.axis() * aa_error.angle();
+  
   return error;
 }
 

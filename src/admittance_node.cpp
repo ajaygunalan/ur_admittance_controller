@@ -501,8 +501,13 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   
-  rclcpp::Rate rate(100);  // 100Hz control loop
-  RCLCPP_INFO(node->get_logger(), "Starting control loop at 100Hz...");
+  // Control frequency and period (elegant like ROS1)
+  const double frequency = 100.0;  // Hz
+  rclcpp::Rate rate(frequency);
+  node->control_period_ = rclcpp::Duration::from_seconds(1.0 / frequency);
+  
+  RCLCPP_INFO(node->get_logger(), "Starting control loop at %.0fHz (dt=%.3fs)...", 
+              frequency, node->control_period_.seconds());
   
   // Main control loop - standard ROS2 pattern
   while (rclcpp::ok()) {
