@@ -94,8 +94,7 @@ class AdmittanceNode : public rclcpp::Node {
   bool joint_states_received_ = false;  // Track if robot is loaded
   // Core admittance control state vectors (6-DOF: xyz + rpy) 
   Vector6d Wrench_tcp_base_;         // External forces/torques in base frame (filtered & bias-compensated)
-  Vector6d V_tcp_base_commanded_;    // Commanded Cartesian velocity output
-  Vector6d V_tcp_base_desired_;      // Internal velocity state from admittance equation
+  Vector6d V_tcp_base_commanded_;    // Commanded Cartesian velocity (integrated and limited)
   // Admittance equation matrices: M*accel + D*vel + K*pos = F_external
   // Only diagonal elements are used - removed redundant full matrix storage
   Vector6d M_inverse_diag_;     // Diagonal elements of mass^-1

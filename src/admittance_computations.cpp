@@ -12,7 +12,7 @@ void AdmittanceNode::compute_admittance() {
   Vector6d scaled_wrench = admittance_ratio_ * Wrench_tcp_base_;
   
   Vector6d acceleration = M_inverse_diag_.array() *
-      (scaled_wrench.array() - D_diag_.array() * V_tcp_base_desired_.array() -
+      (scaled_wrench.array() - D_diag_.array() * V_tcp_base_commanded_.array() -
        K_diag_.array() * error.array());
   
   double acc_norm = acceleration.head<3>().norm();
@@ -23,8 +23,7 @@ void AdmittanceNode::compute_admittance() {
   }
   
   const double dt = control_period_.seconds();
-  V_tcp_base_desired_ += acceleration * dt;
-  V_tcp_base_commanded_ = V_tcp_base_desired_;
+  V_tcp_base_commanded_ += acceleration * dt;
 }
 
 Vector6d AdmittanceNode::compute_pose_error() {

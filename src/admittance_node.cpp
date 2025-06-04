@@ -42,7 +42,6 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   
   Wrench_tcp_base_ = Vector6d::Zero();
   V_tcp_base_commanded_ = Vector6d::Zero();
-  V_tcp_base_desired_ = Vector6d::Zero();
   
   X_tcp_base_current_ = Eigen::Isometry3d::Identity();
   X_tcp_base_desired_ = Eigen::Isometry3d::Identity();
@@ -248,9 +247,8 @@ void AdmittanceNode::limit_to_workspace() {
   // Get current TCP position from forward kinematics
   const auto& current_position = X_tcp_base_current_.translation();
   
-  // Start with desired velocity from admittance control
-  V_tcp_base_commanded_ = V_tcp_base_desired_;
-  // Note: Add any additional desired velocity here if needed (e.g., from trajectory planning)
+  // V_tcp_base_commanded_ already contains integrated velocity from admittance control
+  // Apply workspace limits directly to it
   
   // Check workspace boundaries and limit velocities for each axis
   for (size_t i = 0; i < 3; ++i) {
