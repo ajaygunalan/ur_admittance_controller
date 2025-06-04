@@ -145,12 +145,7 @@ void AdmittanceNode::control_cycle() {
   // Compute forward kinematics from joint positions (industry standard approach)
   computeForwardKinematics();
   
-  // Compute admittance dynamics
-  if (!compute_admittance()) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "Admittance computation failed");
-    return;
-  }
+  compute_admittance();
   
   // Apply safety limits
   limit_to_workspace();

@@ -72,7 +72,7 @@ class AdmittanceNode : public rclcpp::Node {
   void wait_for_initial_pose();
   
   // Core admittance control algorithms
-  bool compute_admittance();
+  void compute_admittance();
   Vector6d compute_pose_error();
   void update_mass_matrix();
   void update_damping_matrix();
@@ -160,8 +160,11 @@ class AdmittanceNode : public rclcpp::Node {
   // Flag to ensure we compute FK after joint states are updated
   bool joint_states_updated_ = false;
   
+ public:
   // Control loop period (elegant like ROS1's expectedCycleTime)
   rclcpp::Duration control_period_{std::chrono::milliseconds(10)};  // 100Hz default
+  
+ private:
   
   // Compute forward kinematics from joint positions (industry standard naming)
   void computeForwardKinematics();

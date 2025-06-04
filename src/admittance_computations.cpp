@@ -10,7 +10,7 @@ namespace ur_admittance_controller {
 
 using namespace constants;
 
-bool AdmittanceNode::compute_admittance() {
+void AdmittanceNode::compute_admittance() {
   
   error_tcp_base_ = compute_pose_error();
   
@@ -31,15 +31,7 @@ bool AdmittanceNode::compute_admittance() {
   const double dt = control_period_.seconds();
   V_tcp_base_desired_ += acceleration * dt;
   
-  // // Apply axis selection
-  // for (size_t i = 0; i < 6; ++i) {
-  //   if (!params_.admittance.enabled_axes[i]) {
-  //     V_tcp_base_desired_(i) = 0.0;
-  //   }
-  // }
-  
   V_tcp_base_commanded_ = V_tcp_base_desired_;
-  return true;
 }
 
 Vector6d AdmittanceNode::compute_pose_error() {
