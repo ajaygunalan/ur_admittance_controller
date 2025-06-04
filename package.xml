@@ -22,11 +22,6 @@
   <depend>sensor_msgs</depend>
   <depend>trajectory_msgs</depend>
   
-  <!-- Transform dependencies -->
-  <depend>tf2</depend>
-  <depend>tf2_ros</depend>
-  <depend>tf2_eigen</depend>
-  
   <!-- Kinematics dependencies -->
   <depend>kdl_parser</depend>
   <depend>urdf</depend>
@@ -34,6 +29,9 @@
   
   <!-- System dependencies -->
   <depend>eigen</depend>
+  
+  <!-- Python dependencies -->
+  <exec_depend>python3-yaml</exec_depend>
   
   <!-- Testing dependencies -->
   <test_depend>ament_cmake_gmock</test_depend>

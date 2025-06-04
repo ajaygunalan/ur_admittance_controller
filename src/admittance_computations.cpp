@@ -12,12 +12,15 @@ using namespace constants;
 
 void AdmittanceNode::compute_admittance() {
   
-  error_tcp_base_ = compute_pose_error();
+  Vector6d error = compute_pose_error();
+  
+  // Apply admittance ratio to scale force response (0 = no response, 1 = full response)
+  Vector6d scaled_wrench = admittance_ratio_ * Wrench_tcp_base_;
   
   // Admittance equation: M*a = F_external - D*v - K*x
   Vector6d acceleration = M_inverse_diag_.array() *
-      (Wrench_tcp_base_.array() - D_diag_.array() * V_tcp_base_desired_.array() -
-       K_diag_.array() * error_tcp_base_.array());
+      (scaled_wrench.array() - D_diag_.array() * V_tcp_base_desired_.array() -
+       K_diag_.array() * error.array());
   
   // Limit linear acceleration for safety
   double acc_norm = acceleration.head<3>().norm();
@@ -64,26 +67,21 @@ Vector6d AdmittanceNode::compute_pose_error() {
 // Removed redundant manual parameter callback - using auto-generated parameter handling
 
 
-// Update 6x6 virtual mass matrix from parameters
+// Update virtual mass diagonal elements from parameters
 void AdmittanceNode::update_mass_matrix() {
-  // Build diagonal mass matrix from parameter array
-  M_.diagonal() = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6);
-  M_inverse_.diagonal() = M_.diagonal().cwiseInverse();
-
-  // Cache diagonal for optimized element-wise operations
+  // Only store diagonal elements for optimized element-wise operations
   M_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6).cwiseInverse();
 }
 
-// Update stiffness matrix and diagonal cache from parameters
+// Update stiffness diagonal elements from parameters
 void AdmittanceNode::update_stiffness_matrix() {
-  // Update both matrix and diagonal cache consistently
+  // Only store diagonal elements
   for (size_t i = 0; i < 6; ++i) {
-    K_(i, i) = params_.admittance.stiffness[i];
     K_diag_(i) = params_.admittance.stiffness[i];
   }
 }
 
-// Compute damping matrix using critical damping relationship: D = 2*ζ*√(M*K)
+// Compute damping diagonal elements using critical damping relationship: D = 2*ζ*√(M*K)
 void AdmittanceNode::update_damping_matrix() {
   using namespace constants;
 
@@ -98,8 +96,7 @@ void AdmittanceNode::update_damping_matrix() {
     const double damping_value = 2.0 * params_.admittance.damping_ratio[i] *
                                  std::sqrt(params_.admittance.mass[i] * effective_stiffness);
 
-    D_(i, i) = damping_value;
-    D_diag_(i) = damping_value;  // Cache for performance
+    D_diag_(i) = damping_value;  // Only store diagonal
   }
 }
 
@@ -119,13 +116,9 @@ bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
     return false;
   }
   
-  // Get current joint positions from sensor data (already in q_current_)
-  // No need to copy - q_current_ is already updated by JointStateCallback
-  
-  // Convert to KDL types
-  KDL::JntArray q_kdl(kdl_chain_.getNrOfJoints());
-  for (size_t i = 0; i < std::min(q_current_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
-    q_kdl(i) = q_current_[i];
+  // Update pre-allocated KDL array with current joint positions (no allocation)
+  for (size_t i = 0; i < num_joints_; ++i) {
+    q_kdl_(i) = q_current_[i];
   }
 
   // Send Cartesian velocity directly to KDL (CORRECT: velocity → velocity)
@@ -137,64 +130,19 @@ bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
   cart_twist.rot.y(cart_vel(4));
   cart_twist.rot.z(cart_vel(5));
 
-  // Solve for joint velocities using KDL
-  KDL::JntArray v_kdl(kdl_chain_.getNrOfJoints());
-  if (ik_vel_solver_->CartToJnt(q_kdl, cart_twist, v_kdl) < 0) {
+  // Solve for joint velocities using pre-allocated arrays
+  if (ik_vel_solver_->CartToJnt(q_kdl_, cart_twist, v_kdl_) < 0) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "KDL IK velocity solver failed");
     return false;
   }
 
   // Store joint velocities directly (CORRECT: velocity → velocity)
-  for (size_t i = 0; i < std::min(q_dot_cmd_.size(), (size_t)kdl_chain_.getNrOfJoints()); ++i) {
-    q_dot_cmd_[i] = v_kdl(i);  // [rad/s]
+  for (size_t i = 0; i < num_joints_; ++i) {
+    q_dot_cmd_[i] = v_kdl_(i);  // [rad/s]
     if (std::isnan(q_dot_cmd_[i])) return false;
   }
   
   return true;
-}
-
-
-bool AdmittanceNode::check_pose_limits(const Vector6d& pose_error) {
-  using namespace constants;
-  
-  // Check position error magnitude
-  double position_error_norm = pose_error.head<3>().norm();
-  double orientation_error_norm = pose_error.tail<3>().norm();
-  
-  if (position_error_norm > MAX_SAFE_POSITION_ERROR) {
-    RCLCPP_ERROR(get_logger(), "SAFETY: Position error %.3f m > %.3f m limit", 
-      position_error_norm, MAX_SAFE_POSITION_ERROR);
-    return false;
-  }
-  
-  if (orientation_error_norm > MAX_SAFE_ORIENTATION_ERROR) {
-    RCLCPP_ERROR(get_logger(), "SAFETY: Orientation error %.3f rad (%.1f°) > %.3f rad limit", 
-      orientation_error_norm, orientation_error_norm * 180.0 / M_PI, MAX_SAFE_ORIENTATION_ERROR);
-    return false;
-  }
-  
-  return true;
-}
-
-// DEPRECATED: Using direct forward kinematics computation instead of TF lookups
-// Get current end-effector pose in base frame using TF2 transforms
-[[deprecated("Use computeForwardKinematics() for better performance - direct FK computation")]]
-void AdmittanceNode::getEndEffectorPose(Eigen::Isometry3d& pose) {
-  try {
-    // Look up transform from base to end-effector
-    const auto transform = tf_buffer_->lookupTransform(
-        params_.base_link,
-        params_.tip_link,
-        tf2::TimePointZero,
-        std::chrono::milliseconds(50));
-    // Convert to Eigen pose representation
-    pose = tf2::transformToEigen(transform);
-  } catch (const tf2::TransformException& ex) {
-    // If transform fails, pose stays at previous value
-    // This is fine - better than stopping the controller
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "Transform lookup failed (base->tip): %s", ex.what());
-  }
 }
 
 // Compute forward kinematics from joint positions (industry standard naming)
@@ -211,15 +159,14 @@ void AdmittanceNode::computeForwardKinematics() {
     return;
   }
   
-  // Convert std::vector to KDL::JntArray
-  KDL::JntArray q_kdl(kdl_chain_.getNrOfJoints());
-  for (size_t i = 0; i < q_current_.size() && i < static_cast<size_t>(kdl_chain_.getNrOfJoints()); ++i) {
-    q_kdl(i) = q_current_[i];
+  // Update pre-allocated KDL array with current joint positions (no allocation)
+  for (size_t i = 0; i < num_joints_; ++i) {
+    q_kdl_(i) = q_current_[i];
   }
   
   // Compute forward kinematics
   KDL::Frame tcp_frame;
-  int fk_result = fk_pos_solver_->JntToCart(q_kdl, tcp_frame);
+  int fk_result = fk_pos_solver_->JntToCart(q_kdl_, tcp_frame);
   
   if (fk_result < 0) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000,

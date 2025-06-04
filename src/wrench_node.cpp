@@ -67,10 +67,8 @@ private:
     if (!force_bias_initialized_ && auto_bias_) {
       force_bias_ = raw_wrench;
       force_bias_initialized_ = true;
-      RCLCPP_INFO(this->get_logger(), 
-                  "Force bias initialized: F=[%.2f, %.2f, %.2f] N, T=[%.2f, %.2f, %.2f] Nm",
-                  force_bias_(0), force_bias_(1), force_bias_(2),
-                  force_bias_(3), force_bias_(4), force_bias_(5));
+      RCLCPP_INFO_ONCE(this->get_logger(), 
+                       "Force bias initialized automatically from first reading");
     }
     
     // Apply bias compensation
@@ -126,7 +124,7 @@ private:
     response->success = true;
     response->message = "Force bias will be reset on next sensor reading";
     
-    RCLCPP_INFO(this->get_logger(), "Force bias reset requested");
+    RCLCPP_DEBUG(this->get_logger(), "Force bias reset service called");
   }
   
   // Subscriptions and publishers
@@ -155,8 +153,7 @@ int main(int argc, char* argv[])
   
   auto node = std::make_shared<ur_admittance_controller::WrenchNode>();
   
-  RCLCPP_INFO(node->get_logger(), 
-              "Starting wrench node - filtering F/T sensor data");
+  // Node startup logged in constructor
   
   rclcpp::spin(node);
   rclcpp::shutdown();

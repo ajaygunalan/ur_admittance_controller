@@ -146,6 +146,7 @@ install(
 
 # Install Python scripts as executables
 install(PROGRAMS
+  scripts/init_admittance.py
   scripts/test_suite.py
   scripts/validate.py
   DESTINATION lib/${PROJECT_NAME}
