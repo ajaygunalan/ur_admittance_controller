@@ -156,54 +156,34 @@ bool AdmittanceNode::load_kinematics() {
     return false;
   }
 
-  try {
-    // Parse URDF string into KDL kinematic tree structure
-    if (!kdl_parser::treeFromString(urdf_string, kdl_tree_)) {
-      RCLCPP_ERROR(get_logger(), "Failed to parse URDF into KDL tree");
-      return false;
-    }
-
-    // Log tree information for diagnostics
-    RCLCPP_DEBUG(get_logger(), "KDL Tree: %d joints, %d segments, root: %s",
-                 kdl_tree_.getNrOfJoints(), kdl_tree_.getNrOfSegments(),
-                 kdl_tree_.getRootSegment()->first.c_str());
-
-    // Extract kinematic chain from base to end-effector
-    if (!kdl_tree_.getChain(params_.base_link, params_.tip_link, kdl_chain_)) {
-      RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain: %s -> %s",
-                   params_.base_link.c_str(), params_.tip_link.c_str());
-      return false;
-    }
-
-    // Configure WDLS (Weighted Damped Least Squares) inverse velocity solver
-    constexpr double kPrecisionThreshold = 1e-5;  // Convergence precision
-    constexpr int kMaxIterations = 150;           // Maximum solver iterations
-    ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_wdls>(kdl_chain_, 
-                                                                  kPrecisionThreshold, 
-                                                                  kMaxIterations);
-
-    // Set damping factor for singularity robustness
-    constexpr double kDampingFactor = 0.01;
-    ik_vel_solver_->setLambda(kDampingFactor);
-
-    // Create forward kinematics solver (ROS1-style direct computation)
-    fk_pos_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(kdl_chain_);
-
-    // Cache number of joints and pre-allocate KDL arrays to avoid repeated allocations
-    num_joints_ = kdl_chain_.getNrOfJoints();
-    q_kdl_.resize(num_joints_);
-    v_kdl_.resize(num_joints_);
-
-    RCLCPP_DEBUG(get_logger(), "KDL kinematics ready: %s -> %s (%d joints, %d segments)",
-                 params_.base_link.c_str(), params_.tip_link.c_str(),
-                 kdl_chain_.getNrOfJoints(), kdl_chain_.getNrOfSegments());
-
-    return true;
-
-  } catch (const std::exception& e) {
-    RCLCPP_ERROR(get_logger(), "Kinematics initialization failed: %s", e.what());
+  if (!kdl_parser::treeFromString(urdf_string, kdl_tree_)) {
+    RCLCPP_ERROR(get_logger(), "Failed to parse URDF into KDL tree");
     return false;
   }
+
+  if (!kdl_tree_.getChain(params_.base_link, params_.tip_link, kdl_chain_)) {
+    RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain: %s -> %s",
+                 params_.base_link.c_str(), params_.tip_link.c_str());
+    return false;
+  }
+
+  // Initialize solvers
+  constexpr double PRECISION = 1e-5;
+  constexpr int MAX_ITERATIONS = 150;
+  constexpr double DAMPING = 0.01;
+  
+  ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_wdls>(kdl_chain_, PRECISION, MAX_ITERATIONS);
+  ik_vel_solver_->setLambda(DAMPING);
+  fk_pos_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(kdl_chain_);
+
+  // Pre-allocate arrays
+  num_joints_ = kdl_chain_.getNrOfJoints();
+  q_kdl_.resize(num_joints_);
+  v_kdl_.resize(num_joints_);
+
+  RCLCPP_DEBUG(get_logger(), "KDL kinematics ready: %s -> %s (%d joints)",
+               params_.base_link.c_str(), params_.tip_link.c_str(), num_joints_);
+  return true;
 }
 
 
@@ -245,58 +225,40 @@ void AdmittanceNode::send_commands_to_robot() {
 
 // Apply workspace limits to Cartesian motion
 void AdmittanceNode::limit_to_workspace() {
-  // Constants for cleaner code
-  static constexpr double BUFFER_ZONE = 0.01;  // 1cm buffer before warning
-  static constexpr std::array<char, 3> AXIS_NAMES = {'x', 'y', 'z'};
+  static constexpr double BUFFER = 0.01;
+  static constexpr std::array<char, 3> AXES = {'x', 'y', 'z'};
   
-  // Get current TCP position from forward kinematics
-  const auto& current_position = X_tcp_base_current_.translation();
+  const auto& pos = X_tcp_base_current_.translation();
   
-  // V_tcp_base_commanded_ already contains integrated velocity from admittance control
-  // Apply workspace limits directly to it
-  
-  // Check workspace boundaries and limit velocities for each axis
+  // Apply workspace limits
   for (size_t i = 0; i < 3; ++i) {
-    const double pos = current_position[i];
-    const double min_limit = workspace_limits_[i * 2];
-    const double max_limit = workspace_limits_[i * 2 + 1];
+    const double min = workspace_limits_[i * 2];
+    const double max = workspace_limits_[i * 2 + 1];
     
-    // Check minimum boundary
-    if (pos <= min_limit) {
-      // Warn if significantly outside boundary
-      if (pos < min_limit - BUFFER_ZONE) {
+    if (pos[i] <= min) {
+      if (pos[i] < min - BUFFER) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                             "Out of permitted workspace. %c = %.3f not in [%.3f, %.3f]",
-                             AXIS_NAMES[i], pos, min_limit, max_limit);
+                             "Out of workspace: %c = %.3f not in [%.3f, %.3f]",
+                             AXES[i], pos[i], min, max);
       }
-      // Prevent motion further outside boundary
       V_tcp_base_commanded_[i] = std::max(0.0, V_tcp_base_commanded_[i]);
     }
-    
-    // Check maximum boundary
-    else if (pos >= max_limit) {
-      // Warn if significantly outside boundary
-      if (pos > max_limit + BUFFER_ZONE) {
+    else if (pos[i] >= max) {
+      if (pos[i] > max + BUFFER) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                             "Out of permitted workspace. %c = %.3f not in [%.3f, %.3f]",
-                             AXIS_NAMES[i], pos, min_limit, max_limit);
+                             "Out of workspace: %c = %.3f not in [%.3f, %.3f]",
+                             AXES[i], pos[i], min, max);
       }
-      // Prevent motion further outside boundary
       V_tcp_base_commanded_[i] = std::min(0.0, V_tcp_base_commanded_[i]);
     }
   }
   
-  // Limit velocity magnitude to maximum allowed
-  const double velocity_norm = V_tcp_base_commanded_.head<3>().norm();
-  
-  if (velocity_norm > arm_max_vel_) {
+  // Limit velocity magnitude
+  const double vel_norm = V_tcp_base_commanded_.head<3>().norm();
+  if (vel_norm > arm_max_vel_) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "Admittance generates fast arm movements! velocity norm: %.3f",
-                         velocity_norm);
-    
-    // Scale velocity to stay within limits while preserving direction
-    const double scaling_factor = arm_max_vel_ / velocity_norm;
-    V_tcp_base_commanded_.head<3>() *= scaling_factor;
+                         "High velocity: %.3f m/s", vel_norm);
+    V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / vel_norm);
   }
 }
 
