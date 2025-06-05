@@ -99,10 +99,25 @@ void AdmittanceNode::initialize() {
   
   if (!checkJointStates()) RCLCPP_ERROR(get_logger(), "Joint states not received - is robot driver running?");
   
+  // Create control timer - this replaces the manual while loop
+  control_timer_ = create_wall_timer(
+    std::chrono::milliseconds(10),  // 100Hz
+    std::bind(&AdmittanceNode::control_cycle, this)
+  );
+  
   RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
+  RCLCPP_INFO(get_logger(), "Control timer started at 100Hz");
 }
 
 void AdmittanceNode::control_cycle() {
+  // Monitor timing performance (optional debug)
+  static auto last_time = get_clock()->now();
+  auto current_time = get_clock()->now();
+  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 5000,
+                        "Control cycle period: %.3fms",
+                        (current_time - last_time).seconds() * 1000);
+  last_time = current_time;
+  
   computeForwardKinematics();
   compute_admittance();
   limit_to_workspace();
@@ -208,33 +223,23 @@ void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped
 
 // Send velocity commands to robot
 void AdmittanceNode::send_commands_to_robot() {
-  // Store last valid joint velocities for graceful degradation
   static std::vector<double> last_valid_velocities(params_.joints.size(), 0.0);
   
-  // Convert Cartesian velocity to joint velocities
   if (!compute_joint_velocities(V_tcp_base_commanded_)) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
                          "IK velocity solver failed, using gradual deceleration");
-    
-    // Gradually reduce velocity instead of sudden stop to avoid jerky motion
-    constexpr double decay_factor = 0.8;  // 20% reduction per cycle
-    for (size_t i = 0; i < q_dot_cmd_.size(); ++i) {
-      q_dot_cmd_[i] = last_valid_velocities[i] * decay_factor;
-    }
-    
-    // Update last valid velocities with decayed values
-    last_valid_velocities = q_dot_cmd_;
-  } else {
-    // IK succeeded - update last valid velocities
-    for (size_t i = 0; i < q_dot_cmd_.size(); ++i) {
-      last_valid_velocities[i] = q_dot_cmd_[i];
-    }
+    // Apply decay using STL transform
+    constexpr double decay_factor = 0.8;
+    std::transform(last_valid_velocities.begin(), last_valid_velocities.end(), 
+                   q_dot_cmd_.begin(), 
+                   [decay_factor](double v) { return v * decay_factor; });
   }
   
-  // Publish joint velocity commands (whether from IK or graceful degradation)
-  for (size_t i = 0; i < velocity_msg_.data.size(); ++i) {
-    velocity_msg_.data[i] = q_dot_cmd_[i];
-  }
+  // Always update last valid velocities
+  last_valid_velocities = q_dot_cmd_;
+  
+  // Direct copy to message and publish
+  velocity_msg_.data = q_dot_cmd_;
   velocity_pub_->publish(velocity_msg_);
 }
 
@@ -306,36 +311,28 @@ bool AdmittanceNode::checkJointStates() {
 
 }  // namespace ur_admittance_controller
 
-// Main entry point - initialize ROS2 and start admittance control node
+
+
+  // How It Works Now:
+
+  // 1. main() creates node and calls initialize()
+  // 2. initialize() creates a 100Hz timer
+  // 3. rclcpp::spin(node) handles all callbacks:
+  //   - Timer callback (control_cycle() every 10ms)
+  //   - Subscription callbacks (wrench, joint_states)
+  //   - Parameter callbacks
+  // 4. No manual while loop or rate.sleep() needed!
+
+  // The control loop now runs automatically at 100Hz through the ROS2 timer system! 
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
-  
-  // Initialize the controller and wait for robot to be ready
   node->initialize();
   
-  // Control frequency and period (elegant like ROS1)
-  const double frequency = 100.0;  // Hz
-  rclcpp::Rate rate(frequency);
-  node->control_period_ = rclcpp::Duration::from_seconds(1.0 / frequency);
+  RCLCPP_INFO(node->get_logger(), "Admittance controller running...");
+  rclcpp::spin(node);  // Timer handles everything!
   
-  RCLCPP_INFO(node->get_logger(), "Starting control loop at %.0fHz (dt=%.3fs)...", 
-              frequency, node->control_period_.seconds());
-  
-  // Main control loop - standard ROS2 pattern
-  while (rclcpp::ok()) {
-    // Process pending callbacks (subscriptions, services)
-    rclcpp::spin_some(node);
-    
-    // Run control computation
-    node->control_cycle();
-    
-    // Maintain 100Hz rate
-    rate.sleep();
-  }
-  
-  RCLCPP_INFO(node->get_logger(), "Shutting down UR Admittance Controller");
   rclcpp::shutdown();
   return 0;
 }

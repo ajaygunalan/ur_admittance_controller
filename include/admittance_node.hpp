@@ -130,6 +130,9 @@ class AdmittanceNode : public rclcpp::Node {
   KDL::JntArray q_kdl_;    // Pre-allocated KDL joint positions
   KDL::JntArray v_kdl_;    // Pre-allocated KDL joint velocities
   
+  // Control timer
+  rclcpp::TimerBase::SharedPtr control_timer_;
+  
  public:
   // Control loop period (elegant like ROS1's expectedCycleTime)
   rclcpp::Duration control_period_{std::chrono::milliseconds(10)};  // 100Hz default
