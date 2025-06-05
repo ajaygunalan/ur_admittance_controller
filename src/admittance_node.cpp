@@ -9,6 +9,13 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 : Node("admittance_node", options) {
   RCLCPP_INFO(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
   
+  initializeParameters();
+  initializeStateVectors();
+  setupROSInterfaces();
+  setDefaultEquilibrium();
+}
+
+void AdmittanceNode::initializeParameters() {
   param_listener_ = std::make_shared<ur_admittance_controller::ParamListener>(
       this->get_node_parameters_interface());
   params_ = param_listener_->get_params();
@@ -26,37 +33,54 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   
   this->declare_parameter("robot_description", "");
   
+  update_admittance_parameters();
+}
+
+void AdmittanceNode::initializeStateVectors() {
   const auto joint_count = params_.joints.size();
+  
+  // Joint space vectors
   q_current_.resize(joint_count, 0.0);
   q_dot_cmd_.resize(joint_count, 0.0);
   
+  // Cartesian space vectors
   Wrench_tcp_base_ = Vector6d::Zero();
   V_tcp_base_commanded_ = Vector6d::Zero();
   
+  // Poses
   X_tcp_base_current_ = Eigen::Isometry3d::Identity();
   X_tcp_base_desired_ = Eigen::Isometry3d::Identity();
   
-  wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
-      "/wrench_tcp_base", rclcpp::SensorDataQoS(),
-      std::bind(&AdmittanceNode::wrench_callback, this, std::placeholders::_1));
-  joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
-      "/joint_states", 10,
-      std::bind(&AdmittanceNode::joint_state_callback, this, std::placeholders::_1));
-  desired_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-      "/admittance_node/desired_pose", 10,
-      std::bind(&AdmittanceNode::desired_pose_callback, this, std::placeholders::_1));
-  velocity_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
-      "/forward_velocity_controller/commands", 1);
+  // ROS message
+  velocity_msg_.data.resize(joint_count);
   
-  update_admittance_parameters();
-
-  velocity_msg_.data.resize(params_.joints.size());
-  
+  // Control limits
   workspace_limits_ << -0.5, 0.5, -0.5, 0.5, 0.0, 0.7;
   arm_max_vel_ = 1.5;
   arm_max_acc_ = 1.0;
   admittance_ratio_ = 1.0;
+}
+
+void AdmittanceNode::setupROSInterfaces() {
+  // Subscribers
+  wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
+      "/wrench_tcp_base", rclcpp::SensorDataQoS(),
+      std::bind(&AdmittanceNode::wrench_callback, this, std::placeholders::_1));
+      
+  joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
+      "/joint_states", 10,
+      std::bind(&AdmittanceNode::joint_state_callback, this, std::placeholders::_1));
+      
+  desired_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+      "/admittance_node/desired_pose", 10,
+      std::bind(&AdmittanceNode::desired_pose_callback, this, std::placeholders::_1));
   
+  // Publishers
+  velocity_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
+      "/forward_velocity_controller/commands", 1);
+}
+
+void AdmittanceNode::setDefaultEquilibrium() {
   declare_parameter("equilibrium.position", std::vector<double>{0.1, 0.4, 0.5});
   declare_parameter("equilibrium.orientation", std::vector<double>{0.0, 0.0, 0.0, 1.0});
   

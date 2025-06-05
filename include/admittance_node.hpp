@@ -54,6 +54,10 @@ class AdmittanceNode : public rclcpp::Node {
   
   // System initialization and setup
   bool load_kinematics();
+  void initializeParameters();
+  void initializeStateVectors();
+  void setupROSInterfaces();
+  void setDefaultEquilibrium();
   
   // Initialization sequence methods
   bool checkJointStates();
