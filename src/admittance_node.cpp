@@ -130,18 +130,13 @@ void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::Co
 }
 
 void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
-  if (!joint_states_received_) {
-    joint_states_received_ = true;
-    RCLCPP_INFO_ONCE(get_logger(), "Joint states received - robot is online");
-  }
-
+  RCLCPP_INFO_ONCE(get_logger(), "Joint states received - robot is online");
+  
+  // Map joint names to positions
   for (size_t i = 0; i < params_.joints.size(); ++i) {
-    const auto it = std::find(msg->name.begin(), msg->name.end(), params_.joints[i]);
-    if (it != msg->name.end()) {
-      const size_t idx = std::distance(msg->name.begin(), it);
-      if (idx < msg->position.size()) {
-        q_current_[i] = msg->position[idx];
-      }
+    auto it = std::find(msg->name.begin(), msg->name.end(), params_.joints[i]);
+    if (it != msg->name.end() && static_cast<size_t>(std::distance(msg->name.begin(), it)) < msg->position.size()) {
+      q_current_[i] = msg->position[std::distance(msg->name.begin(), it)];
     }
   }
   

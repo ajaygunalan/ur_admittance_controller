@@ -43,26 +43,11 @@ Vector6d AdmittanceNode::compute_pose_error() {
 
 
 
-void AdmittanceNode::update_mass_matrix() {
-  M_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(params_.admittance.mass.data(), 6).cwiseInverse();
-}
-
-void AdmittanceNode::update_stiffness_matrix() {
-  for (size_t i = 0; i < 6; ++i) {
-    K_diag_(i) = params_.admittance.stiffness[i];
-  }
-}
-
-void AdmittanceNode::update_damping_matrix() {
-  for (size_t i = 0; i < 6; ++i) {
-    D_diag_(i) = params_.admittance.damping[i];
-  }
-}
-
 void AdmittanceNode::update_admittance_parameters() {
-  update_mass_matrix();
-  update_stiffness_matrix();
-  update_damping_matrix();
+  auto& p = params_.admittance;
+  M_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
+  K_diag_ = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
+  D_diag_ = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
 }
 
 bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {

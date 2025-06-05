@@ -65,9 +65,6 @@ class AdmittanceNode : public rclcpp::Node {
   // Core admittance control algorithms
   void compute_admittance();
   Vector6d compute_pose_error();
-  void update_mass_matrix();
-  void update_damping_matrix();
-  void update_stiffness_matrix();
   void update_admittance_parameters();
   
   // Coordinate transformations and motion processing
@@ -93,8 +90,6 @@ class AdmittanceNode : public rclcpp::Node {
   std::vector<double> q_dot_cmd_;            // Computed command joint velocities
   // Kinematics initialization flag
   bool kinematics_initialized_ = false;
-  // Reference pose management for admittance control
-  bool joint_states_received_ = false;  // Track if robot is loaded
   // Core admittance control state vectors (6-DOF: xyz + rpy) 
   Vector6d Wrench_tcp_base_;         // External forces/torques in base frame (filtered & bias-compensated)
   Vector6d V_tcp_base_commanded_;    // Commanded Cartesian velocity (integrated and limited)
