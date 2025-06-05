@@ -3,7 +3,7 @@
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, TimerAction, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, Command
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
@@ -52,24 +52,13 @@ def generate_launch_description():
         ])
     ])
     
-    # Run initialization script to position robot at equilibrium
-    init_script = ExecuteProcess(
-        cmd=['ros2', 'run', 'ur_admittance_controller', 'init_admittance.py'],
-        name='admittance_initializer',
-        output='screen'
-    )
     
-    # Delay controller spawner to ensure initialization completes
-    delayed_controller_spawner = TimerAction(
-        period=3.0,
-        actions=[
-            Node(
-                package='controller_manager',
-                executable='spawner',
-                arguments=['forward_velocity_controller', '-c', '/controller_manager'],
-                output='screen',
-            )
-        ]
+    # Scaled joint trajectory controller spawner
+    scaled_joint_trajectory_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['scaled_joint_trajectory_controller', '-c', '/controller_manager'],
+        output='screen',
     )
     
     # Wrench controller spawner (can start immediately)
@@ -80,9 +69,9 @@ def generate_launch_description():
         output='screen',
     )
     
-    # Admittance node (start after initialization)
+    # Admittance node
     admittance_node = TimerAction(
-        period=4.0,  # Wait for initialization and controller to be ready
+        period=2.0,  # Wait for controllers to be ready
         actions=[
             Node(
                 package="ur_admittance_controller",
@@ -101,7 +90,7 @@ def generate_launch_description():
     
     # Wrench node
     wrench_node = TimerAction(
-        period=4.0,  # Start with admittance node
+        period=2.0,  # Start with admittance node
         actions=[
             Node(
                 package="ur_admittance_controller",
@@ -118,14 +107,11 @@ def generate_launch_description():
     )
     
     return LaunchDescription(declared_arguments + [
-        # Initialize robot position first
-        init_script,
-        
-        # Then start controllers
-        delayed_controller_spawner,
+        # Start controllers
+        scaled_joint_trajectory_controller_spawner,
         wrench_controller_spawner,
         
-        # Finally start nodes
+        # Start nodes
         admittance_node,
         wrench_node,
     ])
