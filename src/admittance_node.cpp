@@ -181,7 +181,7 @@ bool AdmittanceNode::load_kinematics() {
   q_kdl_.resize(num_joints_);
   v_kdl_.resize(num_joints_);
 
-  RCLCPP_DEBUG(get_logger(), "KDL kinematics ready: %s -> %s (%d joints)",
+  RCLCPP_DEBUG(get_logger(), "KDL kinematics ready: %s -> %s (%zu joints)",
                params_.base_link.c_str(), params_.tip_link.c_str(), num_joints_);
   return true;
 }
@@ -205,60 +205,52 @@ void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped
 void AdmittanceNode::send_commands_to_robot() {
   static std::vector<double> last_valid_velocities(params_.joints.size(), 0.0);
   
+  // Fallback to graceful deceleration on IK failure
   if (!compute_joint_velocities(V_tcp_base_commanded_)) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
                          "IK velocity solver failed, using gradual deceleration");
-    // Apply decay using STL transform
-    constexpr double decay_factor = 0.8;
+    constexpr double decay_factor = 0.8;  // 20% speed reduction per cycle
     std::transform(last_valid_velocities.begin(), last_valid_velocities.end(), 
                    q_dot_cmd_.begin(), 
                    [decay_factor](double v) { return v * decay_factor; });
   }
   
-  // Always update last valid velocities
+  // Cache for next failure recovery
   last_valid_velocities = q_dot_cmd_;
   
-  // Direct copy to message and publish
+  // Publish to velocity controller
   velocity_msg_.data = q_dot_cmd_;
   velocity_pub_->publish(velocity_msg_);
 }
 
 // Apply workspace limits to Cartesian motion
 void AdmittanceNode::limit_to_workspace() {
-  static constexpr double BUFFER = 0.01;
-  static constexpr std::array<char, 3> AXES = {'x', 'y', 'z'};
-  
+  static constexpr double BUFFER = 0.01;  // Safety margin before warnings
   const auto& pos = X_tcp_base_current_.translation();
   
-  // Apply workspace limits
+  // Enforce per-axis workspace boundaries
   for (size_t i = 0; i < 3; ++i) {
     const double min = workspace_limits_[i * 2];
     const double max = workspace_limits_[i * 2 + 1];
+    const bool at_min = pos[i] <= min;
+    const bool at_max = pos[i] >= max;
     
-    if (pos[i] <= min) {
-      if (pos[i] < min - BUFFER) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                             "Out of workspace: %c = %.3f not in [%.3f, %.3f]",
-                             AXES[i], pos[i], min, max);
-      }
-      V_tcp_base_commanded_[i] = std::max(0.0, V_tcp_base_commanded_[i]);
+    // Warn if outside buffer zone
+    if ((at_min && pos[i] < min - BUFFER) || (at_max && pos[i] > max + BUFFER)) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "Out of workspace: %c = %.3f not in [%.3f, %.3f]",
+                           "xyz"[i], pos[i], min, max);
     }
-    else if (pos[i] >= max) {
-      if (pos[i] > max + BUFFER) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                             "Out of workspace: %c = %.3f not in [%.3f, %.3f]",
-                             AXES[i], pos[i], min, max);
-      }
-      V_tcp_base_commanded_[i] = std::min(0.0, V_tcp_base_commanded_[i]);
-    }
+    
+    // Prevent motion beyond limits
+    if (at_min) V_tcp_base_commanded_[i] = std::max(0.0, V_tcp_base_commanded_[i]);
+    if (at_max) V_tcp_base_commanded_[i] = std::min(0.0, V_tcp_base_commanded_[i]);
   }
   
-  // Limit velocity magnitude
-  const double vel_norm = V_tcp_base_commanded_.head<3>().norm();
-  if (vel_norm > arm_max_vel_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "High velocity: %.3f m/s", vel_norm);
-    V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / vel_norm);
+  // Cap velocity magnitude
+  if (auto n = V_tcp_base_commanded_.head<3>().norm(); n > arm_max_vel_) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "High velocity: %.3f m/s", n);
+    V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / n);
   }
 }
 

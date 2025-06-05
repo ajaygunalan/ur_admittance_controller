@@ -66,34 +66,28 @@ void AdmittanceNode::update_admittance_parameters() {
 }
 
 bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
-  if (cart_vel.hasNaN()) {
-    RCLCPP_ERROR(get_logger(), "NaN detected in Cartesian velocity command");
-    return false;
-  }
-  
+  // Update KDL solver with current joint angles
   for (size_t i = 0; i < num_joints_; ++i) {
     q_kdl_(i) = q_current_[i];
   }
-
-  KDL::Twist cart_twist;
-  cart_twist.vel.x(cart_vel(0));
-  cart_twist.vel.y(cart_vel(1));
-  cart_twist.vel.z(cart_vel(2));
-  cart_twist.rot.x(cart_vel(3));
-  cart_twist.rot.y(cart_vel(4));
-  cart_twist.rot.z(cart_vel(5));
-
-  if (ik_vel_solver_->CartToJnt(q_kdl_, cart_twist, v_kdl_) < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "KDL IK velocity solver failed");
+  
+  // Pack Cartesian velocity
+  KDL::Twist twist;
+  twist.vel = KDL::Vector(cart_vel(0), cart_vel(1), cart_vel(2));
+  twist.rot = KDL::Vector(cart_vel(3), cart_vel(4), cart_vel(5));
+  
+  // Solve inverse kinematics
+  if (ik_vel_solver_->CartToJnt(q_kdl_, twist, v_kdl_) < 0) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK failed");
     return false;
   }
-
+  
+  // Extract solution with NaN safety
   for (size_t i = 0; i < num_joints_; ++i) {
     q_dot_cmd_[i] = v_kdl_(i);
-    if (std::isnan(q_dot_cmd_[i])) return false;
   }
-  
-  return true;
+  return std::none_of(q_dot_cmd_.begin(), q_dot_cmd_.end(), 
+                      [](double v) { return std::isnan(v); });
 }
 
 void AdmittanceNode::computeForwardKinematics() {
@@ -101,35 +95,25 @@ void AdmittanceNode::computeForwardKinematics() {
     return;
   }
   
+  // Copy joints to KDL solver
   for (size_t i = 0; i < num_joints_; ++i) {
     q_kdl_(i) = q_current_[i];
   }
   
-  KDL::Frame tcp_frame;
-  int fk_result = fk_pos_solver_->JntToCart(q_kdl_, tcp_frame);
-  
-  if (fk_result < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000,
-                          "Forward kinematics computation failed with error: %d", fk_result);
+  // Solve forward kinematics
+  KDL::Frame frame;
+  if (fk_pos_solver_->JntToCart(q_kdl_, frame) < 0) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed");
     return;
   }
   
-  X_tcp_base_current_.translation() << tcp_frame.p.x(), 
-                                       tcp_frame.p.y(), 
-                                       tcp_frame.p.z();
-  
+  // Update TCP pose
+  X_tcp_base_current_.translation() = Eigen::Vector3d(frame.p.x(), frame.p.y(), frame.p.z());
   double x, y, z, w;
-  tcp_frame.M.GetQuaternion(x, y, z, w);
-  Eigen::Quaterniond q(w, x, y, z);
-  X_tcp_base_current_.linear() = q.toRotationMatrix();
+  frame.M.GetQuaternion(x, y, z, w);
+  X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
   
   joint_states_updated_ = false;
-  
-  static rclcpp::Time last_log_time = get_clock()->now();
-  if ((get_clock()->now() - last_log_time).seconds() > 5.0) {
-    RCLCPP_DEBUG(get_logger(), "Forward kinematics computed successfully");
-    last_log_time = get_clock()->now();
-  }
 }
 
 
