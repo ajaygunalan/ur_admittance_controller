@@ -74,12 +74,12 @@ ur_admittance_controller:
 
   tip_link:
     type: string
-    default_value: "tool0"
+    default_value: "tool_payload"
     description: "Robot end-effector frame"
     read_only: true
 
   ft_frame:
     type: string
-    default_value: "ft_sensor_link"
-    description: "F/T sensor frame"
+    default_value: "ft_frame"
+    description: "F/T sensor frame (from UR description)"
     read_only: true
