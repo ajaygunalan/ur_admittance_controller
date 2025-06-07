@@ -31,7 +31,7 @@ void AdmittanceNode::initializeParameters() {
       return result;
     });
   
-  this->declare_parameter("robot_description", "");
+  // robot_description will be retrieved from /robot_state_publisher
   
   update_admittance_parameters();
 }
@@ -59,6 +59,17 @@ void AdmittanceNode::initialize() {
   if (!load_kinematics()) RCLCPP_ERROR(get_logger(), "Kinematics loading failed");
   
   if (!checkJointStates()) RCLCPP_ERROR(get_logger(), "Joint states not received - is robot driver running?");
+  
+  // CRITICAL: Compute initial TCP position from actual joint states
+  // This prevents large initial error from zero-initialized joints
+  RCLCPP_INFO(get_logger(), "Computing initial TCP position from current joint states...");
+  computeForwardKinematics();
+  
+  // Log initial TCP position
+  RCLCPP_INFO(get_logger(), "Initial TCP position: [%.3f, %.3f, %.3f]",
+    X_tcp_base_current_.translation()(0),
+    X_tcp_base_current_.translation()(1), 
+    X_tcp_base_current_.translation()(2));
   
   // Create control timer - this replaces the manual while loop
   control_timer_ = create_wall_timer(
@@ -139,10 +150,38 @@ void AdmittanceNode::send_commands_to_robot() {
   velocity_pub_->publish(velocity_msg_);
 }
 
-// Check if joint states have been received
+// Check if joint states have been received and populate q_current_
 bool AdmittanceNode::checkJointStates() {
   sensor_msgs::msg::JointState msg;
-  return rclcpp::wait_for_message(msg, shared_from_this(), "/joint_states", std::chrono::seconds(10));
+  if (!rclcpp::wait_for_message(msg, shared_from_this(), "/joint_states", std::chrono::seconds(10))) {
+    return false;
+  }
+  
+  // Process the message to populate q_current_
+  RCLCPP_INFO(get_logger(), "Processing joint states - received %zu joints", msg.name.size());
+  for (size_t i = 0; i < msg.name.size(); ++i) {
+    RCLCPP_DEBUG(get_logger(), "  Joint[%zu]: %s = %.3f", i, msg.name[i].c_str(), msg.position[i]);
+  }
+  
+  for (size_t i = 0; i < params_.joints.size(); ++i) {
+    auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
+    if (it != msg.name.end() && static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
+      q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
+      RCLCPP_DEBUG(get_logger(), "Mapped %s to q_current_[%zu] = %.3f", 
+        params_.joints[i].c_str(), i, q_current_[i]);
+    } else {
+      RCLCPP_WARN(get_logger(), "Joint %s not found in message!", params_.joints[i].c_str());
+    }
+  }
+  
+  // Mark joint states as updated so FK can be computed
+  joint_states_updated_ = true;
+  
+  RCLCPP_INFO(get_logger(), "Initial joint positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+    q_current_[0], q_current_[1], q_current_[2], 
+    q_current_[3], q_current_[4], q_current_[5]);
+  
+  return true;
 }
 
 }  // namespace ur_admittance_controller

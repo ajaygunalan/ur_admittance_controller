@@ -147,7 +147,6 @@ install(
 # Install Python scripts as executables
 install(PROGRAMS
   scripts/init_robot.py
-  scripts/validate.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

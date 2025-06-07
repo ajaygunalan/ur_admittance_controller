@@ -20,13 +20,26 @@ git clone https://github.com/ajaygunalan/ur_simulation_gz.git
 git clone https://github.com/ajaygunalan/ur_admittance_controller.git
 
 cd ~/ur_ws && rosdep install --from-paths src --ignore-src -r -y
-colcon build && source install/setup.bash
+
+
+```
+colcon build --packages-select ur_simulation_gz
+colcon build --packages-select ur_admittance_controller
+
+source install/setup.bash
+
 ```
 
+
 ### Simulation Demo
-```bash
-# Terminal 1: Launch UR5e + F/T sensor in Gazebo
-ros2 launch ur_simulation_gz ur_sim_control.launch.py
+```
+ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
+```
+
+
+```
+ros2 run ur_admittance_controller init_robot.py
+```
 
 # Terminal 2: Start wrench filter node (processes raw F/T sensor data)
 ros2 run ur_admittance_controller wrench_node

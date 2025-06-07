@@ -1,6 +1,9 @@
 #include "admittance_node.hpp"
 #include <algorithm>
 #include <cmath>
+#include <rclcpp/parameter_client.hpp>
+#include <sstream>
+#include <iomanip>
 
 namespace ur_admittance_controller {
 
@@ -34,9 +37,32 @@ Vector6d AdmittanceNode::compute_pose_error() {
     q_current.coeffs() = -q_current.coeffs();
   }
   
-  Eigen::Quaterniond q_error = q_current * q_desired.inverse();
+  // Correct formula: q_error = q_desired * q_current^(-1)
+  // This gives the rotation from current to desired orientation
+  Eigen::Quaterniond q_error = q_desired * q_current.inverse();
   Eigen::AngleAxisd aa_error(q_error);
   error.tail<3>() = aa_error.axis() * aa_error.angle();
+  
+  // Log TCP error for debugging
+  double position_error_norm = error.head<3>().norm();
+  double orientation_error_norm = error.tail<3>().norm();
+  
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+    "TCP Error - Position: %.4f m [%.3f, %.3f, %.3f], Orientation: %.4f rad [%.3f, %.3f, %.3f]",
+    position_error_norm, error(0), error(1), error(2),
+    orientation_error_norm, error(3), error(4), error(5));
+  
+  // Also log current vs desired TCP position and orientation
+  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+    "TCP Current: [%.3f, %.3f, %.3f], Desired: [%.3f, %.3f, %.3f]",
+    X_tcp_base_current_.translation()(0), X_tcp_base_current_.translation()(1), X_tcp_base_current_.translation()(2),
+    X_tcp_base_desired_.translation()(0), X_tcp_base_desired_.translation()(1), X_tcp_base_desired_.translation()(2));
+    
+  // Log quaternions for debugging orientation issues
+  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+    "Quaternions - Current: [%.3f, %.3f, %.3f, %.3f], Desired: [%.3f, %.3f, %.3f, %.3f]",
+    q_current.w(), q_current.x(), q_current.y(), q_current.z(),
+    q_desired.w(), q_desired.x(), q_desired.y(), q_desired.z());
   
   return error;
 }
@@ -78,23 +104,68 @@ void AdmittanceNode::computeForwardKinematics() {
     return;
   }
   
-  // Copy joints to KDL solver
-  for (size_t i = 0; i < num_joints_; ++i) {
-    q_kdl_(i) = q_current_[i];
+  // Debug logging - using static flag to show only once
+  static bool debug_shown = false;
+  if (!debug_shown) {
+    RCLCPP_INFO(get_logger(), "FK Debug - num_joints_: %zu, params_.joints.size(): %zu, kdl_chain_.getNrOfJoints(): %u",
+      num_joints_, params_.joints.size(), kdl_chain_.getNrOfJoints());
+    
+    RCLCPP_INFO(get_logger(), "FK Debug - q_current_ size: %zu, q_kdl_ size: %u",
+      q_current_.size(), q_kdl_.rows());
+    
+    // Log joint values being used
+    std::stringstream ss;
+    ss << "FK Debug - Joint positions used: [";
+    for (size_t i = 0; i < num_joints_; ++i) {
+      if (i > 0) ss << ", ";
+      ss << std::fixed << std::setprecision(3) << q_current_[i];
+    }
+    ss << "]";
+    RCLCPP_INFO(get_logger(), "%s", ss.str().c_str());
+    
+    // Copy joints to KDL solver
+    for (size_t i = 0; i < num_joints_; ++i) {
+      q_kdl_(i) = q_current_[i];
+    }
+    
+    // Log what we're sending to FK solver
+    std::stringstream ss2;
+    ss2 << "FK Debug - Joints for FK: [";
+    for (size_t i = 0; i < num_joints_; ++i) {
+      ss2 << q_kdl_(i) << (i < num_joints_-1 ? ", " : "]");
+    }
+    RCLCPP_INFO(get_logger(), "%s", ss2.str().c_str());
+    
+    // Solve forward kinematics
+    KDL::Frame frame;
+    if (fk_pos_solver_->JntToCart(q_kdl_, frame) < 0) {
+      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed");
+      return;
+    }
+    
+    // Debug: Log the computed frame position
+    RCLCPP_INFO(get_logger(), "FK Debug - Computed TCP position: [%.6f, %.6f, %.6f]",
+      frame.p.x(), frame.p.y(), frame.p.z());
+    
+    debug_shown = true;
+  } else {
+    // Normal operation - just copy joints and compute FK
+    for (size_t i = 0; i < num_joints_; ++i) {
+      q_kdl_(i) = q_current_[i];
+    }
+    
+    KDL::Frame frame;
+    if (fk_pos_solver_->JntToCart(q_kdl_, frame) < 0) {
+      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed");
+      return;
+    }
+    
+    // Update TCP pose
+    X_tcp_base_current_.translation() = Eigen::Vector3d(frame.p.x(), frame.p.y(), frame.p.z());
+    double x, y, z, w;
+    frame.M.GetQuaternion(x, y, z, w);
+    X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
   }
-  
-  // Solve forward kinematics
-  KDL::Frame frame;
-  if (fk_pos_solver_->JntToCart(q_kdl_, frame) < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed");
-    return;
-  }
-  
-  // Update TCP pose
-  X_tcp_base_current_.translation() = Eigen::Vector3d(frame.p.x(), frame.p.y(), frame.p.z());
-  double x, y, z, w;
-  frame.M.GetQuaternion(x, y, z, w);
-  X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
   
   joint_states_updated_ = false;
 }
@@ -140,9 +211,31 @@ void AdmittanceNode::setDefaultEquilibrium() {
 
 // Initialize KDL kinematics from URDF
 bool AdmittanceNode::load_kinematics() {
+  // Get robot_description from /robot_state_publisher
+  RCLCPP_INFO(get_logger(), "Getting robot_description from /robot_state_publisher");
+  
+  auto parameters_client = std::make_shared<rclcpp::SyncParametersClient>(
+      this, "/robot_state_publisher");
+  
+  // Wait for the service to be available
+  if (!parameters_client->wait_for_service(std::chrono::seconds(5))) {
+    RCLCPP_ERROR(get_logger(), "Failed to connect to /robot_state_publisher parameter service");
+    return false;
+  }
+  
   std::string urdf_string;
-  if (!get_parameter("robot_description", urdf_string) || urdf_string.empty()) {
-    RCLCPP_ERROR(get_logger(), "robot_description parameter not found or empty");
+  try {
+    auto parameters = parameters_client->get_parameters({"robot_description"});
+    if (!parameters.empty()) {
+      urdf_string = parameters[0].as_string();
+    }
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(get_logger(), "Failed to get robot_description from /robot_state_publisher: %s", e.what());
+    return false;
+  }
+  
+  if (urdf_string.empty()) {
+    RCLCPP_ERROR(get_logger(), "robot_description parameter is empty");
     return false;
   }
 

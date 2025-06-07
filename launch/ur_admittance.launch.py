@@ -4,8 +4,7 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument, TimerAction
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, Command
-from launch_ros.substitutions import FindPackageShare
+from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 import os
 
@@ -34,32 +33,10 @@ def generate_launch_description():
     
     # Robot state publisher (should already be running from ur_sim_control.launch.py)
     # Joint state broadcaster (should already be running)
-    
-    # Get URDF from ur_description package
-    ur_description_path = FindPackageShare('ur_description')
-    urdf_file = PathJoinSubstitution([
-        ur_description_path, 'urdf', 'ur.urdf.xacro'
-    ])
-    
-    # Process xacro to get robot description
-    robot_description = Command([
-        'xacro ', urdf_file,
-        ' name:=ur',
-        ' ur_type:=ur3',  # or ur5, ur10, etc.
-        ' tf_prefix:=',
-        ' simulation_controllers:=', PathJoinSubstitution([
-            FindPackageShare('ur_simulation_gz'), 'config', 'ur_controllers.yaml'
-        ])
-    ])
+    # robot_description already loaded by ur_simulation_gz into /robot_state_publisher
     
     
-    # Scaled joint trajectory controller spawner
-    scaled_joint_trajectory_controller_spawner = Node(
-        package='controller_manager',
-        executable='spawner',
-        arguments=['scaled_joint_trajectory_controller', '-c', '/controller_manager'],
-        output='screen',
-    )
+    # Trajectory controller removed - robot equilibrium handled by init_robot.py script
     
     # Wrench controller spawner (can start immediately)
     wrench_controller_spawner = Node(
@@ -79,8 +56,7 @@ def generate_launch_description():
                 name="admittance_node",
                 output="screen",
                 parameters=[
-                    {'use_sim_time': LaunchConfiguration('use_sim_time')},
-                    {'robot_description': robot_description}
+                    {'use_sim_time': LaunchConfiguration('use_sim_time')}
                 ],
                 arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
                 emulate_tty=True
@@ -108,7 +84,6 @@ def generate_launch_description():
     
     return LaunchDescription(declared_arguments + [
         # Start controllers
-        scaled_joint_trajectory_controller_spawner,
         wrench_controller_spawner,
         
         # Start nodes
