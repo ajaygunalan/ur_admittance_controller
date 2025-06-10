@@ -87,35 +87,29 @@ private:
       return false;
     }
     
-    // Extract chain from base_link to tool_payload (or wrist_3_link if tool not present)
-    has_tool_payload_ = kdl_tree_.getChain("base_link", "tool_payload", kdl_chain_);
-    if (!has_tool_payload_) {
-      // Fallback to wrist_3_link if tool_payload doesn't exist
-      if (!kdl_tree_.getChain("base_link", "wrist_3_link", kdl_chain_)) {
-        RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain");
-        return false;
-      }
-      RCLCPP_INFO(get_logger(), "Using wrist_3_link as end effector (tool_payload not found)");
-    } else {
-      RCLCPP_INFO(get_logger(), "Using tool_payload as end effector");
+    // Always get chain from base_link to wrist_3_link (6 movable joints)
+    if (!kdl_tree_.getChain("base_link", "wrist_3_link", kdl_chain_)) {
+      RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain");
+      return false;
+    }
+    
+    // Check if tool_payload exists and get the fixed transform
+    KDL::Chain tool_chain;
+    if (kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain)) {
+      has_tool_payload_ = true;
+      // Get the fixed transform from wrist_3 to tool_payload
+      // This is a fixed joint, so joint position doesn't matter
+      KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
+      KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
+      tool_fk.JntToCart(zero_joint, ft_offset_);
       
-      // If we have tool_payload, also get the wrist_3 chain to compute offset
-      KDL::Chain wrist_chain;
-      if (kdl_tree_.getChain("base_link", "wrist_3_link", wrist_chain)) {
-        // Compute transform from wrist_3 to tool
-        KDL::ChainFkSolverPos_recursive wrist_fk(wrist_chain);
-        KDL::ChainFkSolverPos_recursive tool_fk(kdl_chain_);
-        
-        KDL::JntArray zero_joints(6);
-        for (int i = 0; i < 6; ++i) zero_joints(i) = 0.0;
-        
-        KDL::Frame wrist_frame, tool_frame;
-        wrist_fk.JntToCart(zero_joints, wrist_frame);
-        tool_fk.JntToCart(zero_joints, tool_frame);
-        
-        // ft_offset = wrist_frame.Inverse() * tool_frame
-        ft_offset_ = wrist_frame.Inverse() * tool_frame;
-      }
+      RCLCPP_INFO(get_logger(), "Found tool_payload with fixed offset from wrist_3_link");
+      RCLCPP_INFO(get_logger(), "Tool offset: [%.3f, %.3f, %.3f]", 
+                  ft_offset_.p.x(), ft_offset_.p.y(), ft_offset_.p.z());
+    } else {
+      has_tool_payload_ = false;
+      ft_offset_ = KDL::Frame::Identity();  // No offset
+      RCLCPP_INFO(get_logger(), "No tool_payload found, using wrist_3_link as end effector");
     }
     
     // Create FK and IK solvers
@@ -163,9 +157,9 @@ private:
     std::cout << std::string(80, '=') << std::endl;
     
     if (has_tool_payload_) {
-      std::cout << "\nNote: tool_payload is attached to wrist_3_link" << std::endl;
-      std::cout << "Offset from wrist_3 to tool: " << std::endl;
-      std::cout << "  Position: [" << ft_offset_.p.x() << ", " << ft_offset_.p.y() << ", " << ft_offset_.p.z() << "]" << std::endl;
+      std::cout << "\nNote: tool_payload is attached to wrist_3_link via fixed joint" << std::endl;
+      std::cout << "Tool offset from wrist_3: [" << ft_offset_.p.x() << ", " 
+                << ft_offset_.p.y() << ", " << ft_offset_.p.z() << "] m" << std::endl;
     } else {
       std::cout << "\nNote: Using wrist_3_link as end effector (no tool_payload)" << std::endl;
     }
@@ -181,14 +175,17 @@ private:
                 << std::endl;
     }
     
-    // Compute FK for home position
-    KDL::JntArray q_home(kdl_chain_.getNrOfJoints());
-    for (size_t i = 0; i < home_joints_.size(); ++i) {
+    // Compute FK for home position (6 joints only)
+    KDL::JntArray q_home(6);
+    for (size_t i = 0; i < 6; ++i) {
       q_home(i) = home_joints_[i];
     }
     
-    KDL::Frame home_frame;
-    fk_solver_->JntToCart(q_home, home_frame);
+    KDL::Frame wrist3_frame;
+    fk_solver_->JntToCart(q_home, wrist3_frame);
+    
+    // Apply fixed transform to get tool frame
+    KDL::Frame home_frame = wrist3_frame * ft_offset_;
     
     std::cout << "\n   Tool position: [" << home_frame.p.x() << ", " 
               << home_frame.p.y() << ", " << home_frame.p.z() << "]" << std::endl;
@@ -204,13 +201,16 @@ private:
     std::vector<double> target_pos = {0.1, 0.4, 0.5};
     std::cout << "   Target position: [" << target_pos[0] << ", " << target_pos[1] << ", " << target_pos[2] << "]" << std::endl;
     
-    // Create target frame
-    KDL::Frame target_frame;
-    target_frame.p = KDL::Vector(target_pos[0], target_pos[1], target_pos[2]);
-    target_frame.M = KDL::Rotation::Identity();  // Default orientation
+    // Create target frame for tool
+    KDL::Frame target_tool_frame;
+    target_tool_frame.p = KDL::Vector(target_pos[0], target_pos[1], target_pos[2]);
+    target_tool_frame.M = KDL::Rotation::Identity();  // Default orientation
     
-    // Initial joint positions for IK
-    KDL::JntArray q_init(kdl_chain_.getNrOfJoints());
+    // Convert target from tool frame to wrist_3 frame for IK
+    KDL::Frame target_wrist3_frame = target_tool_frame * ft_offset_.Inverse();
+    
+    // Initial joint positions for IK (6 joints)
+    KDL::JntArray q_init(6);
     q_init(0) = 0.0;
     q_init(1) = -1.57;
     q_init(2) = 1.57;
@@ -218,31 +218,34 @@ private:
     q_init(4) = -1.57;
     q_init(5) = 0.0;
     
-    // Solve IK
-    KDL::JntArray q_sol(kdl_chain_.getNrOfJoints());
-    int ik_result = ik_solver_->CartToJnt(q_init, target_frame, q_sol);
+    // Solve IK for wrist_3 position
+    KDL::JntArray q_sol(6);
+    int ik_result = ik_solver_->CartToJnt(q_init, target_wrist3_frame, q_sol);
     
     if (ik_result >= 0) {
       std::cout << "\n   IK solution: [";
-      for (unsigned int i = 0; i < kdl_chain_.getNrOfJoints(); ++i) {
+      for (unsigned int i = 0; i < 6; ++i) {
         if (i > 0) std::cout << ", ";
         std::cout << std::fixed << std::setprecision(3) << q_sol(i);
       }
       std::cout << "]" << std::endl;
       
       // Verify with FK
-      KDL::Frame fk_frame;
-      fk_solver_->JntToCart(q_sol, fk_frame);
+      KDL::Frame fk_wrist3_frame;
+      fk_solver_->JntToCart(q_sol, fk_wrist3_frame);
       
-      std::cout << "   FK gives tool at: [" << fk_frame.p.x() << ", " 
-                << fk_frame.p.y() << ", " << fk_frame.p.z() << "]" << std::endl;
+      // Apply fixed transform to get tool position
+      KDL::Frame fk_tool_frame = fk_wrist3_frame * ft_offset_;
+      
+      std::cout << "   FK gives tool at: [" << fk_tool_frame.p.x() << ", " 
+                << fk_tool_frame.p.y() << ", " << fk_tool_frame.p.z() << "]" << std::endl;
       std::cout << "   Target was: [" << target_pos[0] << ", " << target_pos[1] << ", " << target_pos[2] << "]" << std::endl;
       
-      double error = (fk_frame.p - target_frame.p).Norm();
+      double error = (fk_tool_frame.p - target_tool_frame.p).Norm();
       std::cout << "   Position error: " << std::fixed << std::setprecision(6) << error << " m" << std::endl;
       
       std::cout << "\n   Joint angles:" << std::endl;
-      for (unsigned int i = 0; i < kdl_chain_.getNrOfJoints(); ++i) {
+      for (unsigned int i = 0; i < 6; ++i) {
         std::cout << std::setw(22) << joint_names_[i] << ": " 
                   << std::setw(8) << std::fixed << std::setprecision(4) << q_sol(i) 
                   << " rad (" << std::setw(8) << std::setprecision(2) << q_sol(i) * 180.0 / M_PI << "°)" 
@@ -260,6 +263,7 @@ private:
   std::vector<double> home_joints_;
   bool home_joints_received_ = false;
   bool has_tool_payload_ = false;
+  unsigned int num_movable_joints_ = 6;  // UR robots have 6 movable joints
   
   // KDL structures
   KDL::Tree kdl_tree_;

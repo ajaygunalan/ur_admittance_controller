@@ -114,14 +114,27 @@ private:
       return false;
     }
     
-    // Extract chain from base_link to tool_payload (or wrist_3_link if tool not present)
-    if (!kdl_tree_.getChain("base_link", "tool_payload", kdl_chain_)) {
-      // Fallback to wrist_3_link if tool_payload doesn't exist
-      if (!kdl_tree_.getChain("base_link", "wrist_3_link", kdl_chain_)) {
-        RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain");
-        return false;
-      }
-      RCLCPP_WARN(get_logger(), "Using wrist_3_link as end effector (tool_payload not found)");
+    // Always extract chain from base_link to wrist_3_link (6 movable joints)
+    if (!kdl_tree_.getChain("base_link", "wrist_3_link", kdl_chain_)) {
+      RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain");
+      return false;
+    }
+    
+    // Check if tool_payload exists and get the fixed transform
+    KDL::Chain tool_chain;
+    if (kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain)) {
+      has_tool_payload_ = true;
+      // Get the fixed transform from wrist_3 to tool_payload
+      KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
+      KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
+      tool_fk.JntToCart(zero_joint, ft_offset_);
+      
+      RCLCPP_INFO(get_logger(), "Found tool_payload with offset: [%.3f, %.3f, %.3f]",
+                  ft_offset_.p.x(), ft_offset_.p.y(), ft_offset_.p.z());
+    } else {
+      has_tool_payload_ = false;
+      ft_offset_ = KDL::Frame::Identity();
+      RCLCPP_INFO(get_logger(), "No tool_payload found, using wrist_3_link as end effector");
     }
     
     // Create FK and IK solvers
@@ -142,13 +155,16 @@ private:
       return false;
     }
     
-    // Create target frame from position and quaternion (wxyz format)
-    KDL::Frame target_frame;
-    target_frame.p = KDL::Vector(eq_pos[0], eq_pos[1], eq_pos[2]);
-    target_frame.M = KDL::Rotation::Quaternion(eq_ori[1], eq_ori[2], eq_ori[3], eq_ori[0]);
+    // Create target frame for tool from position and quaternion (wxyz format)
+    KDL::Frame target_tool_frame;
+    target_tool_frame.p = KDL::Vector(eq_pos[0], eq_pos[1], eq_pos[2]);
+    target_tool_frame.M = KDL::Rotation::Quaternion(eq_ori[1], eq_ori[2], eq_ori[3], eq_ori[0]);
     
-    // Initial joint positions for IK seed
-    KDL::JntArray q_init(kdl_chain_.getNrOfJoints());
+    // Convert target from tool frame to wrist_3 frame for IK
+    KDL::Frame target_wrist3_frame = target_tool_frame * ft_offset_.Inverse();
+    
+    // Initial joint positions for IK seed (6 joints)
+    KDL::JntArray q_init(6);
     q_init(0) = 0.0;
     q_init(1) = -1.57;
     q_init(2) = 1.57;
@@ -156,18 +172,18 @@ private:
     q_init(4) = -1.57;
     q_init(5) = 0.0;
     
-    // Solve IK
-    KDL::JntArray q_out(kdl_chain_.getNrOfJoints());
-    int ik_result = ik_solver_->CartToJnt(q_init, target_frame, q_out);
+    // Solve IK for wrist_3 position
+    KDL::JntArray q_out(6);
+    int ik_result = ik_solver_->CartToJnt(q_init, target_wrist3_frame, q_out);
     
     if (ik_result < 0) {
       RCLCPP_ERROR(get_logger(), "IK failed with error code %d", ik_result);
       return false;
     }
     
-    // Store equilibrium positions
-    equilibrium_positions_.resize(kdl_chain_.getNrOfJoints());
-    for (unsigned int i = 0; i < kdl_chain_.getNrOfJoints(); ++i) {
+    // Store equilibrium positions (6 joints)
+    equilibrium_positions_.resize(6);
+    for (unsigned int i = 0; i < 6; ++i) {
       equilibrium_positions_[i] = q_out(i);
     }
     
@@ -176,10 +192,14 @@ private:
                 equilibrium_positions_[3], equilibrium_positions_[4], equilibrium_positions_[5]);
     
     // Verify with FK
-    KDL::Frame fk_frame;
-    fk_solver_->JntToCart(q_out, fk_frame);
+    KDL::Frame fk_wrist3_frame;
+    fk_solver_->JntToCart(q_out, fk_wrist3_frame);
+    
+    // Apply fixed transform to get tool position
+    KDL::Frame fk_tool_frame = fk_wrist3_frame * ft_offset_;
+    
     RCLCPP_INFO(get_logger(), "FK verification - tool at: [%.3f, %.3f, %.3f]",
-                fk_frame.p.x(), fk_frame.p.y(), fk_frame.p.z());
+                fk_tool_frame.p.x(), fk_tool_frame.p.y(), fk_tool_frame.p.z());
     RCLCPP_INFO(get_logger(), "Target was: [%.3f, %.3f, %.3f]", 
                 eq_pos[0], eq_pos[1], eq_pos[2]);
     
@@ -322,6 +342,8 @@ private:
   // KDL structures
   KDL::Tree kdl_tree_;
   KDL::Chain kdl_chain_;
+  KDL::Frame ft_offset_;  // Fixed transform from wrist_3 to tool_payload
+  bool has_tool_payload_ = false;
   std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver_;
   std::unique_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
   

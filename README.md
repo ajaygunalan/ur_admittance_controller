@@ -20,6 +20,7 @@ git clone https://github.com/ajaygunalan/ur_simulation_gz.git
 git clone https://github.com/ajaygunalan/ur_admittance_controller.git
 
 cd ~/ur_ws && rosdep install --from-paths src --ignore-src -r -y
+```
 
 
 ```
@@ -27,13 +28,18 @@ colcon build --packages-select ur_simulation_gz
 colcon build --packages-select ur_admittance_controller
 
 source install/setup.bash
-
 ```
 
 
 ### Simulation Demo
 ```
 ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
+```
+
+
+```
+ros2 run ur_admittance_controller init_robot
+ros2 run ur_admittance_controller verify_poses
 ```
 
 
