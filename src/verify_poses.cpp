@@ -93,24 +93,21 @@ private:
       return false;
     }
     
-    // Check if tool_payload exists and get the fixed transform
+    // Get the fixed transform from wrist_3_link to tool_payload
     KDL::Chain tool_chain;
-    if (kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain)) {
-      has_tool_payload_ = true;
-      // Get the fixed transform from wrist_3 to tool_payload
-      // This is a fixed joint, so joint position doesn't matter
-      KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
-      KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
-      tool_fk.JntToCart(zero_joint, ft_offset_);
-      
-      RCLCPP_INFO(get_logger(), "Found tool_payload with fixed offset from wrist_3_link");
-      RCLCPP_INFO(get_logger(), "Tool offset: [%.3f, %.3f, %.3f]", 
-                  ft_offset_.p.x(), ft_offset_.p.y(), ft_offset_.p.z());
-    } else {
-      has_tool_payload_ = false;
-      ft_offset_ = KDL::Frame::Identity();  // No offset
-      RCLCPP_INFO(get_logger(), "No tool_payload found, using wrist_3_link as end effector");
+    if (!kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain)) {
+      RCLCPP_ERROR(get_logger(), "Failed to extract tool_payload chain");
+      return false;
     }
+    
+    // Get the fixed transform from wrist_3 to tool_payload
+    // This is a fixed joint, so joint position doesn't matter
+    KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
+    KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
+    tool_fk.JntToCart(zero_joint, ft_offset_);
+    
+    RCLCPP_INFO(get_logger(), "Tool offset from wrist_3_link: [%.3f, %.3f, %.3f]", 
+                ft_offset_.p.x(), ft_offset_.p.y(), ft_offset_.p.z());
     
     // Create FK and IK solvers
     fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(kdl_chain_);
@@ -156,13 +153,9 @@ private:
     std::cout << "POSE VERIFICATION FOR UR5e WITH F/T SENSOR (KDL Model)" << std::endl;
     std::cout << std::string(80, '=') << std::endl;
     
-    if (has_tool_payload_) {
-      std::cout << "\nNote: tool_payload is attached to wrist_3_link via fixed joint" << std::endl;
-      std::cout << "Tool offset from wrist_3: [" << ft_offset_.p.x() << ", " 
-                << ft_offset_.p.y() << ", " << ft_offset_.p.z() << "] m" << std::endl;
-    } else {
-      std::cout << "\nNote: Using wrist_3_link as end effector (no tool_payload)" << std::endl;
-    }
+    std::cout << "\nNote: tool_payload is attached to wrist_3_link via fixed joint" << std::endl;
+    std::cout << "Tool offset from wrist_3: [" << ft_offset_.p.x() << ", " 
+              << ft_offset_.p.y() << ", " << ft_offset_.p.z() << "] m" << std::endl;
     
     // 1. HOME POSE
     std::cout << "\n1. HOME POSE (from robot):" << std::endl;
@@ -262,8 +255,6 @@ private:
   std::vector<std::string> joint_names_;
   std::vector<double> home_joints_;
   bool home_joints_received_ = false;
-  bool has_tool_payload_ = false;
-  unsigned int num_movable_joints_ = 6;  // UR robots have 6 movable joints
   
   // KDL structures
   KDL::Tree kdl_tree_;

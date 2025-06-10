@@ -120,22 +120,20 @@ private:
       return false;
     }
     
-    // Check if tool_payload exists and get the fixed transform
+    // Get the fixed transform from wrist_3_link to tool_payload
     KDL::Chain tool_chain;
-    if (kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain)) {
-      has_tool_payload_ = true;
-      // Get the fixed transform from wrist_3 to tool_payload
-      KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
-      KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
-      tool_fk.JntToCart(zero_joint, ft_offset_);
-      
-      RCLCPP_INFO(get_logger(), "Found tool_payload with offset: [%.3f, %.3f, %.3f]",
-                  ft_offset_.p.x(), ft_offset_.p.y(), ft_offset_.p.z());
-    } else {
-      has_tool_payload_ = false;
-      ft_offset_ = KDL::Frame::Identity();
-      RCLCPP_INFO(get_logger(), "No tool_payload found, using wrist_3_link as end effector");
+    if (!kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain)) {
+      RCLCPP_ERROR(get_logger(), "Failed to extract tool_payload chain");
+      return false;
     }
+    
+    // Get the fixed transform from wrist_3 to tool_payload
+    KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
+    KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
+    tool_fk.JntToCart(zero_joint, ft_offset_);
+    
+    RCLCPP_INFO(get_logger(), "Tool offset from wrist_3_link: [%.3f, %.3f, %.3f]",
+                ft_offset_.p.x(), ft_offset_.p.y(), ft_offset_.p.z());
     
     // Create FK and IK solvers
     fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(kdl_chain_);
@@ -343,7 +341,6 @@ private:
   KDL::Tree kdl_tree_;
   KDL::Chain kdl_chain_;
   KDL::Frame ft_offset_;  // Fixed transform from wrist_3 to tool_payload
-  bool has_tool_payload_ = false;
   std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver_;
   std::unique_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
   
