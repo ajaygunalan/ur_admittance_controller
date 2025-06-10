@@ -31,13 +31,10 @@ void AdmittanceNode::initializeParameters() {
       return result;
     });
   
-  // robot_description will be retrieved from /robot_state_publisher
-  
   update_admittance_parameters();
 }
 
 void AdmittanceNode::setupROSInterfaces() {
-  // Subscribers
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
       "/wrench_tcp_base", rclcpp::SensorDataQoS(),
       std::bind(&AdmittanceNode::wrench_callback, this, std::placeholders::_1));
@@ -50,9 +47,8 @@ void AdmittanceNode::setupROSInterfaces() {
       "/admittance_node/desired_pose", 10,
       std::bind(&AdmittanceNode::desired_pose_callback, this, std::placeholders::_1));
   
-  // Publishers
   velocity_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
-      "/forward_velocity_controller/commands", 1);
+      "/forward_velocity_controller/commands", 10);
 }
 
 void AdmittanceNode::initialize() {
@@ -60,13 +56,10 @@ void AdmittanceNode::initialize() {
   
   if (!checkJointStates()) RCLCPP_ERROR(get_logger(), "Joint states not received - is robot driver running?");
   
-  // CRITICAL: Compute initial TCP position from actual joint states
-  // This prevents large initial error from zero-initialized joints
-  RCLCPP_INFO(get_logger(), "Computing initial TCP position from current joint states...");
   computeForwardKinematics();
+  X_tcp_base_desired_ = X_tcp_base_current_;
   
-  // Log initial TCP position
-  RCLCPP_INFO(get_logger(), "Initial TCP position: [%.3f, %.3f, %.3f]",
+  RCLCPP_INFO(get_logger(), "Initial TCP: [%.3f, %.3f, %.3f] - Bumpless transfer enabled",
     X_tcp_base_current_.translation()(0),
     X_tcp_base_current_.translation()(1), 
     X_tcp_base_current_.translation()(2));
@@ -77,19 +70,10 @@ void AdmittanceNode::initialize() {
     std::bind(&AdmittanceNode::control_cycle, this)
   );
   
-  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready - push the robot to move it!");
-  RCLCPP_INFO(get_logger(), "Control timer started at 100Hz");
+  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready at 100Hz - push the robot to move it!");
 }
 
 void AdmittanceNode::control_cycle() {
-  // Monitor timing performance (optional debug)
-  static auto last_time = get_clock()->now();
-  auto current_time = get_clock()->now();
-  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 5000,
-                        "Control cycle period: %.3fms",
-                        (current_time - last_time).seconds() * 1000);
-  last_time = current_time;
-  
   computeForwardKinematics();
   compute_admittance();
   limit_to_workspace();
@@ -104,14 +88,16 @@ void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::Co
 void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
   RCLCPP_INFO_ONCE(get_logger(), "Joint states received - robot is online");
   
-  // Map joint names to positions
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    auto it = std::find(msg->name.begin(), msg->name.end(), params_.joints[i]);
-    if (it != msg->name.end() && static_cast<size_t>(std::distance(msg->name.begin(), it)) < msg->position.size()) {
-      q_current_[i] = msg->position[std::distance(msg->name.begin(), it)];
+  auto map_joints = [this](const auto& msg) {
+    for (size_t i = 0; i < params_.joints.size(); ++i) {
+      auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
+      if (it != msg.name.end() && static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
+        q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
+      }
     }
-  }
+  };
   
+  map_joints(*msg);
   joint_states_updated_ = true;
 }
 
@@ -157,29 +143,24 @@ bool AdmittanceNode::checkJointStates() {
     return false;
   }
   
-  // Process the message to populate q_current_
   RCLCPP_INFO(get_logger(), "Processing joint states - received %zu joints", msg.name.size());
-  for (size_t i = 0; i < msg.name.size(); ++i) {
-    RCLCPP_DEBUG(get_logger(), "  Joint[%zu]: %s = %.3f", i, msg.name[i].c_str(), msg.position[i]);
-  }
   
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
-    if (it != msg.name.end() && static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
-      q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
-      RCLCPP_DEBUG(get_logger(), "Mapped %s to q_current_[%zu] = %.3f", 
-        params_.joints[i].c_str(), i, q_current_[i]);
-    } else {
-      RCLCPP_WARN(get_logger(), "Joint %s not found in message!", params_.joints[i].c_str());
+  auto map_joints = [this](const auto& msg) {
+    for (size_t i = 0; i < params_.joints.size(); ++i) {
+      auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
+      if (it != msg.name.end() && static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
+        q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
+      } else {
+        RCLCPP_WARN(get_logger(), "Joint %s not found!", params_.joints[i].c_str());
+      }
     }
-  }
+  };
   
-  // Mark joint states as updated so FK can be computed
+  map_joints(msg);
   joint_states_updated_ = true;
   
   RCLCPP_INFO(get_logger(), "Initial joint positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-    q_current_[0], q_current_[1], q_current_[2], 
-    q_current_[3], q_current_[4], q_current_[5]);
+    q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
   
   return true;
 }

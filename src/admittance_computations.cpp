@@ -80,13 +80,20 @@ bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
     q_kdl_(i) = q_current_[i];
   }
   
-  // Pack Cartesian velocity
-  KDL::Twist twist;
-  twist.vel = KDL::Vector(cart_vel(0), cart_vel(1), cart_vel(2));
-  twist.rot = KDL::Vector(cart_vel(3), cart_vel(4), cart_vel(5));
+  // Pack Cartesian velocity (tool frame)
+  KDL::Twist twist_tool;
+  twist_tool.vel = KDL::Vector(cart_vel(0), cart_vel(1), cart_vel(2));
+  twist_tool.rot = KDL::Vector(cart_vel(3), cart_vel(4), cart_vel(5));
   
-  // Solve inverse kinematics
-  if (ik_vel_solver_->CartToJnt(q_kdl_, twist, v_kdl_) < 0) {
+  // Transform velocity from tool frame to wrist_3 frame
+  // For velocity: twist_wrist3 = Adjoint(wrist3_to_tool_transform_) * twist_tool
+  KDL::Twist twist_wrist3;
+  twist_wrist3.rot = wrist3_to_tool_transform_.M * twist_tool.rot;
+  twist_wrist3.vel = wrist3_to_tool_transform_.M * twist_tool.vel + 
+                     wrist3_to_tool_transform_.p * twist_tool.rot;
+  
+  // Solve inverse kinematics for wrist_3 velocity
+  if (ik_vel_solver_->CartToJnt(q_kdl_, twist_wrist3, v_kdl_) < 0) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK failed");
     return false;
   }
@@ -104,68 +111,34 @@ void AdmittanceNode::computeForwardKinematics() {
     return;
   }
   
+  // Copy joints to KDL solver
+  for (size_t i = 0; i < num_joints_; ++i) {
+    q_kdl_(i) = q_current_[i];
+  }
+  
   // Debug logging - using static flag to show only once
   static bool debug_shown = false;
   if (!debug_shown) {
-    RCLCPP_INFO(get_logger(), "FK Debug - num_joints_: %zu, params_.joints.size(): %zu, kdl_chain_.getNrOfJoints(): %u",
-      num_joints_, params_.joints.size(), kdl_chain_.getNrOfJoints());
-    
-    RCLCPP_INFO(get_logger(), "FK Debug - q_current_ size: %zu, q_kdl_ size: %u",
-      q_current_.size(), q_kdl_.rows());
-    
-    // Log joint values being used
-    std::stringstream ss;
-    ss << "FK Debug - Joint positions used: [";
-    for (size_t i = 0; i < num_joints_; ++i) {
-      if (i > 0) ss << ", ";
-      ss << std::fixed << std::setprecision(3) << q_current_[i];
-    }
-    ss << "]";
-    RCLCPP_INFO(get_logger(), "%s", ss.str().c_str());
-    
-    // Copy joints to KDL solver
-    for (size_t i = 0; i < num_joints_; ++i) {
-      q_kdl_(i) = q_current_[i];
-    }
-    
-    // Log what we're sending to FK solver
-    std::stringstream ss2;
-    ss2 << "FK Debug - Joints for FK: [";
-    for (size_t i = 0; i < num_joints_; ++i) {
-      ss2 << q_kdl_(i) << (i < num_joints_-1 ? ", " : "]");
-    }
-    RCLCPP_INFO(get_logger(), "%s", ss2.str().c_str());
-    
-    // Solve forward kinematics
-    KDL::Frame frame;
-    if (fk_pos_solver_->JntToCart(q_kdl_, frame) < 0) {
-      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed");
-      return;
-    }
-    
-    // Debug: Log the computed frame position
-    RCLCPP_INFO(get_logger(), "FK Debug - Computed TCP position: [%.6f, %.6f, %.6f]",
-      frame.p.x(), frame.p.y(), frame.p.z());
-    
+    RCLCPP_INFO(get_logger(), "FK Debug - joints: %zu, chain: %u, positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+        num_joints_, kdl_chain_.getNrOfJoints(), 
+        q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
     debug_shown = true;
-  } else {
-    // Normal operation - just copy joints and compute FK
-    for (size_t i = 0; i < num_joints_; ++i) {
-      q_kdl_(i) = q_current_[i];
-    }
-    
-    KDL::Frame frame;
-    if (fk_pos_solver_->JntToCart(q_kdl_, frame) < 0) {
-      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed");
-      return;
-    }
-    
-    // Update TCP pose
-    X_tcp_base_current_.translation() = Eigen::Vector3d(frame.p.x(), frame.p.y(), frame.p.z());
-    double x, y, z, w;
-    frame.M.GetQuaternion(x, y, z, w);
-    X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
   }
+  
+  // Solve forward kinematics to wrist_3_link
+  KDL::Frame wrist3_frame;
+  if (fk_pos_solver_->JntToCart(q_kdl_, wrist3_frame) < 0) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed");
+    return;
+  }
+  
+  // Apply fixed transform to get tool frame
+  KDL::Frame tool_frame = wrist3_frame * wrist3_to_tool_transform_;
+  
+  // Update TCP pose
+  X_tcp_base_current_.translation() = Eigen::Vector3d(tool_frame.p.x(), tool_frame.p.y(), tool_frame.p.z());
+  double x, y, z, w; tool_frame.M.GetQuaternion(x, y, z, w);
+  X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
   
   joint_states_updated_ = false;
 }
@@ -196,14 +169,15 @@ void AdmittanceNode::initializeStateVectors() {
 }
 
 void AdmittanceNode::setDefaultEquilibrium() {
-  declare_parameter("equilibrium.position", std::vector<double>{0.1, 0.4, 0.5});
-  declare_parameter("equilibrium.orientation", std::vector<double>{0.0, 0.0, 0.0, 1.0});
+  declare_parameter("equilibrium.position", std::vector<double>{0.49, 0.13, 0.49});
+  declare_parameter("equilibrium.orientation", std::vector<double>{-0.00, -0.71, 0.71, 0.00});
   
   auto eq_pos = get_parameter("equilibrium.position").as_double_array();
   auto eq_ori = get_parameter("equilibrium.orientation").as_double_array();
   
   X_tcp_base_desired_.translation() << eq_pos[0], eq_pos[1], eq_pos[2];
-  X_tcp_base_desired_.linear() = Eigen::Quaterniond(eq_ori[3], eq_ori[0], eq_ori[1], eq_ori[2]).toRotationMatrix();
+  // Convert from WXYZ (parameter format) to Eigen's WXYZ constructor format
+  X_tcp_base_desired_.linear() = Eigen::Quaterniond(eq_ori[0], eq_ori[1], eq_ori[2], eq_ori[3]).toRotationMatrix();
   
   RCLCPP_DEBUG(get_logger(), "Equilibrium pose set: position=[%.3f, %.3f, %.3f]", 
                eq_pos[0], eq_pos[1], eq_pos[2]);
@@ -244,11 +218,30 @@ bool AdmittanceNode::load_kinematics() {
     return false;
   }
 
-  if (!kdl_tree_.getChain(params_.base_link, params_.tip_link, kdl_chain_)) {
-    RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain: %s -> %s",
-                 params_.base_link.c_str(), params_.tip_link.c_str());
+  // Always extract chain from base_link to wrist_3_link (6 movable joints)
+  if (!kdl_tree_.getChain(params_.base_link, "wrist_3_link", kdl_chain_)) {
+    RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain: %s -> wrist_3_link",
+                 params_.base_link.c_str());
     return false;
   }
+  
+  // Get the fixed transform from wrist_3_link to tool_payload
+  KDL::Chain tool_chain;
+  if (!kdl_tree_.getChain("wrist_3_link", params_.tip_link, tool_chain)) {
+    RCLCPP_ERROR(get_logger(), "Failed to extract tool chain: wrist_3_link -> %s",
+                 params_.tip_link.c_str());
+    return false;
+  }
+  
+  // Compute the fixed transform (tool_chain should have 0 joints, just fixed transforms)
+  KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
+  KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
+  tool_fk.JntToCart(zero_joint, wrist3_to_tool_transform_);
+  
+  RCLCPP_INFO(get_logger(), "Tool offset from wrist_3_link: [%.3f, %.3f, %.3f]",
+              wrist3_to_tool_transform_.p.x(), 
+              wrist3_to_tool_transform_.p.y(), 
+              wrist3_to_tool_transform_.p.z());
 
   // Initialize solvers
   constexpr double PRECISION = 1e-5;
@@ -264,8 +257,8 @@ bool AdmittanceNode::load_kinematics() {
   q_kdl_.resize(num_joints_);
   v_kdl_.resize(num_joints_);
 
-  RCLCPP_DEBUG(get_logger(), "KDL kinematics ready: %s -> %s (%zu joints)",
-               params_.base_link.c_str(), params_.tip_link.c_str(), num_joints_);
+  RCLCPP_DEBUG(get_logger(), "KDL kinematics ready: %s -> wrist_3_link (%zu joints), tool: %s",
+               params_.base_link.c_str(), num_joints_, params_.tip_link.c_str());
   return true;
 }
 

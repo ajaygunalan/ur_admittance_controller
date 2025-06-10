@@ -111,7 +111,8 @@ class AdmittanceNode : public rclcpp::Node {
   double admittance_ratio_;    // Scaling factor for external wrench (0-1)
   // KDL kinematics for inverse velocity solving
   KDL::Tree kdl_tree_;                                        // Full robot kinematic tree
-  KDL::Chain kdl_chain_;                                      // Base-to-tip kinematic chain
+  KDL::Chain kdl_chain_;                                      // Base-to-tip kinematic chain (base_link to wrist_3_link)
+  KDL::Frame wrist3_to_tool_transform_;                       // Fixed transform from wrist_3 to tool_payload
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_; // WDLS velocity solver
   
   // Forward kinematics solver (ROS1-style direct computation)
