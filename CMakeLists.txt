@@ -202,17 +202,10 @@ install(
   DESTINATION include
 )
 
-# Install configuration, launch files, and scripts
+# Install configuration and launch files
 install(
-  DIRECTORY config launch scripts
+  DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
-)
-
-# Install Python scripts as executables
-install(PROGRAMS
-  scripts/init_robot.py
-  scripts/verify_poses.py
-  DESTINATION lib/${PROJECT_NAME}
 )
 
 # ==============================================================================
