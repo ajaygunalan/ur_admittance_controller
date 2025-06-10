@@ -22,6 +22,12 @@
   <depend>sensor_msgs</depend>
   <depend>trajectory_msgs</depend>
   
+  <!-- Additional dependencies for init_robot and verify_poses -->
+  <depend>rclcpp_action</depend>
+  <depend>control_msgs</depend>
+  <depend>controller_manager_msgs</depend>
+  <depend>rcl_interfaces</depend>
+  
   <!-- Kinematics dependencies -->
   <depend>kdl_parser</depend>
   <depend>urdf</depend>

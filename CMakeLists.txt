@@ -39,6 +39,12 @@ find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 
+# Additional packages for init_robot and verify_poses
+find_package(rclcpp_action REQUIRED)
+find_package(control_msgs REQUIRED)
+find_package(controller_manager_msgs REQUIRED)
+find_package(rcl_interfaces REQUIRED)
+
 # Transform packages
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -90,6 +96,20 @@ add_executable(wrench_node
   src/wrench_node.cpp
 )
 
+# ==============================================================================
+# Build Init Robot Executable
+# ==============================================================================
+add_executable(init_robot
+  src/init_robot.cpp
+)
+
+# ==============================================================================
+# Build Verify Poses Executable
+# ==============================================================================
+add_executable(verify_poses
+  src/verify_poses.cpp
+)
+
 # Include directories for nodes
 target_include_directories(admittance_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -97,6 +117,16 @@ target_include_directories(admittance_node PUBLIC
 )
 
 target_include_directories(wrench_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_include_directories(init_robot PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_include_directories(verify_poses PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
@@ -111,8 +141,42 @@ target_link_libraries(wrench_node
   Eigen3::Eigen
 )
 
+target_link_libraries(init_robot
+  Eigen3::Eigen
+)
+
+target_link_libraries(verify_poses
+  Eigen3::Eigen
+)
+
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
 ament_target_dependencies(wrench_node rclcpp geometry_msgs std_srvs)
+
+# Additional dependencies for init_robot and verify_poses
+set(INIT_ROBOT_DEPENDENCIES
+  rclcpp
+  rclcpp_action
+  control_msgs
+  controller_manager_msgs
+  sensor_msgs
+  trajectory_msgs
+  rcl_interfaces
+  orocos_kdl
+  kdl_parser
+  urdf
+)
+
+set(VERIFY_POSES_DEPENDENCIES
+  rclcpp
+  sensor_msgs
+  rcl_interfaces
+  orocos_kdl
+  kdl_parser
+  urdf
+)
+
+ament_target_dependencies(init_robot ${INIT_ROBOT_DEPENDENCIES})
+ament_target_dependencies(verify_poses ${VERIFY_POSES_DEPENDENCIES})
 
 # ==============================================================================
 # Installation
@@ -128,7 +192,7 @@ install(
 
 # Install the node executables
 install(
-  TARGETS admittance_node wrench_node
+  TARGETS admittance_node wrench_node init_robot verify_poses
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -147,6 +211,7 @@ install(
 # Install Python scripts as executables
 install(PROGRAMS
   scripts/init_robot.py
+  scripts/verify_poses.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
