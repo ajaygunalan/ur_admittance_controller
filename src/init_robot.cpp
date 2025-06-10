@@ -28,7 +28,6 @@
 class EquilibriumInitializer : public rclcpp::Node {
 public:
   using FollowJointTrajectory = control_msgs::action::FollowJointTrajectory;
-  using GoalHandleFollowJointTrajectory = rclcpp_action::ClientGoalHandle<FollowJointTrajectory>;
 
   EquilibriumInitializer() : Node("equilibrium_initializer"),
     joint_names_({"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
@@ -70,48 +69,34 @@ private:
     // Get robot_description from robot_state_publisher
     auto param_client = this->create_client<rcl_interfaces::srv::GetParameters>(
       "/robot_state_publisher/get_parameters");
-    if (!param_client->wait_for_service(std::chrono::seconds(5))) {
-      RCLCPP_ERROR(get_logger(), "robot_state_publisher parameter service not available");
+    if (!param_client->wait_for_service(std::chrono::seconds(5)))
       return false;
-    }
     
     auto request = std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
     request->names.push_back("robot_description");
     auto future = param_client->async_send_request(request);
     if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future,
-        std::chrono::seconds(2)) != rclcpp::FutureReturnCode::SUCCESS) {
-      RCLCPP_ERROR(get_logger(), "Failed to get robot_description");
+        std::chrono::seconds(2)) != rclcpp::FutureReturnCode::SUCCESS)
       return false;
-    }
     
     auto response = future.get();
-    if (response->values.empty() || response->values[0].type != rcl_interfaces::msg::ParameterType::PARAMETER_STRING) {
-      RCLCPP_ERROR(get_logger(), "Invalid robot_description parameter");
+    if (response->values.empty() || response->values[0].type != rcl_interfaces::msg::ParameterType::PARAMETER_STRING)
       return false;
-    }
     
     std::string urdf_string = response->values[0].string_value;
     
     // Parse URDF into KDL tree
-    if (!kdl_parser::treeFromString(urdf_string, kdl_tree_)) {
-      RCLCPP_ERROR(get_logger(), "Failed to parse URDF into KDL tree");
+    if (!kdl_parser::treeFromString(urdf_string, kdl_tree_))
       return false;
-    }
     
     // Always extract chain from base_link to wrist_3_link (6 movable joints)
-    if (!kdl_tree_.getChain("base_link", "wrist_3_link", kdl_chain_)) {
-      RCLCPP_ERROR(get_logger(), "Failed to extract kinematic chain");
+    if (!kdl_tree_.getChain("base_link", "wrist_3_link", kdl_chain_))
       return false;
-    }
     
     // Get the fixed transform from wrist_3_link to tool_payload
     KDL::Chain tool_chain;
-    if (!kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain)) {
-      RCLCPP_ERROR(get_logger(), "Failed to extract tool_payload chain");
+    if (!kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain))
       return false;
-    }
-    
-    // Get the fixed transform from wrist_3 to tool_payload
     KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
     KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
     tool_fk.JntToCart(zero_joint, ft_offset_);
@@ -132,10 +117,8 @@ private:
     auto eq_pos = this->get_parameter("equilibrium.position").as_double_array();
     auto eq_ori = this->get_parameter("equilibrium.orientation").as_double_array();
     
-    if (eq_pos.size() != 3 || eq_ori.size() != 4) {
-      RCLCPP_ERROR(get_logger(), "Invalid equilibrium parameters");
+    if (eq_pos.size() != 3 || eq_ori.size() != 4)
       return false;
-    }
     
     // Create target frame for tool from position and quaternion (wxyz format)
     KDL::Frame target_tool_frame(KDL::Rotation::Quaternion(eq_ori[1], eq_ori[2], eq_ori[3], eq_ori[0]),
@@ -204,8 +187,6 @@ private:
   }
   
   bool moveToEquilibrium() {
-    if (!trajectory_client_) return false;
-    
     // Create trajectory message
     auto trajectory_msg = trajectory_msgs::msg::JointTrajectory();
     trajectory_msg.joint_names = joint_names_;
@@ -231,29 +212,21 @@ private:
     RCLCPP_INFO(get_logger(), "Sending trajectory to equilibrium position...");
     auto goal_handle_future = trajectory_client_->async_send_goal(goal_msg);
     if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), goal_handle_future) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-      RCLCPP_ERROR(get_logger(), "Failed to send trajectory goal");
+        rclcpp::FutureReturnCode::SUCCESS)
       return false;
-    }
     
     auto goal_handle = goal_handle_future.get();
-    if (!goal_handle) {
-      RCLCPP_ERROR(get_logger(), "Trajectory goal was rejected");
+    if (!goal_handle)
       return false;
-    }
     // Wait for result
     auto result_future = trajectory_client_->async_get_result(goal_handle);
     if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-      RCLCPP_ERROR(get_logger(), "Failed to get trajectory result");
+        rclcpp::FutureReturnCode::SUCCESS)
       return false;
-    }
     
     auto result = result_future.get();
-    if (result.code != rclcpp_action::ResultCode::SUCCEEDED) {
-      RCLCPP_ERROR(get_logger(), "Trajectory execution failed");
+    if (result.code != rclcpp_action::ResultCode::SUCCEEDED)
       return false;
-    }
     
     RCLCPP_INFO(get_logger(), "Successfully moved to equilibrium position");
     return true;
@@ -267,16 +240,12 @@ private:
     
     auto future = switch_controller_client_->async_send_request(request);
     if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future,
-        std::chrono::seconds(5)) != rclcpp::FutureReturnCode::SUCCESS) {
-      RCLCPP_ERROR(get_logger(), "Failed to switch controllers");
+        std::chrono::seconds(5)) != rclcpp::FutureReturnCode::SUCCESS)
       return false;
-    }
     
     auto response = future.get();
-    if (!response->ok) {
-      RCLCPP_ERROR(get_logger(), "Controller switch rejected");
+    if (!response->ok)
       return false;
-    }
     
     RCLCPP_INFO(get_logger(), "Successfully switched to velocity controller");
     return true;
@@ -315,15 +284,8 @@ private:
 int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
   
-  try {
-    auto node = std::make_shared<EquilibriumInitializer>();
-    // Run for a bit to complete initialization, then shutdown
-    rclcpp::spin_some(node);
-  } catch (const std::exception& e) {
-    RCLCPP_ERROR(rclcpp::get_logger("main"), "Error: %s", e.what());
-    rclcpp::shutdown();
-    return 1;
-  }
+  auto node = std::make_shared<EquilibriumInitializer>();
+  rclcpp::spin_some(node);
   
   rclcpp::shutdown();
   return 0;
