@@ -43,15 +43,16 @@ ros2 run ur_admittance_controller verify_poses
 ```
 
 
-```
-ros2 run ur_admittance_controller init_robot.py
-```
 
 # Terminal 2: Start wrench filter node (processes raw F/T sensor data)
+```
 ros2 run ur_admittance_controller wrench_node
+```
 
 # Terminal 3: Start admittance controller
+```
 ros2 run ur_admittance_controller admittance_node
+```
 
 # Terminal 4: Apply test force (robot will move)
 ros2 topic pub /wrench_tcp_base_raw geometry_msgs/WrenchStamped \
