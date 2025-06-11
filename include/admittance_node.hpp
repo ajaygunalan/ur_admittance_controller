@@ -121,13 +121,20 @@ class AdmittanceNode : public rclcpp::Node {
   // Flag to ensure we compute FK after joint states are updated
   bool joint_states_updated_ = false;
   
+  // Data freshness tracking for synchronization monitoring
+  rclcpp::Time last_wrench_time_;
+  rclcpp::Time last_joint_state_time_;
+  
   // Cached values to avoid repeated computations in control loop
   size_t num_joints_ = 0;  // Number of joints in kinematic chain
   KDL::JntArray q_kdl_;    // Pre-allocated KDL joint positions
   KDL::JntArray v_kdl_;    // Pre-allocated KDL joint velocities
   
-  // Control timer
-  rclcpp::TimerBase::SharedPtr control_timer_;
+  // Timer removed - using manual spin_some() pattern for synchronization
+  // rclcpp::TimerBase::SharedPtr control_timer_;  // REMOVED
+  
+  // Helper function to map joint states from JointState message to internal vector
+  void map_joint_states(const sensor_msgs::msg::JointState& msg, bool warn_missing = false);
   
  public:
   // Control loop period (elegant like ROS1's expectedCycleTime)

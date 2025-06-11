@@ -45,25 +45,19 @@ Vector6d AdmittanceNode::compute_pose_error() {
   Eigen::Quaterniond q_current(X_tcp_base_current_.rotation());
   Eigen::Quaterniond q_desired(X_tcp_base_desired_.rotation());
   
-  // Ensure shortest path by checking dot product
-  if (q_current.dot(q_desired) < 0) {
-    q_current.coeffs() = -q_current.coeffs();
+  // Ensure shortest path by checking dot product (flip desired if needed)
+  if (q_current.dot(q_desired) < 0.0) {
+    q_desired.coeffs() *= -1.0;
   }
   
   // Use same convention as ur3: q_error = q_current * q_desired^(-1)
   // This gives the rotation from desired to current orientation
   Eigen::Quaterniond q_error = q_current * q_desired.inverse();
   
-  // Normalize for numerical stability (as ur3 does)
-  if (q_error.coeffs().norm() > 1e-3) {
-    q_error.coeffs() = q_error.coeffs() / q_error.coeffs().norm();
-  }
+  // Normalize for numerical stability using built-in method
+  q_error.normalize();
   
-  // Ensure we take the shortest rotation path to prevent unwinding
-  if (q_error.w() < 0) {
-    q_error.coeffs() *= -1;
-  }
-  
+  // Convert to axis-angle representation
   Eigen::AngleAxisd aa_error(q_error);
   error.tail<3>() = aa_error.axis() * aa_error.angle();
   
@@ -93,13 +87,11 @@ void AdmittanceNode::update_admittance_parameters() {
   
   // Log admittance parameters on startup/update
   RCLCPP_INFO(get_logger(), 
-    "Admittance params - Mass: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
-    p.mass[0], p.mass[1], p.mass[2], p.mass[3], p.mass[4], p.mass[5]);
-  RCLCPP_INFO(get_logger(),
-    "Admittance params - Stiffness: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
-    p.stiffness[0], p.stiffness[1], p.stiffness[2], p.stiffness[3], p.stiffness[4], p.stiffness[5]);
-  RCLCPP_INFO(get_logger(),
-    "Admittance params - Damping: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
+    "Admittance params - M: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f], "
+    "K: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f], "
+    "D: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
+    p.mass[0], p.mass[1], p.mass[2], p.mass[3], p.mass[4], p.mass[5],
+    p.stiffness[0], p.stiffness[1], p.stiffness[2], p.stiffness[3], p.stiffness[4], p.stiffness[5],
     p.damping[0], p.damping[1], p.damping[2], p.damping[3], p.damping[4], p.damping[5]);
 }
 
@@ -114,12 +106,8 @@ bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
   twist_tool.vel = KDL::Vector(cart_vel(0), cart_vel(1), cart_vel(2));
   twist_tool.rot = KDL::Vector(cart_vel(3), cart_vel(4), cart_vel(5));
   
-  // Transform velocity from tool frame to wrist_3 frame
-  // For velocity: twist_wrist3 = Adjoint(wrist3_to_tool_transform_) * twist_tool
-  KDL::Twist twist_wrist3;
-  twist_wrist3.rot = wrist3_to_tool_transform_.M * twist_tool.rot;
-  twist_wrist3.vel = wrist3_to_tool_transform_.M * twist_tool.vel + 
-                     wrist3_to_tool_transform_.p * twist_tool.rot;
+  // Transform velocity from tool frame to wrist_3 frame using KDL's built-in adjoint
+  KDL::Twist twist_wrist3 = wrist3_to_tool_transform_ * twist_tool;
   
   // Solve inverse kinematics for wrist_3 velocity
   if (ik_vel_solver_->CartToJnt(q_kdl_, twist_wrist3, v_kdl_) < 0) {
@@ -145,14 +133,10 @@ void AdmittanceNode::computeForwardKinematics() {
     q_kdl_(i) = q_current_[i];
   }
   
-  // Debug logging - using static flag to show only once
-  static bool debug_shown = false;
-  if (!debug_shown) {
-    RCLCPP_INFO(get_logger(), "FK Debug - joints: %zu, chain: %u, positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-        num_joints_, kdl_chain_.getNrOfJoints(), 
-        q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
-    debug_shown = true;
-  }
+  // Debug logging
+  RCLCPP_INFO_ONCE(get_logger(), "FK Debug - joints: %zu, chain: %u, positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+      num_joints_, kdl_chain_.getNrOfJoints(), 
+      q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
   
   // Solve forward kinematics to wrist_3_link
   KDL::Frame wrist3_frame;

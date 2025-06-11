@@ -74,10 +74,11 @@ private:
   
   void printJoints(const std::string& title, const KDL::JntArray& q) {
     if (!title.empty()) std::cout << "\n" << title << std::endl;
-    for (size_t i = 0; i < 6; ++i)
-      std::cout << std::setw(22) << joint_names_[i] << ": " << std::setw(8) << std::fixed 
-                << std::setprecision(4) << q(i) << " rad (" << std::setw(8) 
-                << std::setprecision(2) << q(i) * 180.0 / M_PI << "°)" << std::endl;
+    for (size_t i = 0; i < 6; ++i) {
+      std::cout << std::setw(22) << joint_names_[i] << ": " 
+                << std::setw(8) << std::fixed << std::setprecision(4) << q(i) 
+                << " rad (" << std::setw(8) << std::setprecision(2) << q(i) * 180.0 / M_PI << "°)\n";
+    }
   }
   
   void verifyPoses() {
@@ -136,12 +137,8 @@ private:
     std::cout << "   Given joint angles: [0.0, -1.57, 1.57, -1.57, -1.57, 0.0]" << std::endl;
     
     KDL::JntArray q_specific(6);
-    q_specific(0) = 0.0;      // shoulder_pan
-    q_specific(1) = -1.57;    // shoulder_lift  
-    q_specific(2) = 1.57;     // elbow
-    q_specific(3) = -1.57;    // wrist_1
-    q_specific(4) = -1.57;    // wrist_2
-    q_specific(5) = 0.0;      // wrist_3
+    std::vector<double> vals = {0.0, -1.57, 1.57, -1.57, -1.57, 0.0};
+    for (size_t i = 0; i < 6; ++i) q_specific(i) = vals[i];
     
     printJoints("", q_specific);
     

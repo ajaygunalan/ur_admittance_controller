@@ -9,6 +9,10 @@
 #include "std_srvs/srv/trigger.hpp"
 #include "admittance_node_types.hpp"  // For Vector6d type
 
+#include "tf2_ros/transform_listener.h"
+#include "tf2_ros/buffer.h"
+#include "tf2_eigen/tf2_eigen.hpp"
+
 namespace ur_admittance_controller {
 
 class WrenchNode : public rclcpp::Node {
@@ -18,6 +22,8 @@ public:
     force_bias_initialized_(false),
     force_bias_(Vector6d::Zero()),
     filtered_wrench_(Vector6d::Zero()),
+    tf_buffer_(std::make_unique<tf2_ros::Buffer>(this->get_clock())),
+    tf_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_buffer_)),
     first_msg_(true)
   {
     // Declare parameters with defaults
@@ -33,9 +39,9 @@ public:
     // Use SensorDataQoS for F/T sensor topics (best practice for sensor streams)
     auto sensor_qos = rclcpp::SensorDataQoS();
     
-    // Subscribe to raw F/T sensor data
+    // Subscribe to raw F/T sensor data (now from tool_payload frame)
     wrench_sub_ = this->create_subscription<geometry_msgs::msg::WrenchStamped>(
-      "/wrench_tcp_base_raw",  // Raw wrench topic
+      "/wrench_tcp_tool_payload_raw",  // Raw wrench topic in tool_payload frame
       sensor_qos,
       std::bind(&WrenchNode::wrench_callback, this, std::placeholders::_1));
     
@@ -58,10 +64,43 @@ public:
 private:
   void wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg)
   {
-    // Extract 6-DOF wrench data (already in base frame for UR5e)
+    // Extract 6-DOF wrench data (in tool_payload frame)
+    Vector6d wrench_tool_frame{msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
+                               msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z};
+    
+    // Transform wrench from tool_payload frame to base_link frame
     Vector6d raw_wrench;
-    raw_wrench << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
-                  msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
+    try {
+      // Get transform from tool_payload to base_link
+      geometry_msgs::msg::TransformStamped transform_stamped = 
+        tf_buffer_->lookupTransform("base_link", "tool_payload", 
+                                   tf2::TimePointZero);
+      
+      // Extract rotation and translation
+      Eigen::Isometry3d transform = tf2::transformToEigen(transform_stamped);
+      Eigen::Matrix3d rotation = transform.rotation();
+      Eigen::Vector3d translation = transform.translation();
+      
+      // Apply adjoint transformation for wrench (mathematically correct)
+      // This accounts for torques created by forces at a distance (lever arm effect)
+      Eigen::Vector3d force_tool = wrench_tool_frame.head<3>();
+      Eigen::Vector3d torque_tool = wrench_tool_frame.tail<3>();
+      
+      // Transform force and torque using adjoint
+      Eigen::Vector3d force_base = rotation * force_tool;
+      Eigen::Vector3d torque_base = rotation * torque_tool + translation.cross(force_base);
+      
+      // Combine into wrench vector
+      raw_wrench.head<3>() = force_base;
+      raw_wrench.tail<3>() = torque_base;
+      
+    } catch (const tf2::TransformException& ex) {
+      // If transform not available, warn and use raw data
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                           "Could not transform wrench from tool_payload to base_link: %s", 
+                           ex.what());
+      raw_wrench = wrench_tool_frame;  // Fallback to raw data
+    }
     
     // Initialize bias on first reading if auto_bias is enabled
     if (!force_bias_initialized_ && auto_bias_) {
@@ -75,14 +114,9 @@ private:
     Vector6d wrench_compensated = raw_wrench - force_bias_;
     
     // Apply exponential moving average (EMA) low-pass filter
-    // y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
-    if (first_msg_) {
-      filtered_wrench_ = wrench_compensated;
-      first_msg_ = false;
-    } else {
-      filtered_wrench_ = filter_alpha_ * wrench_compensated + 
-                         (1.0 - filter_alpha_) * filtered_wrench_;
-    }
+    filtered_wrench_ = first_msg_ ? wrench_compensated : 
+                       filter_alpha_ * wrench_compensated + (1.0 - filter_alpha_) * filtered_wrench_;
+    first_msg_ = false;
     
     // Apply deadband/threshold - zero out small forces to reduce noise
     Vector6d output_wrench = filtered_wrench_;
@@ -99,14 +133,12 @@ private:
     if (above_threshold || !force_bias_initialized_) {
       // Create output message
       auto filtered_msg = std::make_unique<geometry_msgs::msg::WrenchStamped>();
-      filtered_msg->header = msg->header;  // Preserve timestamp and frame_id
+      filtered_msg->header = msg->header;  // Preserve timestamp
+      filtered_msg->header.frame_id = "base_link";  // Update frame_id to base_link
       
-      filtered_msg->wrench.force.x = output_wrench(0);
-      filtered_msg->wrench.force.y = output_wrench(1);
-      filtered_msg->wrench.force.z = output_wrench(2);
-      filtered_msg->wrench.torque.x = output_wrench(3);
-      filtered_msg->wrench.torque.y = output_wrench(4);
-      filtered_msg->wrench.torque.z = output_wrench(5);
+      auto& w = filtered_msg->wrench;
+      w.force.x = output_wrench(0); w.force.y = output_wrench(1); w.force.z = output_wrench(2);
+      w.torque.x = output_wrench(3); w.torque.y = output_wrench(4); w.torque.z = output_wrench(5);
       
       wrench_pub_->publish(std::move(filtered_msg));
     }
@@ -127,16 +159,21 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "Force bias reset service called");
   }
   
+  // Filter state (declared first to match constructor initialization order)
+  bool force_bias_initialized_;
+  Vector6d force_bias_;
+  Vector6d filtered_wrench_;
+  
+  // TF2 components for frame transformation
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  
+  bool first_msg_;
+  
   // Subscriptions and publishers
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Publisher<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr bias_reset_service_;
-  
-  // Filter state
-  bool force_bias_initialized_;
-  Vector6d force_bias_;
-  Vector6d filtered_wrench_;
-  bool first_msg_;
   
   // Parameters
   double filter_alpha_;      // EMA filter coefficient (0.0-1.0)

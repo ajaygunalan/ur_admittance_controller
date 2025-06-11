@@ -56,9 +56,8 @@ public:
     if (!switch_controller_client_->wait_for_service(std::chrono::seconds(5)))
       throw std::runtime_error("Switch controller service not available");
     // Wait for initial joint states
-    while (!current_positions_received_) {
-      rclcpp::spin_some(this->get_node_base_interface());
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    while (!current_positions_received_ && rclcpp::ok()) {
+      rclcpp::spin_some(get_node_base_interface());
     }
     // Execute initialization sequence
     executeInitialization();
@@ -252,15 +251,9 @@ private:
   }
   
   void executeInitialization() {
-    if (moveToEquilibrium()) {
-      // Small delay before switching controllers
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
-      
-      if (switchToVelocityController()) {
-        RCLCPP_INFO(get_logger(), "Robot initialized successfully");
-        // Delay before shutting down to ensure controller switch completes
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-      }
+    if (moveToEquilibrium() && (std::this_thread::sleep_for(std::chrono::milliseconds(500)), switchToVelocityController())) {
+      RCLCPP_INFO(get_logger(), "Robot initialized successfully");
+      std::this_thread::sleep_for(std::chrono::seconds(1));
     }
   }
   

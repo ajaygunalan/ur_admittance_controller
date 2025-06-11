@@ -150,7 +150,7 @@ target_link_libraries(verify_poses
 )
 
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
-ament_target_dependencies(wrench_node rclcpp geometry_msgs std_srvs)
+ament_target_dependencies(wrench_node rclcpp geometry_msgs std_srvs tf2 tf2_ros tf2_eigen)
 
 # Additional dependencies for init_robot and verify_poses
 set(INIT_ROBOT_DEPENDENCIES

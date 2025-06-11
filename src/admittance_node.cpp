@@ -20,16 +20,14 @@ void AdmittanceNode::initializeParameters() {
       this->get_node_parameters_interface());
   params_ = param_listener_->get_params();
   
-  parameter_cb_handle_ = this->add_on_set_parameters_callback(
-    [this](const std::vector<rclcpp::Parameter>& parameters) {
-      auto result = param_listener_->update(parameters);
-      if (result.successful) {
-        params_ = param_listener_->get_params();
-        this->update_admittance_parameters();
-        RCLCPP_DEBUG(get_logger(), "Parameters updated - admittance matrices reconfigured");
-      }
-      return result;
-    });
+  parameter_cb_handle_ = add_on_set_parameters_callback([this](const auto& params) {
+    auto result = param_listener_->update(params);
+    if (result.successful) {
+      params_ = param_listener_->get_params();
+      update_admittance_parameters();
+    }
+    return result;
+  });
   
   update_admittance_parameters();
 }
@@ -60,26 +58,36 @@ void AdmittanceNode::initialize() {
   // Don't overwrite the equilibrium that was set in constructor!
   // X_tcp_base_desired_ = X_tcp_base_current_;  // REMOVED - This was causing the error growth
   
-  RCLCPP_INFO(get_logger(), "Initial TCP: [%.3f, %.3f, %.3f]",
-    X_tcp_base_current_.translation()(0),
-    X_tcp_base_current_.translation()(1), 
-    X_tcp_base_current_.translation()(2));
+  RCLCPP_INFO(get_logger(), 
+    "Initial TCP: [%.3f, %.3f, %.3f], Equilibrium: [%.3f, %.3f, %.3f]",
+    X_tcp_base_current_.translation()(0), X_tcp_base_current_.translation()(1), X_tcp_base_current_.translation()(2),
+    X_tcp_base_desired_.translation()(0), X_tcp_base_desired_.translation()(1), X_tcp_base_desired_.translation()(2));
   
-  RCLCPP_INFO(get_logger(), "Equilibrium: [%.3f, %.3f, %.3f]",
-    X_tcp_base_desired_.translation()(0),
-    X_tcp_base_desired_.translation()(1), 
-    X_tcp_base_desired_.translation()(2));
-  
-  // Create control timer - this replaces the manual while loop
-  control_timer_ = create_wall_timer(
-    std::chrono::milliseconds(10),  // 100Hz
-    std::bind(&AdmittanceNode::control_cycle, this)
-  );
+  // Timer removed - using manual spin_some() pattern for proper synchronization
+  // control_timer_ = create_wall_timer(...);  // REMOVED for synchronized control
   
   RCLCPP_INFO(get_logger(), "UR Admittance Controller ready at 100Hz - push the robot to move it!");
 }
 
 void AdmittanceNode::control_cycle() {
+  // Safety check: Warn if sensor data is stale (>50ms old)
+  constexpr double STALE_DATA_THRESHOLD = 0.05;  // 5 control cycles
+  auto now = this->get_clock()->now();
+  
+  if (last_wrench_time_.nanoseconds() > 0 && 
+      (now - last_wrench_time_).seconds() > STALE_DATA_THRESHOLD) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+      "F/T sensor data is stale (%.1fms old) - check sensor connection",
+      (now - last_wrench_time_).seconds() * 1000);
+  }
+  
+  if (last_joint_state_time_.nanoseconds() > 0 && 
+      (now - last_joint_state_time_).seconds() > STALE_DATA_THRESHOLD) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+      "Joint state data is stale (%.1fms old) - check robot driver",
+      (now - last_joint_state_time_).seconds() * 1000);
+  }
+  
   computeForwardKinematics();
   compute_admittance();
   limit_to_workspace();
@@ -89,6 +97,9 @@ void AdmittanceNode::control_cycle() {
 void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
   Wrench_tcp_base_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
                       msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
+  
+  // Track data freshness
+  last_wrench_time_ = msg->header.stamp;
   
   // Log wrench if non-zero
   double force_norm = Wrench_tcp_base_.head<3>().norm();
@@ -104,16 +115,10 @@ void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::Co
 void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
   RCLCPP_INFO_ONCE(get_logger(), "Joint states received - robot is online");
   
-  auto map_joints = [this](const auto& msg) {
-    for (size_t i = 0; i < params_.joints.size(); ++i) {
-      auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
-      if (it != msg.name.end() && static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
-        q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
-      }
-    }
-  };
+  // Track data freshness
+  last_joint_state_time_ = msg->header.stamp;
   
-  map_joints(*msg);
+  map_joint_states(*msg);
   joint_states_updated_ = true;
 }
 
@@ -167,18 +172,7 @@ bool AdmittanceNode::checkJointStates() {
   
   RCLCPP_INFO(get_logger(), "Processing joint states - received %zu joints", msg.name.size());
   
-  auto map_joints = [this](const auto& msg) {
-    for (size_t i = 0; i < params_.joints.size(); ++i) {
-      auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
-      if (it != msg.name.end() && static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
-        q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
-      } else {
-        RCLCPP_WARN(get_logger(), "Joint %s not found!", params_.joints[i].c_str());
-      }
-    }
-  };
-  
-  map_joints(msg);
+  map_joint_states(msg, true);  // true = warn about missing joints
   joint_states_updated_ = true;
   
   RCLCPP_INFO(get_logger(), "Initial joint positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
@@ -187,26 +181,56 @@ bool AdmittanceNode::checkJointStates() {
   return true;
 }
 
+// Helper function to map joint states from JointState message to internal vector
+void AdmittanceNode::map_joint_states(const sensor_msgs::msg::JointState& msg, bool warn_missing) {
+  for (size_t i = 0; i < params_.joints.size(); ++i) {
+    auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
+    if (it != msg.name.end() && 
+        static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
+      q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
+    } else if (warn_missing) {
+      RCLCPP_WARN(get_logger(), "Joint %s not found in joint_states message!", params_.joints[i].c_str());
+    }
+  }
+}
+
 }  // namespace ur_admittance_controller
 
 // How It Works Now:
 // 1. main() creates node and calls initialize()
-// 2. initialize() creates a 100Hz timer
-// 3. rclcpp::spin(node) handles all callbacks:
-//   - Timer callback (control_cycle() every 10ms)
-//   - Subscription callbacks (wrench, joint_states)
-//   - Parameter callbacks
-// 4. No manual while loop or rate.sleep() needed!
-// The control loop now runs automatically at 100Hz through the ROS2 timer system!
+// 2. Manual spin_some() loop processes all sensor callbacks
+// 3. control_cycle() runs immediately after with synchronized data
+// 4. This ensures temporal alignment of wrench and joint state data
+// The control loop now runs at 100Hz with guaranteed sensor synchronization!
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
   node->initialize();
   
-  RCLCPP_INFO(node->get_logger(), "Admittance controller running...");
-  rclcpp::spin(node);  // Timer handles everything!
+  // Create single-threaded executor for deterministic callback processing
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
   
+  // Control loop rate
+  rclcpp::Rate loop_rate(100);  // 100Hz
+  
+  RCLCPP_INFO(node->get_logger(), "Starting synchronized admittance control loop at 100Hz...");
+  
+  // Manual control loop with synchronized sensor processing
+  while (rclcpp::ok()) {
+    // Process ALL pending callbacks (wrench, joint_states, parameters)
+    // This ensures all sensor data is updated before control computation
+    executor.spin_some();
+    
+    // Run control cycle with freshest synchronized data
+    node->control_cycle();
+    
+    // Sleep to maintain 100Hz rate
+    loop_rate.sleep();
+  }
+  
+  RCLCPP_INFO(node->get_logger(), "Shutting down admittance controller...");
   rclcpp::shutdown();
   return 0;
 }
