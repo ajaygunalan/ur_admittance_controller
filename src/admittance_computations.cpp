@@ -15,6 +15,11 @@ void AdmittanceNode::compute_admittance() {
       (scaled_wrench.array() - D_diag_.array() * V_tcp_base_commanded_.array() -
        K_diag_.array() * error.array());
   
+  // Log acceleration before limiting
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+    "Acceleration: [%.3f, %.3f, %.3f] m/s², norm: %.3f",
+    acceleration(0), acceleration(1), acceleration(2), acceleration.head<3>().norm());
+  
   double acc_norm = acceleration.head<3>().norm();
   if (acc_norm > arm_max_acc_) {
     RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1000,
@@ -24,22 +29,41 @@ void AdmittanceNode::compute_admittance() {
   
   const double dt = control_period_.seconds();
   V_tcp_base_commanded_ += acceleration * dt;
+  
+  // Log commanded velocity
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+    "Commanded velocity: [%.3f, %.3f, %.3f] m/s, norm: %.3f",
+    V_tcp_base_commanded_(0), V_tcp_base_commanded_(1), V_tcp_base_commanded_(2),
+    V_tcp_base_commanded_.head<3>().norm());
 }
 
 Vector6d AdmittanceNode::compute_pose_error() {
   Vector6d error;
+  // Use same convention as ur3_admittance_controller: current - desired
   error.head<3>() = X_tcp_base_current_.translation() - X_tcp_base_desired_.translation();
   
   Eigen::Quaterniond q_current(X_tcp_base_current_.rotation());
   Eigen::Quaterniond q_desired(X_tcp_base_desired_.rotation());
   
+  // Ensure shortest path by checking dot product
   if (q_current.dot(q_desired) < 0) {
     q_current.coeffs() = -q_current.coeffs();
   }
   
-  // Correct formula: q_error = q_desired * q_current^(-1)
-  // This gives the rotation from current to desired orientation
-  Eigen::Quaterniond q_error = q_desired * q_current.inverse();
+  // Use same convention as ur3: q_error = q_current * q_desired^(-1)
+  // This gives the rotation from desired to current orientation
+  Eigen::Quaterniond q_error = q_current * q_desired.inverse();
+  
+  // Normalize for numerical stability (as ur3 does)
+  if (q_error.coeffs().norm() > 1e-3) {
+    q_error.coeffs() = q_error.coeffs() / q_error.coeffs().norm();
+  }
+  
+  // Ensure we take the shortest rotation path to prevent unwinding
+  if (q_error.w() < 0) {
+    q_error.coeffs() *= -1;
+  }
+  
   Eigen::AngleAxisd aa_error(q_error);
   error.tail<3>() = aa_error.axis() * aa_error.angle();
   
@@ -52,17 +76,11 @@ Vector6d AdmittanceNode::compute_pose_error() {
     position_error_norm, error(0), error(1), error(2),
     orientation_error_norm, error(3), error(4), error(5));
   
-  // Also log current vs desired TCP position and orientation
-  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
-    "TCP Current: [%.3f, %.3f, %.3f], Desired: [%.3f, %.3f, %.3f]",
+  // Log current vs desired TCP position
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+    "TCP Pose - Current: [%.3f, %.3f, %.3f], Desired: [%.3f, %.3f, %.3f]",
     X_tcp_base_current_.translation()(0), X_tcp_base_current_.translation()(1), X_tcp_base_current_.translation()(2),
     X_tcp_base_desired_.translation()(0), X_tcp_base_desired_.translation()(1), X_tcp_base_desired_.translation()(2));
-    
-  // Log quaternions for debugging orientation issues
-  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
-    "Quaternions - Current: [%.3f, %.3f, %.3f, %.3f], Desired: [%.3f, %.3f, %.3f, %.3f]",
-    q_current.w(), q_current.x(), q_current.y(), q_current.z(),
-    q_desired.w(), q_desired.x(), q_desired.y(), q_desired.z());
   
   return error;
 }
@@ -72,6 +90,17 @@ void AdmittanceNode::update_admittance_parameters() {
   M_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
   K_diag_ = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
   D_diag_ = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
+  
+  // Log admittance parameters on startup/update
+  RCLCPP_INFO(get_logger(), 
+    "Admittance params - Mass: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
+    p.mass[0], p.mass[1], p.mass[2], p.mass[3], p.mass[4], p.mass[5]);
+  RCLCPP_INFO(get_logger(),
+    "Admittance params - Stiffness: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
+    p.stiffness[0], p.stiffness[1], p.stiffness[2], p.stiffness[3], p.stiffness[4], p.stiffness[5]);
+  RCLCPP_INFO(get_logger(),
+    "Admittance params - Damping: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
+    p.damping[0], p.damping[1], p.damping[2], p.damping[3], p.damping[4], p.damping[5]);
 }
 
 bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
@@ -287,10 +316,17 @@ void AdmittanceNode::limit_to_workspace() {
   }
   
   // Cap velocity magnitude
-  if (auto n = V_tcp_base_commanded_.head<3>().norm(); n > arm_max_vel_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "High velocity: %.3f m/s", n);
-    V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / n);
+  double n_before = V_tcp_base_commanded_.head<3>().norm();
+  if (n_before > arm_max_vel_) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "High velocity: %.3f m/s", n_before);
+    V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / n_before);
   }
+  
+  // Log velocity after limits
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+    "Velocity after limits: [%.3f, %.3f, %.3f] m/s, norm: %.3f (was %.3f)",
+    V_tcp_base_commanded_(0), V_tcp_base_commanded_(1), V_tcp_base_commanded_(2),
+    V_tcp_base_commanded_.head<3>().norm(), n_before);
 }
 
 }  // namespace ur_admittance_controller

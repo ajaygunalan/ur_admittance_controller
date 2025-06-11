@@ -57,12 +57,18 @@ void AdmittanceNode::initialize() {
   if (!checkJointStates()) RCLCPP_ERROR(get_logger(), "Joint states not received - is robot driver running?");
   
   computeForwardKinematics();
-  X_tcp_base_desired_ = X_tcp_base_current_;
+  // Don't overwrite the equilibrium that was set in constructor!
+  // X_tcp_base_desired_ = X_tcp_base_current_;  // REMOVED - This was causing the error growth
   
-  RCLCPP_INFO(get_logger(), "Initial TCP: [%.3f, %.3f, %.3f] - Bumpless transfer enabled",
+  RCLCPP_INFO(get_logger(), "Initial TCP: [%.3f, %.3f, %.3f]",
     X_tcp_base_current_.translation()(0),
     X_tcp_base_current_.translation()(1), 
     X_tcp_base_current_.translation()(2));
+  
+  RCLCPP_INFO(get_logger(), "Equilibrium: [%.3f, %.3f, %.3f]",
+    X_tcp_base_desired_.translation()(0),
+    X_tcp_base_desired_.translation()(1), 
+    X_tcp_base_desired_.translation()(2));
   
   // Create control timer - this replaces the manual while loop
   control_timer_ = create_wall_timer(
@@ -83,6 +89,16 @@ void AdmittanceNode::control_cycle() {
 void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
   Wrench_tcp_base_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
                       msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
+  
+  // Log wrench if non-zero
+  double force_norm = Wrench_tcp_base_.head<3>().norm();
+  double torque_norm = Wrench_tcp_base_.tail<3>().norm();
+  if (force_norm > 0.1 || torque_norm > 0.1) {
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+      "External wrench - Force: %.2f N [%.2f, %.2f, %.2f], Torque: %.2f Nm [%.2f, %.2f, %.2f]",
+      force_norm, Wrench_tcp_base_(0), Wrench_tcp_base_(1), Wrench_tcp_base_(2),
+      torque_norm, Wrench_tcp_base_(3), Wrench_tcp_base_(4), Wrench_tcp_base_(5));
+  }
 }
 
 void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
@@ -130,6 +146,12 @@ void AdmittanceNode::send_commands_to_robot() {
   
   // Cache for next failure recovery
   last_valid_velocities = q_dot_cmd_;
+  
+  // Log joint velocities
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+    "Joint velocities: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] rad/s",
+    q_dot_cmd_[0], q_dot_cmd_[1], q_dot_cmd_[2], 
+    q_dot_cmd_[3], q_dot_cmd_[4], q_dot_cmd_[5]);
   
   // Publish to velocity controller
   velocity_msg_.data = q_dot_cmd_;
