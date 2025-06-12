@@ -24,37 +24,33 @@ cd ~/ur_ws && rosdep install --from-paths src --ignore-src -r -y
 
 
 ```
-colcon build --packages-select ur_simulation_gz
-colcon build --packages-select ur_admittance_controller
+colcon build --packages-select ur_simulation_gz && source install/setup.bash
+```
 
-source install/setup.bash
+```
+colcon build --packages-select ur_admittance_controller && source install/setup.bash
 ```
 
 
-### Simulation Demo
+### Simulation 
+
 ```
 ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
 ```
 
-
 ```
 ros2 run ur_admittance_controller init_robot
-ros2 run ur_admittance_controller verify_poses
 ```
 
-
-
-# Terminal 2: Start wrench filter node (processes raw F/T sensor data)
 ```
-ros2 run ur_admittance_controller wrench_node
+ros2 run ur_admittance_controller wrench_node 
 ```
 
-# Terminal 3: Start admittance controller
 ```
-ros2 run ur_admittance_controller admittance_node
+ros2 run ur_admittance_controller admittance_node --ros-args -p use_sim_time:=true
 ```
 
-# Terminal 4: Apply test force (robot will move)
+```
 ros2 topic pub /wrench_tcp_base_raw geometry_msgs/WrenchStamped \
   "{header: {frame_id: 'base_link'}, wrench: {force: {x: 10.0}}}" --once
 ```
