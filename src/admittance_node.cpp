@@ -5,14 +5,18 @@
 
 namespace ur_admittance_controller {
 
-AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
-: Node("admittance_node", options) {
-  RCLCPP_INFO(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
-  
-  initializeParameters();
-  initializeStateVectors();
-  setupROSInterfaces();
-  setDefaultEquilibrium();
+
+// Helper function to map joint states from JointState message to internal vector
+void AdmittanceNode::map_joint_states(const sensor_msgs::msg::JointState& msg, bool warn_missing) {
+  for (size_t i = 0; i < params_.joints.size(); ++i) {
+    auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
+    if (it != msg.name.end() && 
+        static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
+      q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
+    } else if (warn_missing) {
+      RCLCPP_WARN(get_logger(), "Joint %s not found in joint_states message!", params_.joints[i].c_str());
+    }
+  }
 }
 
 void AdmittanceNode::initializeParameters() {
@@ -49,50 +53,31 @@ void AdmittanceNode::setupROSInterfaces() {
       "/forward_velocity_controller/commands", 10);
 }
 
-void AdmittanceNode::initialize() {
-  if (!load_kinematics()) RCLCPP_ERROR(get_logger(), "Kinematics loading failed");
-  
-  if (!checkJointStates()) RCLCPP_ERROR(get_logger(), "Joint states not received - is robot driver running?");
-  
-  computeForwardKinematics();
-  // Don't overwrite the equilibrium that was set in constructor!
-  // X_tcp_base_desired_ = X_tcp_base_current_;  // REMOVED - This was causing the error growth
-  
-  RCLCPP_INFO(get_logger(), 
-    "Initial TCP: [%.3f, %.3f, %.3f], Equilibrium: [%.3f, %.3f, %.3f]",
-    X_tcp_base_current_.translation()(0), X_tcp_base_current_.translation()(1), X_tcp_base_current_.translation()(2),
-    X_tcp_base_desired_.translation()(0), X_tcp_base_desired_.translation()(1), X_tcp_base_desired_.translation()(2));
-  
-  // Timer removed - using manual spin_some() pattern for proper synchronization
-  // control_timer_ = create_wall_timer(...);  // REMOVED for synchronized control
-  
-  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready at 100Hz - push the robot to move it!");
-}
 
-void AdmittanceNode::control_cycle() {
-  // Safety check: Warn if joint state data is stale (>50ms old)
-  constexpr double STALE_DATA_THRESHOLD = 0.05;  // 5 control cycles
-  auto now = this->get_clock()->now();
-  
-  if (last_joint_state_time_.nanoseconds() > 0 && 
-      (now - last_joint_state_time_).seconds() > STALE_DATA_THRESHOLD) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-      "Joint state data is stale (%.1fms old) - check robot driver",
-      (now - last_joint_state_time_).seconds() * 1000);
+
+// Check if joint states have been received and populate q_current_
+bool AdmittanceNode::checkJointStates() {
+  sensor_msgs::msg::JointState msg;
+  if (!rclcpp::wait_for_message(msg, shared_from_this(), "/joint_states", std::chrono::seconds(10))) {
+    return false;
   }
   
-  computeForwardKinematics();
-  compute_admittance();
-  limit_to_workspace();
-  send_commands_to_robot();
+  RCLCPP_INFO(get_logger(), "Processing joint states - received %zu joints", msg.name.size());
+  
+  map_joint_states(msg, true);  // true = warn about missing joints
+  joint_states_updated_ = true;
+  
+  RCLCPP_INFO(get_logger(), "Initial joint positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+    q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
+  
+  return true;
 }
+
 
 void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
   Wrench_tcp_base_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
                       msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
   
-  // Track data freshness
-  last_wrench_time_ = msg->header.stamp;
   
   // Log wrench if non-zero
   double force_norm = Wrench_tcp_base_.head<3>().norm();
@@ -108,8 +93,6 @@ void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::Co
 void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
   RCLCPP_INFO_ONCE(get_logger(), "Joint states received - robot is online");
   
-  // Track data freshness
-  last_joint_state_time_ = msg->header.stamp;
   
   map_joint_states(*msg);
   joint_states_updated_ = true;
@@ -126,6 +109,41 @@ void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped
   
   RCLCPP_DEBUG(get_logger(), "Desired position updated to [%.3f, %.3f, %.3f]",
                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
+}
+
+// Constructor: init params, state vectors, ROS I/O, and default equilibrium pose
+AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
+: Node("admittance_node", options) {
+  RCLCPP_INFO(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
+  
+  initializeParameters();
+  initializeStateVectors();
+  setupROSInterfaces();
+  setDefaultEquilibrium();
+}
+
+void AdmittanceNode::initialize() {
+  if (!load_kinematics()) {
+    RCLCPP_ERROR(get_logger(), "Kinematics loading failed");
+  }
+  
+  if (!checkJointStates()) {
+    RCLCPP_ERROR(get_logger(), "Joint states not received - is robot driver running?");
+  }
+  
+  RCLCPP_INFO(get_logger(), 
+    "Kinematics ready, equilibrium at: [%.3f, %.3f, %.3f]",
+    X_tcp_base_desired_.translation()(0), X_tcp_base_desired_.translation()(1), X_tcp_base_desired_.translation()(2));
+  
+  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready at 100Hz - push the robot to move it!");
+}
+
+
+void AdmittanceNode::control_cycle() {
+  get_X_tcp_base_current_();
+  compute_admittance();
+  limit_to_workspace();
+  send_commands_to_robot();
 }
 
 // Send velocity commands to robot
@@ -146,7 +164,7 @@ void AdmittanceNode::send_commands_to_robot() {
   last_valid_velocities = q_dot_cmd_;
   
   // Log joint velocities
-  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
     "Joint velocities: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] rad/s",
     q_dot_cmd_[0], q_dot_cmd_[1], q_dot_cmd_[2], 
     q_dot_cmd_[3], q_dot_cmd_[4], q_dot_cmd_[5]);
@@ -156,70 +174,29 @@ void AdmittanceNode::send_commands_to_robot() {
   velocity_pub_->publish(velocity_msg_);
 }
 
-// Check if joint states have been received and populate q_current_
-bool AdmittanceNode::checkJointStates() {
-  sensor_msgs::msg::JointState msg;
-  if (!rclcpp::wait_for_message(msg, shared_from_this(), "/joint_states", std::chrono::seconds(10))) {
-    return false;
-  }
-  
-  RCLCPP_INFO(get_logger(), "Processing joint states - received %zu joints", msg.name.size());
-  
-  map_joint_states(msg, true);  // true = warn about missing joints
-  joint_states_updated_ = true;
-  
-  RCLCPP_INFO(get_logger(), "Initial joint positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-    q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
-  
-  return true;
-}
-
-// Helper function to map joint states from JointState message to internal vector
-void AdmittanceNode::map_joint_states(const sensor_msgs::msg::JointState& msg, bool warn_missing) {
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
-    if (it != msg.name.end() && 
-        static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
-      q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
-    } else if (warn_missing) {
-      RCLCPP_WARN(get_logger(), "Joint %s not found in joint_states message!", params_.joints[i].c_str());
-    }
-  }
-}
-
 }  // namespace ur_admittance_controller
 
-// How It Works Now:
-// 1. main() creates node and calls initialize()
-// 2. Manual spin_some() loop processes all sensor callbacks
-// 3. control_cycle() runs immediately after with synchronized data
-// 4. This ensures temporal alignment of wrench and joint state data
-// The control loop now runs at 100Hz with guaranteed sensor synchronization!
+
+// 1. Constructor →  Non-blocking
+// 2. initialize → blocking operations (load kinematics, wait for joints)
+// 3. spin_some() → get F/T, joint position, desired pose via callbacks
+// 4. control_cycle() → compute admittance and send  joint vel to the robot
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
   node->initialize();
   
-  // Create single-threaded executor for deterministic callback processing
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
   
-  // Control loop rate
   rclcpp::Rate loop_rate(100);  // 100Hz
   
   RCLCPP_INFO(node->get_logger(), "Starting synchronized admittance control loop at 100Hz...");
   
-  // Manual control loop with synchronized sensor processing
   while (rclcpp::ok()) {
-    // Process ALL pending callbacks (wrench, joint_states, parameters)
-    // This ensures all sensor data is updated before control computation
-    executor.spin_some();
-    
-    // Run control cycle with freshest synchronized data
-    node->control_cycle();
-    
-    // Sleep to maintain 100Hz rate
+    executor.spin_some();     
+    node->control_cycle();    
     loop_rate.sleep();
   }
   

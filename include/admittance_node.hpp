@@ -121,9 +121,6 @@ class AdmittanceNode : public rclcpp::Node {
   // Flag to ensure we compute FK after joint states are updated
   bool joint_states_updated_ = false;
   
-  // Data freshness tracking for synchronization monitoring
-  rclcpp::Time last_wrench_time_;
-  rclcpp::Time last_joint_state_time_;
   
   // Cached values to avoid repeated computations in control loop
   size_t num_joints_ = 0;  // Number of joints in kinematic chain
@@ -143,7 +140,7 @@ class AdmittanceNode : public rclcpp::Node {
  private:
   
   // Compute forward kinematics from joint positions (industry standard naming)
-  void computeForwardKinematics();
+  void get_X_tcp_base_current_();
 };
 
 }  // namespace ur_admittance_controller
