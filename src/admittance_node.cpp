@@ -70,16 +70,9 @@ void AdmittanceNode::initialize() {
 }
 
 void AdmittanceNode::control_cycle() {
-  // Safety check: Warn if sensor data is stale (>50ms old)
+  // Safety check: Warn if joint state data is stale (>50ms old)
   constexpr double STALE_DATA_THRESHOLD = 0.05;  // 5 control cycles
   auto now = this->get_clock()->now();
-  
-  if (last_wrench_time_.nanoseconds() > 0 && 
-      (now - last_wrench_time_).seconds() > STALE_DATA_THRESHOLD) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-      "F/T sensor data is stale (%.1fms old) - check sensor connection",
-      (now - last_wrench_time_).seconds() * 1000);
-  }
   
   if (last_joint_state_time_.nanoseconds() > 0 && 
       (now - last_joint_state_time_).seconds() > STALE_DATA_THRESHOLD) {
