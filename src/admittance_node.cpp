@@ -148,28 +148,29 @@ void AdmittanceNode::control_cycle() {
 
 // Send velocity commands to robot
 void AdmittanceNode::send_commands_to_robot() {
+  // Static buffer to remember last valid velocities for safety fallback
   static std::vector<double> last_valid_velocities(params_.joints.size(), 0.0);
   
-  // Fallback to graceful deceleration on IK failure
+  // Convert Cartesian velocity to joint velocities via inverse kinematics
   if (!compute_joint_velocities(V_tcp_base_commanded_)) {
+    // IK failure: smoothly decelerate to avoid sudden stops that could damage robot
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "IK velocity solver failed, using gradual deceleration");
-    constexpr double decay_factor = 0.8;  // 20% speed reduction per cycle
+                         "IK solver failed - applying 20%% deceleration per cycle");
+    constexpr double DECAY_RATE = 0.8;  // Exponential decay for smooth stopping
     std::transform(last_valid_velocities.begin(), last_valid_velocities.end(), 
                    q_dot_cmd_.begin(), 
-                   [decay_factor](double v) { return v * decay_factor; });
+                   [DECAY_RATE](double v) { return v * DECAY_RATE; });
   }
   
-  // Cache for next failure recovery
+  // Store current velocities for potential future IK failure recovery
   last_valid_velocities = q_dot_cmd_;
   
-  // Log joint velocities
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-    "Joint velocities: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] rad/s",
+    "Joint vel cmd: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] rad/s",
     q_dot_cmd_[0], q_dot_cmd_[1], q_dot_cmd_[2], 
     q_dot_cmd_[3], q_dot_cmd_[4], q_dot_cmd_[5]);
   
-  // Publish to velocity controller
+  // Send velocity commands to ros2_control hardware interface
   velocity_msg_.data = q_dot_cmd_;
   velocity_pub_->publish(velocity_msg_);
 }

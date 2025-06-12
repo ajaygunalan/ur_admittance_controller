@@ -101,64 +101,74 @@ Vector6d AdmittanceNode::compute_pose_error() {
 }
 
 void AdmittanceNode::get_X_tcp_base_current_() {
+  // Only compute if we have fresh joint data from callbacks
   if (!joint_states_updated_) {
     return;
   }
   
-  // Copy joints to KDL solver
+  // Transfer joint positions to KDL format for FK computation
   for (size_t i = 0; i < num_joints_; ++i) {
     q_kdl_(i) = q_current_[i];
   }
   
-  // Debug logging
-  RCLCPP_INFO_ONCE(get_logger(), "FK Debug - joints: %zu, chain: %u, positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-      num_joints_, kdl_chain_.getNrOfJoints(), 
-      q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
+  // Log initial joint configuration once for debugging
+  RCLCPP_INFO_ONCE(get_logger(), "FK solver initialized - %zu joints: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+      num_joints_, q_current_[0], q_current_[1], q_current_[2], 
+      q_current_[3], q_current_[4], q_current_[5]);
   
-  // Solve forward kinematics to wrist_3_link
+  // Step 1: Compute FK from base_link to wrist_3_link (last movable joint)
   KDL::Frame wrist3_frame;
   if (fk_pos_solver_->JntToCart(q_kdl_, wrist3_frame) < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed");
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "Forward kinematics solver failed");
     return;
   }
   
-  // Apply fixed transform to get tool frame
+  // Step 2: Apply fixed tool offset to get actual TCP position
   KDL::Frame tool_frame = wrist3_frame * wrist3_to_tool_transform_;
   
-  // Update TCP pose
+  // Convert KDL frame to Eigen format for admittance calculations
   X_tcp_base_current_.translation() = Eigen::Vector3d(tool_frame.p.x(), tool_frame.p.y(), tool_frame.p.z());
-  double x, y, z, w; tool_frame.M.GetQuaternion(x, y, z, w);
+  
+  // Extract quaternion and convert to rotation matrix
+  double x, y, z, w;
+  tool_frame.M.GetQuaternion(x, y, z, w);
   X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
   
+  // Mark that we've consumed this joint update
   joint_states_updated_ = false;
 }
 
 void AdmittanceNode::compute_admittance() {
+  // Calculate position/orientation error between current and desired TCP pose
   Vector6d error = compute_pose_error();
+  
+  // Scale external wrench by admittance ratio (0-1) for safety/tuning
   Vector6d scaled_wrench = admittance_ratio_ * Wrench_tcp_base_;
   
+  // Core admittance equation: M*a + D*v + K*x = F_ext
+  // Solving for acceleration: a = M^(-1) * (F_ext - D*v - K*x)
   Vector6d acceleration = M_inverse_diag_.array() *
       (scaled_wrench.array() - D_diag_.array() * V_tcp_base_commanded_.array() -
        K_diag_.array() * error.array());
   
-  // Log acceleration before limiting
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-    "Acceleration: [%.3f, %.3f, %.3f] m/s², norm: %.3f",
+    "Admittance accel: [%.3f, %.3f, %.3f] m/s², norm: %.3f",
     acceleration(0), acceleration(1), acceleration(2), acceleration.head<3>().norm());
   
+  // Safety limit: cap translational acceleration to prevent violent motions
   double acc_norm = acceleration.head<3>().norm();
   if (acc_norm > arm_max_acc_) {
     RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1000,
-                                "Admittance generates high arm acceleration! norm: " << acc_norm);
+                                "Capping high acceleration: " << acc_norm << " -> " << arm_max_acc_ << " m/s²");
     acceleration.head<3>() *= (arm_max_acc_ / acc_norm);
   }
   
+  // Integrate acceleration to get velocity command (simple Euler integration)
   const double dt = control_period_.seconds();
   V_tcp_base_commanded_ += acceleration * dt;
   
-  // Log commanded velocity
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-    "Commanded velocity: [%.3f, %.3f, %.3f] m/s, norm: %.3f",
+    "TCP velocity cmd: [%.3f, %.3f, %.3f] m/s, norm: %.3f",
     V_tcp_base_commanded_(0), V_tcp_base_commanded_(1), V_tcp_base_commanded_(2),
     V_tcp_base_commanded_.head<3>().norm());
 }
@@ -190,35 +200,35 @@ bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
 
 // Apply workspace limits to Cartesian motion
 void AdmittanceNode::limit_to_workspace() {
-  static constexpr double BUFFER = 0.01;  // Safety margin before warnings
+  static constexpr double BUFFER = 0.01;  // 10mm warning zone beyond hard limits
   const auto& pos = X_tcp_base_current_.translation();
   
-  // Enforce per-axis workspace boundaries
+  // Check each axis (X,Y,Z) against configured workspace boundaries
   for (size_t i = 0; i < 3; ++i) {
     const double min = workspace_limits_[i * 2];
     const double max = workspace_limits_[i * 2 + 1];
     const bool at_min = pos[i] <= min;
     const bool at_max = pos[i] >= max;
     
-    // Warn if outside buffer zone
+    // Issue warning if we've exceeded the soft buffer zone
     if ((at_min && pos[i] < min - BUFFER) || (at_max && pos[i] > max + BUFFER)) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                           "Out of workspace: %c = %.3f not in [%.3f, %.3f]",
-                           "xyz"[i], pos[i], min, max);
+                           "TCP outside workspace: %c-axis at %.3f m (limits: [%.3f, %.3f])",
+                           "XYZ"[i], pos[i], min, max);
     }
     
-    // Prevent motion beyond limits
-    if (at_min) V_tcp_base_commanded_[i] = std::max(0.0, V_tcp_base_commanded_[i]);
-    if (at_max) V_tcp_base_commanded_[i] = std::min(0.0, V_tcp_base_commanded_[i]);
+    // Hard limit enforcement: only allow motion away from boundary
+    if (at_min) V_tcp_base_commanded_[i] = std::max(0.0, V_tcp_base_commanded_[i]);  // Block negative velocity
+    if (at_max) V_tcp_base_commanded_[i] = std::min(0.0, V_tcp_base_commanded_[i]);  // Block positive velocity
   }
   
-  // Cap velocity magnitude
-  double n_before = V_tcp_base_commanded_.head<3>().norm();
-  if (n_before > arm_max_vel_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "High velocity: %.3f m/s", n_before);
-    V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / n_before);
+  // Global velocity limit to prevent dangerous speeds
+  double velocity_norm = V_tcp_base_commanded_.head<3>().norm();
+  if (velocity_norm > arm_max_vel_) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
+                         "Capping TCP velocity: %.3f -> %.3f m/s", velocity_norm, arm_max_vel_);
+    V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / velocity_norm);
   }
-  
 }
 
 // Initialize KDL kinematics from URDF
