@@ -18,7 +18,7 @@ ur_admittance_controller:
 
     stiffness:
       type: double_array
-      default_value: [10.0, 20.0, 10.0, 10.0, 10.0, 10.0]
+      default_value: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
       description: "Position stiffness [X,Y,Z,Rx,Ry,Rz] in [N/m,N/m,N/m,Nm/rad,Nm/rad,Nm/rad]"
       validation:
         fixed_size<>: [6]
@@ -26,7 +26,7 @@ ur_admittance_controller:
 
     damping:
       type: double_array
-      default_value: [12.0, 12.0, 12.0, 10.0, 10.0, 10.0]
+      default_value: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
       description: "Explicit damping values [X,Y,Z,Rx,Ry,Rz] in [Ns/m,Ns/m,Ns/m,Nms/rad,Nms/rad,Nms/rad]"
       validation:
         fixed_size<>: [6]
