@@ -34,7 +34,8 @@ void AdmittanceNode::initializeStateVectors() {
 
 void AdmittanceNode::setDefaultEquilibrium() {
   declare_parameter("equilibrium.position", std::vector<double>{0.49, 0.13, 0.49});
-  declare_parameter("equilibrium.orientation", std::vector<double>{-0.00, -0.71, 0.71, 0.00});
+  // Using positive-w convention for quaternion (w,x,y,z)
+  declare_parameter("equilibrium.orientation", std::vector<double>{0.00, 0.71, -0.71, 0.00});
   
   auto eq_pos = get_parameter("equilibrium.position").as_double_array();
   auto eq_ori = get_parameter("equilibrium.orientation").as_double_array();
@@ -54,7 +55,7 @@ void AdmittanceNode::update_admittance_parameters() {
   D_diag_ = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
   
   // Log admittance parameters on startup/update
-  RCLCPP_INFO(get_logger(), 
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
     "Admittance params - M: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f], "
     "K: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f], "
     "D: [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
@@ -155,6 +156,15 @@ void AdmittanceNode::compute_admittance() {
     acceleration.head<3>() *= (arm_max_acc_ / acc_norm);
   }
   
+  // Safety limit: cap rotational acceleration to prevent violent rotations
+  double rot_acc_norm = acceleration.tail<3>().norm();
+  double arm_max_rot_acc_ = 2.0;  // rad/s² - conservative limit for safety
+  if (rot_acc_norm > arm_max_rot_acc_) {
+    RCLCPP_DEBUG_STREAM_THROTTLE(get_logger(), *get_clock(), 1000,
+                                 "Capping high rotational acceleration: " << rot_acc_norm << " -> " << arm_max_rot_acc_ << " rad/s²");
+    acceleration.tail<3>() *= (arm_max_rot_acc_ / rot_acc_norm);
+  }
+  
   // Integrate acceleration to get velocity command (simple Euler integration)
   const double dt = control_period_.seconds();
   V_tcp_base_commanded_ += acceleration * dt;
@@ -168,16 +178,33 @@ void AdmittanceNode::compute_admittance() {
 bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
   // q_kdl_ already contains current joint angles from get_X_tcp_base_current_()
   
-  // Pack Cartesian velocity (tool frame)
-  KDL::Twist twist_tool;
-  twist_tool.vel = KDL::Vector(cart_vel(0), cart_vel(1), cart_vel(2));
-  twist_tool.rot = KDL::Vector(cart_vel(3), cart_vel(4), cart_vel(5));
+  // cart_vel is V_tcp_base_commanded_ - TCP velocity expressed in base frame
+  // Since our KDL chain goes to wrist_3, we need wrist_3 velocity in base frame
   
-  // Transform velocity from tool frame to wrist_3 frame using KDL's built-in adjoint
-  KDL::Twist twist_wrist3 = wrist3_to_tool_transform_ * twist_tool;
+  // First, get current TCP pose to compute the transform from wrist_3 to TCP
+  KDL::Frame wrist3_frame;
+  if (fk_pos_solver_->JntToCart(q_kdl_, wrist3_frame) < 0) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed in IK computation");
+    return false;
+  }
   
-  // Solve inverse kinematics for wrist_3 velocity
-  if (ik_vel_solver_->CartToJnt(q_kdl_, twist_wrist3, v_kdl_) < 0) {
+  // Current TCP frame in base
+  KDL::Frame tcp_frame = wrist3_frame * wrist3_to_tool_transform_;
+  
+  // Pack TCP velocity (base frame)
+  KDL::Twist twist_tcp_base;
+  twist_tcp_base.vel = KDL::Vector(cart_vel(0), cart_vel(1), cart_vel(2));
+  twist_tcp_base.rot = KDL::Vector(cart_vel(3), cart_vel(4), cart_vel(5));
+  
+  // Transform TCP velocity to wrist_3 velocity (both in base frame)
+  // V_wrist3 = V_tcp - [w_tcp x (p_tcp - p_wrist3)]
+  KDL::Vector p_diff = tcp_frame.p - wrist3_frame.p;
+  KDL::Twist twist_wrist3_base;
+  twist_wrist3_base.vel = twist_tcp_base.vel - twist_tcp_base.rot * p_diff;
+  twist_wrist3_base.rot = twist_tcp_base.rot;
+  
+  // Solve inverse kinematics for wrist_3 velocity (in base frame)
+  if (ik_vel_solver_->CartToJnt(q_kdl_, twist_wrist3_base, v_kdl_) < 0) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK failed");
     return false;
   }
@@ -211,11 +238,20 @@ void AdmittanceNode::limit_to_workspace() {
                           "Capping TCP velocity: %.3f -> %.3f m/s", velocity_norm, arm_max_vel_);
     V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / velocity_norm);
   }
+  
+  // Global rotational velocity limit to prevent dangerous rotations
+  double rot_velocity_norm = V_tcp_base_commanded_.tail<3>().norm();
+  double arm_max_rot_vel_ = 3.0;  // rad/s - conservative limit for safety
+  if (rot_velocity_norm > arm_max_rot_vel_) {
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000, 
+                          "Capping TCP rotational velocity: %.3f -> %.3f rad/s", rot_velocity_norm, arm_max_rot_vel_);
+    V_tcp_base_commanded_.tail<3>() *= (arm_max_rot_vel_ / rot_velocity_norm);
+  }
 }
 
 // Initialize KDL kinematics from URDF
 bool AdmittanceNode::load_kinematics() {
-  RCLCPP_INFO(get_logger(), "Loading robot kinematics from URDF");
+  RCLCPP_INFO_ONCE(get_logger(), "Loading robot kinematics from URDF");
   
   // Step 1: Get URDF from robot_state_publisher
   auto parameters_client = std::make_shared<rclcpp::SyncParametersClient>(
@@ -256,7 +292,7 @@ bool AdmittanceNode::load_kinematics() {
   KDL::JntArray zero_joints(tool_chain.getNrOfJoints());  // 0 joints for fixed transform
   tool_fk.JntToCart(zero_joints, wrist3_to_tool_transform_);
   
-  RCLCPP_INFO(get_logger(), "Tool offset: [%.3f, %.3f, %.3f] m",
+  RCLCPP_INFO_ONCE(get_logger(), "Tool offset: [%.3f, %.3f, %.3f] m",
               wrist3_to_tool_transform_.p.x(), 
               wrist3_to_tool_transform_.p.y(), 
               wrist3_to_tool_transform_.p.z());
@@ -278,7 +314,7 @@ bool AdmittanceNode::load_kinematics() {
   q_kdl_.resize(num_joints_);
   v_kdl_.resize(num_joints_);
 
-  RCLCPP_INFO(get_logger(), "Kinematics ready: %zu joints, %s -> %s",
+  RCLCPP_INFO_ONCE(get_logger(), "Kinematics ready: %zu joints, %s -> %s",
               num_joints_, params_.base_link.c_str(), params_.tip_link.c_str());
   return true;
 }

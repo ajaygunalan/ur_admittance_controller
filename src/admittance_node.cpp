@@ -100,7 +100,7 @@ void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped
 // Constructor: init params, state vectors, ROS I/O, and default equilibrium pose
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 : Node("admittance_node", options) {
-  RCLCPP_INFO(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
+  RCLCPP_INFO_ONCE(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
   
   initializeParameters();
   initializeStateVectors();
@@ -114,11 +114,11 @@ void AdmittanceNode::initialize() {
     return;  // Early return to avoid running with bad kinematics
   }
   
-  RCLCPP_INFO(get_logger(), 
+  RCLCPP_INFO_ONCE(get_logger(), 
     "Kinematics ready, equilibrium at: [%.3f, %.3f, %.3f]",
     X_tcp_base_desired_.translation()(0), X_tcp_base_desired_.translation()(1), X_tcp_base_desired_.translation()(2));
   
-  RCLCPP_INFO(get_logger(), "UR Admittance Controller ready at 100Hz - push the robot to move it!");
+  RCLCPP_INFO_ONCE(get_logger(), "UR Admittance Controller ready at 100Hz - push the robot to move it!");
 }
 
 
@@ -167,7 +167,7 @@ int main(int argc, char* argv[]) {
   
   rclcpp::Rate loop_rate(100);  // 100Hz
   
-  RCLCPP_INFO(node->get_logger(), "Starting synchronized admittance control loop at 100Hz...");
+  RCLCPP_INFO_ONCE(node->get_logger(), "Starting synchronized admittance control loop at 100Hz...");
   
   while (rclcpp::ok()) {
     executor.spin_some();     

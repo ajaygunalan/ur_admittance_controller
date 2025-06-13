@@ -12,6 +12,14 @@ def generate_launch_description():
     # Get package directory
     pkg_dir = get_package_share_directory('ur_admittance_controller')
     
+    # Navigate up 4 levels to workspace root, then to logs/
+    # From: install/ur_admittance_controller/share/ur_admittance_controller
+    # To: ros2_ws/logs/
+    log_dir = os.path.join(pkg_dir, '..', '..', '..', '..', 'logs')
+    log_dir = os.path.normpath(log_dir)  # Clean up the path
+    os.makedirs(log_dir, exist_ok=True)
+    os.environ['ROS_LOG_DIR'] = log_dir
+    
     # Declare launch arguments
     declared_arguments = []
     
