@@ -118,10 +118,6 @@ class AdmittanceNode : public rclcpp::Node {
   // Forward kinematics solver (ROS1-style direct computation)
   std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_pos_solver_;
   
-  // Flag to ensure we compute FK after joint states are updated
-  bool joint_states_updated_ = false;
-  
-  
   // Cached values to avoid repeated computations in control loop
   size_t num_joints_ = 0;  // Number of joints in kinematic chain
   KDL::JntArray q_kdl_;    // Pre-allocated KDL joint positions

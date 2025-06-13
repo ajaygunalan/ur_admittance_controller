@@ -1,20 +1,27 @@
 #include "admittance_node.hpp"
 #include <chrono>
 #include <thread>
+#include <unordered_map>
 #include <rclcpp/wait_for_message.hpp>
 
 namespace ur_admittance_controller {
 
 
 // Helper function to map joint states from JointState message to internal vector
-void AdmittanceNode::map_joint_states(const sensor_msgs::msg::JointState& msg, bool warn_missing) {
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    auto it = std::find(msg.name.begin(), msg.name.end(), params_.joints[i]);
-    if (it != msg.name.end() && 
-        static_cast<size_t>(std::distance(msg.name.begin(), it)) < msg.position.size()) {
-      q_current_[i] = msg.position[std::distance(msg.name.begin(), it)];
-    } else if (warn_missing) {
-      RCLCPP_WARN(get_logger(), "Joint %s not found in joint_states message!", params_.joints[i].c_str());
+void AdmittanceNode::map_joint_states(const sensor_msgs::msg::JointState& msg, bool) {
+  // One-time setup of joint mapping
+  static const auto joint_map = [this]() {
+    std::unordered_map<std::string, size_t> map;
+    for (size_t i = 0; i < params_.joints.size(); ++i) {
+      map[params_.joints[i]] = i;
+    }
+    return map;
+  }();
+  
+  // Direct mapping
+  for (size_t i = 0; i < msg.name.size() && i < msg.position.size(); ++i) {
+    if (auto it = joint_map.find(msg.name[i]); it != joint_map.end()) {
+      q_current_[it->second] = msg.position[i];
     }
   }
 }
@@ -42,7 +49,7 @@ void AdmittanceNode::setupROSInterfaces() {
       std::bind(&AdmittanceNode::wrench_callback, this, std::placeholders::_1));
       
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
-      "/joint_states", 10,
+      "/joint_states", 1,  // Queue size = 1 for always fresh data
       std::bind(&AdmittanceNode::joint_state_callback, this, std::placeholders::_1));
       
   desired_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -64,8 +71,7 @@ bool AdmittanceNode::checkJointStates() {
   
   RCLCPP_INFO(get_logger(), "Processing joint states - received %zu joints", msg.name.size());
   
-  map_joint_states(msg, true);  // true = warn about missing joints
-  joint_states_updated_ = true;
+  map_joint_states(msg);
   
   RCLCPP_INFO(get_logger(), "Initial joint positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
     q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
@@ -93,9 +99,7 @@ void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::Co
 void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
   RCLCPP_INFO_ONCE(get_logger(), "Joint states received - robot is online");
   
-  
   map_joint_states(*msg);
-  joint_states_updated_ = true;
 }
 
 // Handle desired pose updates from ROS2 topic

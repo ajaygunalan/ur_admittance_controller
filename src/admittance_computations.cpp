@@ -101,11 +101,6 @@ Vector6d AdmittanceNode::compute_pose_error() {
 }
 
 void AdmittanceNode::get_X_tcp_base_current_() {
-  // Only compute if we have fresh joint data from callbacks
-  if (!joint_states_updated_) {
-    return;
-  }
-  
   // Transfer joint positions to KDL format for FK computation
   for (size_t i = 0; i < num_joints_; ++i) {
     q_kdl_(i) = q_current_[i];
@@ -133,9 +128,6 @@ void AdmittanceNode::get_X_tcp_base_current_() {
   double x, y, z, w;
   tool_frame.M.GetQuaternion(x, y, z, w);
   X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
-  
-  // Mark that we've consumed this joint update
-  joint_states_updated_ = false;
 }
 
 void AdmittanceNode::compute_admittance() {
