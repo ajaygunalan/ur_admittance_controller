@@ -2,7 +2,6 @@
 #include <chrono>
 #include <thread>
 #include <unordered_map>
-#include <rclcpp/wait_for_message.hpp>
 
 namespace ur_admittance_controller {
 
@@ -62,23 +61,6 @@ void AdmittanceNode::setupROSInterfaces() {
 
 
 
-// Check if joint states have been received and populate q_current_
-bool AdmittanceNode::checkJointStates() {
-  sensor_msgs::msg::JointState msg;
-  if (!rclcpp::wait_for_message(msg, shared_from_this(), "/joint_states", std::chrono::seconds(10))) {
-    return false;
-  }
-  
-  RCLCPP_INFO(get_logger(), "Processing joint states - received %zu joints", msg.name.size());
-  
-  map_joint_states(msg);
-  
-  RCLCPP_INFO(get_logger(), "Initial joint positions: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-    q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
-  
-  return true;
-}
-
 
 void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
   Wrench_tcp_base_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
@@ -129,10 +111,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 void AdmittanceNode::initialize() {
   if (!load_kinematics()) {
     RCLCPP_ERROR(get_logger(), "Kinematics loading failed");
-  }
-  
-  if (!checkJointStates()) {
-    RCLCPP_ERROR(get_logger(), "Joint states not received - is robot driver running?");
+    return;  // Early return to avoid running with bad kinematics
   }
   
   RCLCPP_INFO(get_logger(), 
@@ -152,22 +131,13 @@ void AdmittanceNode::control_cycle() {
 
 // Send velocity commands to robot
 void AdmittanceNode::send_commands_to_robot() {
-  // Static buffer to remember last valid velocities for safety fallback
-  static std::vector<double> last_valid_velocities(params_.joints.size(), 0.0);
-  
   // Convert Cartesian velocity to joint velocities via inverse kinematics
   if (!compute_joint_velocities(V_tcp_base_commanded_)) {
-    // IK failure: smoothly decelerate to avoid sudden stops that could damage robot
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                         "IK solver failed - applying 20%% deceleration per cycle");
-    constexpr double DECAY_RATE = 0.8;  // Exponential decay for smooth stopping
-    std::transform(last_valid_velocities.begin(), last_valid_velocities.end(), 
-                   q_dot_cmd_.begin(), 
-                   [DECAY_RATE](double v) { return v * DECAY_RATE; });
+    // Industry standard: immediate stop on IK failure
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, 
+                          "IK solver failed - executing safety stop");
+    std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
   }
-  
-  // Store current velocities for potential future IK failure recovery
-  last_valid_velocities = q_dot_cmd_;
   
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
     "Joint vel cmd: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] rad/s",

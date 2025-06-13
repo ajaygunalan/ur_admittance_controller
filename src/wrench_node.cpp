@@ -14,15 +14,15 @@ namespace ur_admittance_controller {
 class WrenchNode : public rclcpp::Node {
 public:
   WrenchNode() : Node("wrench_node"),
-    force_bias_initialized_(false), force_bias_(Vector6d::Zero()),
-    filtered_wrench_(Vector6d::Zero()), tf_ready_(false), first_msg_(true),
+    force_bias_initialized_(false), tf_ready_(false), first_msg_(true),
+    force_bias_(Vector6d::Zero()), filtered_wrench_(Vector6d::Zero()),
     tf_buffer_(std::make_unique<tf2_ros::Buffer>(this->get_clock())),
     tf_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this, true))
   {
-    // Parameters
-    filter_alpha_ = this->declare_parameter("filter_coefficient", 0.8);
-    min_threshold_ = this->declare_parameter("min_motion_threshold", 1.5);
-    auto_bias_ = this->declare_parameter("auto_bias_on_start", true);
+    // Hardcoded values - no need for runtime changes
+    filter_alpha_ = 0.8;      // EMA filter coefficient
+    min_threshold_ = 1.5;     // Minimum force/torque threshold [N/Nm]
+    auto_bias_ = true;        // Auto remove bias on startup
     
     auto sensor_qos = rclcpp::SensorDataQoS();
     
@@ -45,8 +45,7 @@ public:
         response->message = "Force bias will be reset on next sensor reading";
       });
     
-    RCLCPP_INFO(this->get_logger(), "Started - Filter: %.2f, Threshold: %.2f N/Nm", 
-                filter_alpha_, min_threshold_);
+    RCLCPP_INFO(this->get_logger(), "Started - Filter: 0.8, Threshold: 1.5 N/Nm");
     
     // TF availability check timer
     tf_init_timer_ = this->create_wall_timer(std::chrono::milliseconds(100), [this]() {
@@ -75,8 +74,8 @@ private:
       raw_wrench.tail<3>() = T.rotation() * wrench_tool.tail<3>() + 
                              T.translation().cross(raw_wrench.head<3>());
     } catch (const tf2::TransformException& ex) {
-      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                           "TF failed: %s", ex.what());
+      RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                            "TF transform failed: %s", ex.what());
       return;
     }
     

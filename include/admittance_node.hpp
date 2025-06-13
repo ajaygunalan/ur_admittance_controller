@@ -59,8 +59,6 @@ class AdmittanceNode : public rclcpp::Node {
   void setupROSInterfaces();
   void setDefaultEquilibrium();
   
-  // Initialization sequence methods
-  bool checkJointStates();
   
   // Core admittance control algorithms
   void compute_admittance();

@@ -150,8 +150,8 @@ void AdmittanceNode::compute_admittance() {
   // Safety limit: cap translational acceleration to prevent violent motions
   double acc_norm = acceleration.head<3>().norm();
   if (acc_norm > arm_max_acc_) {
-    RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 1000,
-                                "Capping high acceleration: " << acc_norm << " -> " << arm_max_acc_ << " m/s²");
+    RCLCPP_DEBUG_STREAM_THROTTLE(get_logger(), *get_clock(), 1000,
+                                 "Capping high acceleration: " << acc_norm << " -> " << arm_max_acc_ << " m/s²");
     acceleration.head<3>() *= (arm_max_acc_ / acc_norm);
   }
   
@@ -192,33 +192,23 @@ bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
 
 // Apply workspace limits to Cartesian motion
 void AdmittanceNode::limit_to_workspace() {
-  static constexpr double BUFFER = 0.01;  // 10mm warning zone beyond hard limits
   const auto& pos = X_tcp_base_current_.translation();
   
   // Check each axis (X,Y,Z) against configured workspace boundaries
   for (size_t i = 0; i < 3; ++i) {
     const double min = workspace_limits_[i * 2];
     const double max = workspace_limits_[i * 2 + 1];
-    const bool at_min = pos[i] <= min;
-    const bool at_max = pos[i] >= max;
-    
-    // Issue warning if we've exceeded the soft buffer zone
-    if ((at_min && pos[i] < min - BUFFER) || (at_max && pos[i] > max + BUFFER)) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                           "TCP outside workspace: %c-axis at %.3f m (limits: [%.3f, %.3f])",
-                           "XYZ"[i], pos[i], min, max);
-    }
     
     // Hard limit enforcement: only allow motion away from boundary
-    if (at_min) V_tcp_base_commanded_[i] = std::max(0.0, V_tcp_base_commanded_[i]);  // Block negative velocity
-    if (at_max) V_tcp_base_commanded_[i] = std::min(0.0, V_tcp_base_commanded_[i]);  // Block positive velocity
+    if (pos[i] <= min) V_tcp_base_commanded_[i] = std::max(0.0, V_tcp_base_commanded_[i]);  // Block negative velocity
+    if (pos[i] >= max) V_tcp_base_commanded_[i] = std::min(0.0, V_tcp_base_commanded_[i]);  // Block positive velocity
   }
   
   // Global velocity limit to prevent dangerous speeds
   double velocity_norm = V_tcp_base_commanded_.head<3>().norm();
   if (velocity_norm > arm_max_vel_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
-                         "Capping TCP velocity: %.3f -> %.3f m/s", velocity_norm, arm_max_vel_);
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000, 
+                          "Capping TCP velocity: %.3f -> %.3f m/s", velocity_norm, arm_max_vel_);
     V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / velocity_norm);
   }
 }
