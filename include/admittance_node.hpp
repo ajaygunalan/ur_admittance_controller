@@ -62,12 +62,11 @@ class AdmittanceNode : public rclcpp::Node {
   
   // Core admittance control algorithms
   void compute_admittance();
-  Vector6d compute_pose_error();
+  void compute_pose_error();
   void update_admittance_parameters();
   
   // Coordinate transformations and motion processing
-  bool compute_joint_velocities(const Vector6d& cartesian_velocity);
-  void send_commands_to_robot();
+  void compute_and_pub_joint_velocities();
   
   // Safety validation and limits
   void limit_to_workspace();
@@ -99,6 +98,7 @@ class AdmittanceNode : public rclcpp::Node {
   // Pose representations for admittance control
   Eigen::Isometry3d X_tcp_base_current_;   // Current TCP pose
   Eigen::Isometry3d X_tcp_base_desired_;   // Target reference TCP pose
+  Vector6d pose_error_;                     // TCP pose error (position + orientation)
   // Pre-allocated ROS2 messages to avoid real-time allocations
   std_msgs::msg::Float64MultiArray velocity_msg_;
   
@@ -120,6 +120,7 @@ class AdmittanceNode : public rclcpp::Node {
   size_t num_joints_ = 0;  // Number of joints in kinematic chain
   KDL::JntArray q_kdl_;    // Pre-allocated KDL joint positions
   KDL::JntArray v_kdl_;    // Pre-allocated KDL joint velocities
+  KDL::Frame wrist3_frame_;  // Cached wrist3 pose for velocity calculations
   
   // Timer removed - using manual spin_some() pattern for synchronization
   // rclcpp::TimerBase::SharedPtr control_timer_;  // REMOVED
@@ -134,7 +135,7 @@ class AdmittanceNode : public rclcpp::Node {
  private:
   
   // Compute forward kinematics from joint positions (industry standard naming)
-  void get_X_tcp_base_current_();
+  void get_X_tcp_base_current();
 };
 
 }  // namespace ur_admittance_controller

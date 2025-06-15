@@ -97,16 +97,14 @@ void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped
                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
 }
 
-// Constructor: init params, state vectors, ROS I/O, and default equilibrium pose
-AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
-: Node("admittance_node", options) {
-  RCLCPP_INFO_ONCE(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
-  
-  initializeParameters();
-  initializeStateVectors();
-  setupROSInterfaces();
-  setDefaultEquilibrium();
+void AdmittanceNode::control_cycle() {
+  get_X_tcp_base_current();
+  compute_pose_error();
+  compute_admittance();
+  limit_to_workspace();
+  compute_and_pub_joint_velocities();
 }
+
 
 void AdmittanceNode::initialize() {
   if (!load_kinematics()) {
@@ -122,32 +120,17 @@ void AdmittanceNode::initialize() {
 }
 
 
-void AdmittanceNode::control_cycle() {
-  get_X_tcp_base_current_();
-  compute_admittance();
-  limit_to_workspace();
-  send_commands_to_robot();
+// Constructor: init params, state vectors, ROS I/O, and default equilibrium pose
+AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
+: Node("admittance_node", options) {
+  RCLCPP_INFO_ONCE(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
+  
+  initializeParameters();
+  initializeStateVectors();
+  setupROSInterfaces();
+  setDefaultEquilibrium();
 }
 
-// Send velocity commands to robot
-void AdmittanceNode::send_commands_to_robot() {
-  // Convert Cartesian velocity to joint velocities via inverse kinematics
-  if (!compute_joint_velocities(V_tcp_base_commanded_)) {
-    // Industry standard: immediate stop on IK failure
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, 
-                          "IK solver failed - executing safety stop");
-    std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
-  }
-  
-  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-    "Joint vel cmd: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] rad/s",
-    q_dot_cmd_[0], q_dot_cmd_[1], q_dot_cmd_[2], 
-    q_dot_cmd_[3], q_dot_cmd_[4], q_dot_cmd_[5]);
-  
-  // Send velocity commands to ros2_control hardware interface
-  velocity_msg_.data = q_dot_cmd_;
-  velocity_pub_->publish(velocity_msg_);
-}
 
 }  // namespace ur_admittance_controller
 

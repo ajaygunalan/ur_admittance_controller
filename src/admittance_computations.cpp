@@ -17,6 +17,7 @@ void AdmittanceNode::initializeStateVectors() {
   // Cartesian space vectors
   Wrench_tcp_base_ = Vector6d::Zero();
   V_tcp_base_commanded_ = Vector6d::Zero();
+  pose_error_ = Vector6d::Zero();
   
   // Poses
   X_tcp_base_current_ = Eigen::Isometry3d::Identity();
@@ -64,10 +65,40 @@ void AdmittanceNode::update_admittance_parameters() {
     p.damping[0], p.damping[1], p.damping[2], p.damping[3], p.damping[4], p.damping[5]);
 }
 
-Vector6d AdmittanceNode::compute_pose_error() {
-  Vector6d error;
+
+
+void AdmittanceNode::get_X_tcp_base_current() {
+  // Transfer joint positions to KDL format for FK computation
+  for (size_t i = 0; i < num_joints_; ++i) {
+    q_kdl_(i) = q_current_[i];
+  }
+  
+  // Log initial joint configuration once for debugging
+  RCLCPP_INFO_ONCE(get_logger(), "FK solver initialized - %zu joints: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+      num_joints_, q_current_[0], q_current_[1], q_current_[2], 
+      q_current_[3], q_current_[4], q_current_[5]);
+  
+  // Step 1: Compute FK from base_link to wrist_3_link (last movable joint)
+  if (fk_pos_solver_->JntToCart(q_kdl_, wrist3_frame_) < 0) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "Forward kinematics solver failed");
+    return;
+  }
+  
+  // Step 2: Apply fixed tool offset to get actual TCP position
+  KDL::Frame tool_frame = wrist3_frame_ * wrist3_to_tool_transform_;
+  
+  // Convert KDL frame to Eigen format for admittance calculations
+  X_tcp_base_current_.translation() = Eigen::Vector3d(tool_frame.p.x(), tool_frame.p.y(), tool_frame.p.z());
+  
+  // Extract quaternion and convert to rotation matrix
+  double x, y, z, w;
+  tool_frame.M.GetQuaternion(x, y, z, w);
+  X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
+}
+
+void AdmittanceNode::compute_pose_error() {
   // Use same convention as ur3_admittance_controller: current - desired
-  error.head<3>() = X_tcp_base_current_.translation() - X_tcp_base_desired_.translation();
+  pose_error_.head<3>() = X_tcp_base_current_.translation() - X_tcp_base_desired_.translation();
   
   Eigen::Quaterniond q_current(X_tcp_base_current_.rotation());
   Eigen::Quaterniond q_desired(X_tcp_base_desired_.rotation());
@@ -86,55 +117,20 @@ Vector6d AdmittanceNode::compute_pose_error() {
   
   // Convert to axis-angle representation
   Eigen::AngleAxisd aa_error(q_error);
-  error.tail<3>() = aa_error.axis() * aa_error.angle();
+  pose_error_.tail<3>() = aa_error.axis() * aa_error.angle();
   
   // Log TCP error for debugging
-  double position_error_norm = error.head<3>().norm();
-  double orientation_error_norm = error.tail<3>().norm();
+  double position_error_norm = pose_error_.head<3>().norm();
+  double orientation_error_norm = pose_error_.tail<3>().norm();
   
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
     "TCP Error - Position: %.4f m [%.3f, %.3f, %.3f], Orientation: %.4f rad [%.3f, %.3f, %.3f]",
-    position_error_norm, error(0), error(1), error(2),
-    orientation_error_norm, error(3), error(4), error(5));
-  
-  
-  return error;
+    position_error_norm, pose_error_(0), pose_error_(1), pose_error_(2),
+    orientation_error_norm, pose_error_(3), pose_error_(4), pose_error_(5));
 }
 
-void AdmittanceNode::get_X_tcp_base_current_() {
-  // Transfer joint positions to KDL format for FK computation
-  for (size_t i = 0; i < num_joints_; ++i) {
-    q_kdl_(i) = q_current_[i];
-  }
-  
-  // Log initial joint configuration once for debugging
-  RCLCPP_INFO_ONCE(get_logger(), "FK solver initialized - %zu joints: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-      num_joints_, q_current_[0], q_current_[1], q_current_[2], 
-      q_current_[3], q_current_[4], q_current_[5]);
-  
-  // Step 1: Compute FK from base_link to wrist_3_link (last movable joint)
-  KDL::Frame wrist3_frame;
-  if (fk_pos_solver_->JntToCart(q_kdl_, wrist3_frame) < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "Forward kinematics solver failed");
-    return;
-  }
-  
-  // Step 2: Apply fixed tool offset to get actual TCP position
-  KDL::Frame tool_frame = wrist3_frame * wrist3_to_tool_transform_;
-  
-  // Convert KDL frame to Eigen format for admittance calculations
-  X_tcp_base_current_.translation() = Eigen::Vector3d(tool_frame.p.x(), tool_frame.p.y(), tool_frame.p.z());
-  
-  // Extract quaternion and convert to rotation matrix
-  double x, y, z, w;
-  tool_frame.M.GetQuaternion(x, y, z, w);
-  X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
-}
 
 void AdmittanceNode::compute_admittance() {
-  // Calculate position/orientation error between current and desired TCP pose
-  Vector6d error = compute_pose_error();
-  
   // Scale external wrench by admittance ratio (0-1) for safety/tuning
   Vector6d scaled_wrench = admittance_ratio_ * Wrench_tcp_base_;
   
@@ -142,7 +138,7 @@ void AdmittanceNode::compute_admittance() {
   // Solving for acceleration: a = M^(-1) * (F_ext - D*v - K*x)
   Vector6d acceleration = M_inverse_diag_.array() *
       (scaled_wrench.array() - D_diag_.array() * V_tcp_base_commanded_.array() -
-       K_diag_.array() * error.array());
+       K_diag_.array() * pose_error_.array());
   
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
     "Admittance accel: [%.3f, %.3f, %.3f] m/s², norm: %.3f",
@@ -175,48 +171,6 @@ void AdmittanceNode::compute_admittance() {
     V_tcp_base_commanded_.head<3>().norm());
 }
 
-bool AdmittanceNode::compute_joint_velocities(const Vector6d& cart_vel) {
-  // q_kdl_ already contains current joint angles from get_X_tcp_base_current_()
-  
-  // cart_vel is V_tcp_base_commanded_ - TCP velocity expressed in base frame
-  // Since our KDL chain goes to wrist_3, we need wrist_3 velocity in base frame
-  
-  // First, get current TCP pose to compute the transform from wrist_3 to TCP
-  KDL::Frame wrist3_frame;
-  if (fk_pos_solver_->JntToCart(q_kdl_, wrist3_frame) < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "FK failed in IK computation");
-    return false;
-  }
-  
-  // Current TCP frame in base
-  KDL::Frame tcp_frame = wrist3_frame * wrist3_to_tool_transform_;
-  
-  // Pack TCP velocity (base frame)
-  KDL::Twist twist_tcp_base;
-  twist_tcp_base.vel = KDL::Vector(cart_vel(0), cart_vel(1), cart_vel(2));
-  twist_tcp_base.rot = KDL::Vector(cart_vel(3), cart_vel(4), cart_vel(5));
-  
-  // Transform TCP velocity to wrist_3 velocity (both in base frame)
-  // V_wrist3 = V_tcp - [w_tcp x (p_tcp - p_wrist3)]
-  KDL::Vector p_diff = tcp_frame.p - wrist3_frame.p;
-  KDL::Twist twist_wrist3_base;
-  twist_wrist3_base.vel = twist_tcp_base.vel - twist_tcp_base.rot * p_diff;
-  twist_wrist3_base.rot = twist_tcp_base.rot;
-  
-  // Solve inverse kinematics for wrist_3 velocity (in base frame)
-  if (ik_vel_solver_->CartToJnt(q_kdl_, twist_wrist3_base, v_kdl_) < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK failed");
-    return false;
-  }
-  
-  // Extract solution with NaN safety
-  for (size_t i = 0; i < num_joints_; ++i) {
-    q_dot_cmd_[i] = v_kdl_(i);
-  }
-  return std::none_of(q_dot_cmd_.begin(), q_dot_cmd_.end(), 
-                      [](double v) { return std::isnan(v); });
-}
-
 // Apply workspace limits to Cartesian motion
 void AdmittanceNode::limit_to_workspace() {
   const auto& pos = X_tcp_base_current_.translation();
@@ -247,6 +201,52 @@ void AdmittanceNode::limit_to_workspace() {
                           "Capping TCP rotational velocity: %.3f -> %.3f rad/s", rot_velocity_norm, arm_max_rot_vel_);
     V_tcp_base_commanded_.tail<3>() *= (arm_max_rot_vel_ / rot_velocity_norm);
   }
+}
+
+void AdmittanceNode::compute_and_pub_joint_velocities() {
+  // Pack TCP velocity
+  KDL::Twist twist_tcp_base;
+  twist_tcp_base.vel = KDL::Vector(V_tcp_base_commanded_(0), V_tcp_base_commanded_(1), V_tcp_base_commanded_(2));
+  twist_tcp_base.rot = KDL::Vector(V_tcp_base_commanded_(3), V_tcp_base_commanded_(4), V_tcp_base_commanded_(5));
+  
+  // Get position offset using CACHED wrist3_frame (no FK needed!)
+  KDL::Vector p_diff = KDL::Vector(
+    X_tcp_base_current_.translation()(0) - wrist3_frame_.p.x(),
+    X_tcp_base_current_.translation()(1) - wrist3_frame_.p.y(), 
+    X_tcp_base_current_.translation()(2) - wrist3_frame_.p.z()
+  );
+  
+  // Transform to wrist3 velocity
+  KDL::Twist twist_wrist3_base;
+  twist_wrist3_base.vel = twist_tcp_base.vel - twist_tcp_base.rot * p_diff;
+  twist_wrist3_base.rot = twist_tcp_base.rot;
+  
+  // Solve IK
+  if (ik_vel_solver_->CartToJnt(q_kdl_, twist_wrist3_base, v_kdl_) < 0) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK solver failed - executing safety stop");
+    std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
+  } else {
+    // Copy and check for NaN in one pass
+    bool hasNaN = false;
+    for (size_t i = 0; i < num_joints_; ++i) {
+      q_dot_cmd_[i] = v_kdl_(i);
+      hasNaN |= std::isnan(v_kdl_(i));
+    }
+    if (hasNaN) {
+      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK returned NaN - executing safety stop");
+      std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
+    }
+  }
+  
+  // Debug logging
+  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
+    "Joint vel cmd: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] rad/s",
+    q_dot_cmd_[0], q_dot_cmd_[1], q_dot_cmd_[2], 
+    q_dot_cmd_[3], q_dot_cmd_[4], q_dot_cmd_[5]);
+  
+  // Publish to hardware
+  velocity_msg_.data = q_dot_cmd_;
+  velocity_pub_->publish(velocity_msg_);
 }
 
 // Initialize KDL kinematics from URDF
@@ -318,5 +318,6 @@ bool AdmittanceNode::load_kinematics() {
               num_joints_, params_.base_link.c_str(), params_.tip_link.c_str());
   return true;
 }
+
 
 }  // namespace ur_admittance_controller
