@@ -81,6 +81,7 @@ void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::Co
 void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
   RCLCPP_INFO_ONCE(get_logger(), "Joint states received - robot is online");
   
+  joint_states_received_ = true;
   map_joint_states(*msg);
 }
 
@@ -98,6 +99,11 @@ void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped
 }
 
 void AdmittanceNode::control_cycle() {
+  if (!joint_states_received_) {
+    RCLCPP_WARN_ONCE(get_logger(), "Waiting for initial joint states...");
+    return;
+  }
+  
   get_X_tcp_base_current();
   compute_pose_error();
   compute_admittance();

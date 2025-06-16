@@ -27,7 +27,7 @@ void AdmittanceNode::initializeStateVectors() {
   velocity_msg_.data.resize(joint_count);
   
   // Control limits
-  workspace_limits_ << -0.5, 0.5, -0.5, 0.5, 0.0, 0.7;
+  workspace_limits_ << -1.0, 1.0, -1.0, 1.0, 0.0, 1.0;
   arm_max_vel_ = 1.5;
   arm_max_acc_ = 1.0;
   admittance_ratio_ = 1.0;

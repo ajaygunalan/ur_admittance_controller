@@ -133,6 +133,8 @@ class AdmittanceNode : public rclcpp::Node {
   rclcpp::Duration control_period_{std::chrono::milliseconds(10)};  // 100Hz default
   
  private:
+  // Flag to track if initial joint states have been received
+  bool joint_states_received_ = false;
   
   // Compute forward kinematics from joint positions (industry standard naming)
   void get_X_tcp_base_current();
