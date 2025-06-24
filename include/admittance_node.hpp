@@ -88,17 +88,17 @@ class AdmittanceNode : public rclcpp::Node {
   // Kinematics initialization flag
   bool kinematics_initialized_ = false;
   // Core admittance control state vectors (6-DOF: xyz + rpy) 
-  Vector6d Wrench_tcp_base_;         // External forces/torques in base frame (filtered & bias-compensated)
-  Vector6d V_tcp_base_commanded_;    // Commanded Cartesian velocity (integrated and limited)
+  Vector6d F_P_B_;                   // External forces/torques at Payload in Base frame (filtered & bias-compensated)
+  Vector6d V_P_B_commanded;          // Commanded Cartesian velocity at Payload in Base frame (integrated and limited)
   // Admittance equation matrices: M*accel + D*vel + K*pos = F_external
   // Only diagonal elements are used - removed redundant full matrix storage
-  Vector6d M_inverse_diag_;     // Diagonal elements of mass^-1
-  Vector6d D_diag_;             // Diagonal elements of damping
-  Vector6d K_diag_;             // Diagonal elements of stiffness
+  Vector6d M_inverse_diag;      // Diagonal elements of mass^-1
+  Vector6d D_diag;              // Diagonal elements of damping
+  Vector6d K_diag;              // Diagonal elements of stiffness
   // Pose representations for admittance control
-  Eigen::Isometry3d X_tcp_base_current_;   // Current TCP pose
-  Eigen::Isometry3d X_tcp_base_desired_;   // Target reference TCP pose
-  Vector6d pose_error_;                     // TCP pose error (position + orientation)
+  Eigen::Isometry3d X_BP_current;    // Current transform from Base to Payload
+  Eigen::Isometry3d X_BP_desired;    // Target transform from Base to Payload
+  Vector6d pose_error;                // Payload pose error (position + orientation)
   // Pre-allocated ROS2 messages to avoid real-time allocations
   std_msgs::msg::Float64MultiArray velocity_msg_;
   
@@ -110,7 +110,7 @@ class AdmittanceNode : public rclcpp::Node {
   // KDL kinematics for inverse velocity solving
   KDL::Tree kdl_tree_;                                        // Full robot kinematic tree
   KDL::Chain kdl_chain_;                                      // Base-to-tip kinematic chain (base_link to wrist_3_link)
-  KDL::Frame wrist3_to_tool_transform_;                       // Fixed transform from wrist_3 to tool_payload
+  KDL::Frame X_W3P;                                           // Fixed transform from Wrist3 to Payload
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_; // WDLS velocity solver
   
   // Forward kinematics solver (ROS1-style direct computation)
@@ -120,7 +120,7 @@ class AdmittanceNode : public rclcpp::Node {
   size_t num_joints_ = 0;  // Number of joints in kinematic chain
   KDL::JntArray q_kdl_;    // Pre-allocated KDL joint positions
   KDL::JntArray v_kdl_;    // Pre-allocated KDL joint velocities
-  KDL::Frame wrist3_frame_;  // Cached wrist3 pose for velocity calculations
+  KDL::Frame X_BW3;        // Cached transform from Base to Wrist3 for velocity calculations
   
   // Timer removed - using manual spin_some() pattern for synchronization
   // rclcpp::TimerBase::SharedPtr control_timer_;  // REMOVED
@@ -137,7 +137,7 @@ class AdmittanceNode : public rclcpp::Node {
   bool joint_states_received_ = false;
   
   // Compute forward kinematics from joint positions (industry standard naming)
-  void get_X_tcp_base_current();
+  void get_X_BP_current();
 };
 
 }  // namespace ur_admittance_controller

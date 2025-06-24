@@ -251,9 +251,11 @@ private:
   }
   
   void executeInitialization() {
-    if (moveToEquilibrium() && (std::this_thread::sleep_for(std::chrono::milliseconds(500)), switchToVelocityController())) {
-      RCLCPP_INFO(get_logger(), "Robot initialized successfully");
+    if (moveToEquilibrium()) {
+      RCLCPP_INFO(get_logger(), "Robot moved to equilibrium position");
       std::this_thread::sleep_for(std::chrono::seconds(1));
+      // Controller switching is now done manually after calibration
+      // switchToVelocityController();
     }
   }
   

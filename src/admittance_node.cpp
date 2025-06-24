@@ -44,7 +44,7 @@ void AdmittanceNode::initializeParameters() {
 
 void AdmittanceNode::setupROSInterfaces() {
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
-      "/wrench_tcp_base", rclcpp::SensorDataQoS(),
+      "/F_P_B", rclcpp::SensorDataQoS(),
       std::bind(&AdmittanceNode::wrench_callback, this, std::placeholders::_1));
       
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
@@ -63,18 +63,18 @@ void AdmittanceNode::setupROSInterfaces() {
 
 
 void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  Wrench_tcp_base_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
-                      msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
+  F_P_B_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
+            msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
   
   
   // Log wrench if non-zero
-  double force_norm = Wrench_tcp_base_.head<3>().norm();
-  double torque_norm = Wrench_tcp_base_.tail<3>().norm();
+  double force_norm = F_P_B_.head<3>().norm();
+  double torque_norm = F_P_B_.tail<3>().norm();
   if (force_norm > 0.1 || torque_norm > 0.1) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
       "External wrench - Force: %.2f N [%.2f, %.2f, %.2f], Torque: %.2f Nm [%.2f, %.2f, %.2f]",
-      force_norm, Wrench_tcp_base_(0), Wrench_tcp_base_(1), Wrench_tcp_base_(2),
-      torque_norm, Wrench_tcp_base_(3), Wrench_tcp_base_(4), Wrench_tcp_base_(5));
+      force_norm, F_P_B_(0), F_P_B_(1), F_P_B_(2),
+      torque_norm, F_P_B_(3), F_P_B_(4), F_P_B_(5));
   }
 }
 
@@ -88,9 +88,9 @@ void AdmittanceNode::joint_state_callback(const sensor_msgs::msg::JointState::Co
 // Handle desired pose updates from ROS2 topic
 void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
   // Only update position, keep orientation fixed at equilibrium
-  X_tcp_base_desired_.translation() << msg->pose.position.x,
-                                       msg->pose.position.y,
-                                       msg->pose.position.z;
+  X_BP_desired.translation() << msg->pose.position.x,
+                                msg->pose.position.y,
+                                msg->pose.position.z;
   
   // Orientation remains fixed at equilibrium value
   
@@ -104,7 +104,7 @@ void AdmittanceNode::control_cycle() {
     return;
   }
   
-  get_X_tcp_base_current();
+  get_X_BP_current();
   compute_pose_error();
   compute_admittance();
   limit_to_workspace();
@@ -120,7 +120,7 @@ void AdmittanceNode::initialize() {
   
   RCLCPP_INFO_ONCE(get_logger(), 
     "Kinematics ready, equilibrium at: [%.3f, %.3f, %.3f]",
-    X_tcp_base_desired_.translation()(0), X_tcp_base_desired_.translation()(1), X_tcp_base_desired_.translation()(2));
+    X_BP_desired.translation()(0), X_BP_desired.translation()(1), X_BP_desired.translation()(2));
   
   RCLCPP_INFO_ONCE(get_logger(), "UR Admittance Controller ready at 100Hz - push the robot to move it!");
 }

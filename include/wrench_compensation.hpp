@@ -29,6 +29,10 @@ public:
         const Transform& X_EB,
         const JointState& joint_state = JointState()) const = 0;
     
+    // Explicit two-step compensation methods
+    [[nodiscard]] virtual Wrench applyBiasCorrection(const Wrench& raw) const = 0;
+    [[nodiscard]] virtual Wrench applyGravityCompensation(const Wrench& wrench, const Transform& X_BP) const = 0;
+    
     [[nodiscard]] virtual std::string getType() const = 0;
 };
 
@@ -41,6 +45,11 @@ public:
         const Wrench& F_P_P_raw,
         const Transform& X_EB,
         const JointState& joint_state = JointState()) const override;
+    
+    // Explicit two-step compensation methods
+    [[nodiscard]] Wrench applyBiasCorrection(const Wrench& raw) const override;
+    [[nodiscard]] Wrench applyGravityCompensation(const Wrench& wrench, const Transform& X_BP) const override;
+    
     [[nodiscard]] const GravityCompensationParams& getParams() const { return params_; }
     void updateParams(const GravityCompensationParams& params) { params_ = params; }
     

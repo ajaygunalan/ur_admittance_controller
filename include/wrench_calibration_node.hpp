@@ -26,7 +26,7 @@ public:
     
 private:
     // Core functionality
-    void updateJointPositions(const JointStateMsg::SharedPtr msg);
+    void updateJointPositions(const JointStateMsg::ConstSharedPtr& msg);
     void waitFor(std::function<bool()> condition);
     void collectSamplesAtCurrentPose(std::vector<CalibrationSample>& samples, size_t pose_idx);
     bool moveToJointPosition(const JointAngles& target_joints);
@@ -36,6 +36,7 @@ private:
     // Logging
     void logCalibrationSuccess(const GravityCompensationParams& params);
     void logTransform(const Transform& tf);
+    void logCalibrationMathematics();
     
     template<typename FutureT>
     bool waitForGoalAcceptance(FutureT& future) {

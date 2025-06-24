@@ -13,7 +13,7 @@ cmake_minimum_required(VERSION 3.16)
 project(ur_admittance_controller VERSION 2.0.0 LANGUAGES CXX)
 
 # C++ Standard Configuration
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Compiler warnings
@@ -55,6 +55,9 @@ find_package(Eigen3 REQUIRED)
 find_package(orocos_kdl REQUIRED)
 find_package(kdl_parser REQUIRED)
 find_package(urdf REQUIRED)
+
+# YAML for calibration file I/O
+find_package(yaml-cpp REQUIRED)
 # ==============================================================================
 # Generate Parameter Library
 # ==============================================================================
@@ -82,6 +85,24 @@ set(NODE_DEPENDENCIES
 )
 
 # ==============================================================================
+# Build Gravity Compensation Library
+# ==============================================================================
+add_library(gravity_compensator SHARED
+  src/wrench_compensation.cpp
+)
+
+target_include_directories(gravity_compensator PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(gravity_compensator
+  Eigen3::Eigen
+)
+
+ament_target_dependencies(gravity_compensator rclcpp tf2_eigen)
+
+# ==============================================================================
 # Build Admittance Node Executable (New Standalone Implementation)
 # ==============================================================================
 add_executable(admittance_node
@@ -94,6 +115,13 @@ add_executable(admittance_node
 # ==============================================================================
 add_executable(wrench_node
   src/wrench_node.cpp
+)
+
+# ==============================================================================
+# Build Wrench Calibration Node
+# ==============================================================================
+add_executable(wrench_calibration_node
+  src/wrench_calibration_node.cpp
 )
 
 # ==============================================================================
@@ -131,6 +159,11 @@ target_include_directories(verify_poses PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
+target_include_directories(wrench_calibration_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 # Link parameter library
 target_link_libraries(admittance_node
   ur_admittance_controller_parameters
@@ -138,7 +171,9 @@ target_link_libraries(admittance_node
 )
 
 target_link_libraries(wrench_node
+  gravity_compensator
   Eigen3::Eigen
+  yaml-cpp
 )
 
 target_link_libraries(init_robot
@@ -147,6 +182,17 @@ target_link_libraries(init_robot
 
 target_link_libraries(verify_poses
   Eigen3::Eigen
+)
+
+target_link_libraries(wrench_calibration_node
+  gravity_compensator
+  Eigen3::Eigen
+  yaml-cpp
+)
+
+# Define package source directory for calibration file saving
+target_compile_definitions(wrench_calibration_node PRIVATE
+  PACKAGE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
@@ -178,12 +224,26 @@ set(VERIFY_POSES_DEPENDENCIES
 ament_target_dependencies(init_robot ${INIT_ROBOT_DEPENDENCIES})
 ament_target_dependencies(verify_poses ${VERIFY_POSES_DEPENDENCIES})
 
+# Dependencies for wrench_calibration_node
+set(CALIBRATION_DEPENDENCIES
+  rclcpp
+  rclcpp_action
+  control_msgs
+  sensor_msgs
+  geometry_msgs
+  tf2
+  tf2_ros
+  tf2_eigen
+)
+
+ament_target_dependencies(wrench_calibration_node ${CALIBRATION_DEPENDENCIES})
+
 # ==============================================================================
 # Installation
 # ==============================================================================
-# Install parameter library
+# Install parameter library and gravity compensator
 install(
-  TARGETS ur_admittance_controller_parameters
+  TARGETS ur_admittance_controller_parameters gravity_compensator
   EXPORT export_${PROJECT_NAME}
   RUNTIME DESTINATION lib
   LIBRARY DESTINATION lib
@@ -192,7 +252,7 @@ install(
 
 # Install the node executables
 install(
-  TARGETS admittance_node wrench_node init_robot verify_poses
+  TARGETS admittance_node wrench_node wrench_calibration_node init_robot verify_poses
   DESTINATION lib/${PROJECT_NAME}
 )
 

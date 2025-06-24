@@ -15,13 +15,13 @@ void AdmittanceNode::initializeStateVectors() {
   q_dot_cmd_.resize(joint_count, 0.0);
   
   // Cartesian space vectors
-  Wrench_tcp_base_ = Vector6d::Zero();
-  V_tcp_base_commanded_ = Vector6d::Zero();
-  pose_error_ = Vector6d::Zero();
+  F_P_B_ = Vector6d::Zero();
+  V_P_B_commanded = Vector6d::Zero();
+  pose_error = Vector6d::Zero();
   
   // Poses
-  X_tcp_base_current_ = Eigen::Isometry3d::Identity();
-  X_tcp_base_desired_ = Eigen::Isometry3d::Identity();
+  X_BP_current = Eigen::Isometry3d::Identity();
+  X_BP_desired = Eigen::Isometry3d::Identity();
   
   // ROS message
   velocity_msg_.data.resize(joint_count);
@@ -41,9 +41,9 @@ void AdmittanceNode::setDefaultEquilibrium() {
   auto eq_pos = get_parameter("equilibrium.position").as_double_array();
   auto eq_ori = get_parameter("equilibrium.orientation").as_double_array();
   
-  X_tcp_base_desired_.translation() << eq_pos[0], eq_pos[1], eq_pos[2];
+  X_BP_desired.translation() << eq_pos[0], eq_pos[1], eq_pos[2];
   // Convert from WXYZ (parameter format) to Eigen's WXYZ constructor format
-  X_tcp_base_desired_.linear() = Eigen::Quaterniond(eq_ori[0], eq_ori[1], eq_ori[2], eq_ori[3]).toRotationMatrix();
+  X_BP_desired.linear() = Eigen::Quaterniond(eq_ori[0], eq_ori[1], eq_ori[2], eq_ori[3]).toRotationMatrix();
   
   RCLCPP_DEBUG(get_logger(), "Equilibrium pose set: position=[%.3f, %.3f, %.3f]", 
                eq_pos[0], eq_pos[1], eq_pos[2]);
@@ -51,9 +51,9 @@ void AdmittanceNode::setDefaultEquilibrium() {
 
 void AdmittanceNode::update_admittance_parameters() {
   auto& p = params_.admittance;
-  M_inverse_diag_ = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
-  K_diag_ = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
-  D_diag_ = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
+  M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
+  K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
+  D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
   
   // Log admittance parameters on startup/update
   RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
@@ -67,7 +67,7 @@ void AdmittanceNode::update_admittance_parameters() {
 
 
 
-void AdmittanceNode::get_X_tcp_base_current() {
+void AdmittanceNode::get_X_BP_current() {
   // Transfer joint positions to KDL format for FK computation
   for (size_t i = 0; i < num_joints_; ++i) {
     q_kdl_(i) = q_current_[i];
@@ -79,29 +79,29 @@ void AdmittanceNode::get_X_tcp_base_current() {
       q_current_[3], q_current_[4], q_current_[5]);
   
   // Step 1: Compute FK from base_link to wrist_3_link (last movable joint)
-  if (fk_pos_solver_->JntToCart(q_kdl_, wrist3_frame_) < 0) {
+  if (fk_pos_solver_->JntToCart(q_kdl_, X_BW3) < 0) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "Forward kinematics solver failed");
     return;
   }
   
-  // Step 2: Apply fixed tool offset to get actual TCP position
-  KDL::Frame tool_frame = wrist3_frame_ * wrist3_to_tool_transform_;
+  // Step 2: Apply fixed tool offset to get actual payload position
+  KDL::Frame X_BP = X_BW3 * X_W3P;
   
   // Convert KDL frame to Eigen format for admittance calculations
-  X_tcp_base_current_.translation() = Eigen::Vector3d(tool_frame.p.x(), tool_frame.p.y(), tool_frame.p.z());
+  X_BP_current.translation() = Eigen::Vector3d(X_BP.p.x(), X_BP.p.y(), X_BP.p.z());
   
   // Extract quaternion and convert to rotation matrix
   double x, y, z, w;
-  tool_frame.M.GetQuaternion(x, y, z, w);
-  X_tcp_base_current_.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
+  X_BP.M.GetQuaternion(x, y, z, w);
+  X_BP_current.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
 }
 
 void AdmittanceNode::compute_pose_error() {
   // Use same convention as ur3_admittance_controller: current - desired
-  pose_error_.head<3>() = X_tcp_base_current_.translation() - X_tcp_base_desired_.translation();
+  pose_error.head<3>() = X_BP_current.translation() - X_BP_desired.translation();
   
-  Eigen::Quaterniond q_current(X_tcp_base_current_.rotation());
-  Eigen::Quaterniond q_desired(X_tcp_base_desired_.rotation());
+  Eigen::Quaterniond q_current(X_BP_current.rotation());
+  Eigen::Quaterniond q_desired(X_BP_desired.rotation());
   
   // Ensure shortest path by checking dot product (flip desired if needed)
   if (q_current.dot(q_desired) < 0.0) {
@@ -117,32 +117,36 @@ void AdmittanceNode::compute_pose_error() {
   
   // Convert to axis-angle representation
   Eigen::AngleAxisd aa_error(q_error);
-  pose_error_.tail<3>() = aa_error.axis() * aa_error.angle();
+  pose_error.tail<3>() = aa_error.axis() * aa_error.angle();
   
-  // Log TCP error for debugging
-  double position_error_norm = pose_error_.head<3>().norm();
-  double orientation_error_norm = pose_error_.tail<3>().norm();
+  // Log payload error for debugging
+  double position_error_norm = pose_error.head<3>().norm();
+  double orientation_error_norm = pose_error.tail<3>().norm();
   
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
-    "TCP Error - Position: %.4f m [%.3f, %.3f, %.3f], Orientation: %.4f rad [%.3f, %.3f, %.3f]",
-    position_error_norm, pose_error_(0), pose_error_(1), pose_error_(2),
-    orientation_error_norm, pose_error_(3), pose_error_(4), pose_error_(5));
+    "Payload Error - Position: %.4f m [%.3f, %.3f, %.3f], Orientation: %.4f rad [%.3f, %.3f, %.3f]",
+    position_error_norm, pose_error(0), pose_error(1), pose_error(2),
+    orientation_error_norm, pose_error(3), pose_error(4), pose_error(5));
 }
 
 
 void AdmittanceNode::compute_admittance() {
   // Scale external wrench by admittance ratio (0-1) for safety/tuning
-  Vector6d scaled_wrench = admittance_ratio_ * Wrench_tcp_base_;
+  Vector6d scaled_wrench = admittance_ratio_ * F_P_B_;
   
   // Core admittance equation: M*a + D*v + K*x = F_ext
   // Solving for acceleration: a = M^(-1) * (F_ext - D*v - K*x)
-  Vector6d acceleration = M_inverse_diag_.array() *
-      (scaled_wrench.array() - D_diag_.array() * V_tcp_base_commanded_.array() -
-       K_diag_.array() * pose_error_.array());
+  Vector6d acceleration = M_inverse_diag.array() *
+      (scaled_wrench.array() - D_diag.array() * V_P_B_commanded.array() -
+       K_diag.array() * pose_error.array());
   
-  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-    "Admittance accel: [%.3f, %.3f, %.3f] m/s², norm: %.3f",
-    acceleration(0), acceleration(1), acceleration(2), acceleration.head<3>().norm());
+  // Debug the actual equation components
+  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+    "Admittance calc: F=[%.2f,%.2f,%.2f] - D*v=[%.2f,%.2f,%.2f] - K*x=[%.2f,%.2f,%.2f] => a=[%.3f,%.3f,%.3f]",
+    scaled_wrench(0), scaled_wrench(1), scaled_wrench(2),
+    D_diag(0)*V_P_B_commanded(0), D_diag(1)*V_P_B_commanded(1), D_diag(2)*V_P_B_commanded(2),
+    K_diag(0)*pose_error(0), K_diag(1)*pose_error(1), K_diag(2)*pose_error(2),
+    acceleration(0), acceleration(1), acceleration(2));
   
   // Safety limit: cap translational acceleration to prevent violent motions
   double acc_norm = acceleration.head<3>().norm();
@@ -163,17 +167,18 @@ void AdmittanceNode::compute_admittance() {
   
   // Integrate acceleration to get velocity command (simple Euler integration)
   const double dt = control_period_.seconds();
-  V_tcp_base_commanded_ += acceleration * dt;
+  V_P_B_commanded += acceleration * dt;
   
-  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-    "TCP velocity cmd: [%.3f, %.3f, %.3f] m/s, norm: %.3f",
-    V_tcp_base_commanded_(0), V_tcp_base_commanded_(1), V_tcp_base_commanded_(2),
-    V_tcp_base_commanded_.head<3>().norm());
+  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+    "Payload vel cmd: [%.3f,%.3f,%.3f] m/s (err=[%.3f,%.3f,%.3f])",
+    V_P_B_commanded(0), V_P_B_commanded(1), V_P_B_commanded(2),
+    pose_error(0), pose_error(1), pose_error(2));
 }
 
 // Apply workspace limits to Cartesian motion
 void AdmittanceNode::limit_to_workspace() {
-  const auto& pos = X_tcp_base_current_.translation();
+  const auto& pos = X_BP_current.translation();
+  Vector6d vel_before = V_P_B_commanded;
   
   // Check each axis (X,Y,Z) against configured workspace boundaries
   for (size_t i = 0; i < 3; ++i) {
@@ -181,48 +186,57 @@ void AdmittanceNode::limit_to_workspace() {
     const double max = workspace_limits_[i * 2 + 1];
     
     // Hard limit enforcement: only allow motion away from boundary
-    if (pos[i] <= min) V_tcp_base_commanded_[i] = std::max(0.0, V_tcp_base_commanded_[i]);  // Block negative velocity
-    if (pos[i] >= max) V_tcp_base_commanded_[i] = std::min(0.0, V_tcp_base_commanded_[i]);  // Block positive velocity
+    if (pos[i] <= min) V_P_B_commanded[i] = std::max(0.0, V_P_B_commanded[i]);  // Block negative velocity
+    if (pos[i] >= max) V_P_B_commanded[i] = std::min(0.0, V_P_B_commanded[i]);  // Block positive velocity
+  }
+  
+  // Debug if velocity was modified
+  if ((vel_before.head<3>() - V_P_B_commanded.head<3>()).norm() > 0.001) {
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+      "Workspace limits: vel [%.3f,%.3f,%.3f] -> [%.3f,%.3f,%.3f], pos=[%.3f,%.3f,%.3f]",
+      vel_before(0), vel_before(1), vel_before(2),
+      V_P_B_commanded(0), V_P_B_commanded(1), V_P_B_commanded(2),
+      pos(0), pos(1), pos(2));
   }
   
   // Global velocity limit to prevent dangerous speeds
-  double velocity_norm = V_tcp_base_commanded_.head<3>().norm();
+  double velocity_norm = V_P_B_commanded.head<3>().norm();
   if (velocity_norm > arm_max_vel_) {
     RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000, 
-                          "Capping TCP velocity: %.3f -> %.3f m/s", velocity_norm, arm_max_vel_);
-    V_tcp_base_commanded_.head<3>() *= (arm_max_vel_ / velocity_norm);
+                          "Capping payload velocity: %.3f -> %.3f m/s", velocity_norm, arm_max_vel_);
+    V_P_B_commanded.head<3>() *= (arm_max_vel_ / velocity_norm);
   }
   
   // Global rotational velocity limit to prevent dangerous rotations
-  double rot_velocity_norm = V_tcp_base_commanded_.tail<3>().norm();
+  double rot_velocity_norm = V_P_B_commanded.tail<3>().norm();
   double arm_max_rot_vel_ = 3.0;  // rad/s - conservative limit for safety
   if (rot_velocity_norm > arm_max_rot_vel_) {
     RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000, 
-                          "Capping TCP rotational velocity: %.3f -> %.3f rad/s", rot_velocity_norm, arm_max_rot_vel_);
-    V_tcp_base_commanded_.tail<3>() *= (arm_max_rot_vel_ / rot_velocity_norm);
+                          "Capping payload rotational velocity: %.3f -> %.3f rad/s", rot_velocity_norm, arm_max_rot_vel_);
+    V_P_B_commanded.tail<3>() *= (arm_max_rot_vel_ / rot_velocity_norm);
   }
 }
 
 void AdmittanceNode::compute_and_pub_joint_velocities() {
-  // Pack TCP velocity
-  KDL::Twist twist_tcp_base;
-  twist_tcp_base.vel = KDL::Vector(V_tcp_base_commanded_(0), V_tcp_base_commanded_(1), V_tcp_base_commanded_(2));
-  twist_tcp_base.rot = KDL::Vector(V_tcp_base_commanded_(3), V_tcp_base_commanded_(4), V_tcp_base_commanded_(5));
+  // Pack payload velocity
+  KDL::Twist V_P_B;
+  V_P_B.vel = KDL::Vector(V_P_B_commanded(0), V_P_B_commanded(1), V_P_B_commanded(2));
+  V_P_B.rot = KDL::Vector(V_P_B_commanded(3), V_P_B_commanded(4), V_P_B_commanded(5));
   
-  // Get position offset using CACHED wrist3_frame (no FK needed!)
-  KDL::Vector p_diff = KDL::Vector(
-    X_tcp_base_current_.translation()(0) - wrist3_frame_.p.x(),
-    X_tcp_base_current_.translation()(1) - wrist3_frame_.p.y(), 
-    X_tcp_base_current_.translation()(2) - wrist3_frame_.p.z()
+  // Get position offset using CACHED X_BW3 transform (no FK needed!)
+  KDL::Vector p_PW3_B = KDL::Vector(
+    X_BP_current.translation()(0) - X_BW3.p.x(),
+    X_BP_current.translation()(1) - X_BW3.p.y(), 
+    X_BP_current.translation()(2) - X_BW3.p.z()
   );
   
   // Transform to wrist3 velocity
-  KDL::Twist twist_wrist3_base;
-  twist_wrist3_base.vel = twist_tcp_base.vel - twist_tcp_base.rot * p_diff;
-  twist_wrist3_base.rot = twist_tcp_base.rot;
+  KDL::Twist V_W3_B;
+  V_W3_B.vel = V_P_B.vel - V_P_B.rot * p_PW3_B;
+  V_W3_B.rot = V_P_B.rot;
   
   // Solve IK
-  if (ik_vel_solver_->CartToJnt(q_kdl_, twist_wrist3_base, v_kdl_) < 0) {
+  if (ik_vel_solver_->CartToJnt(q_kdl_, V_W3_B, v_kdl_) < 0) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK solver failed - executing safety stop");
     std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
   } else {
@@ -238,11 +252,11 @@ void AdmittanceNode::compute_and_pub_joint_velocities() {
     }
   }
   
-  // Debug logging
-  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000,
-    "Joint vel cmd: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f] rad/s",
-    q_dot_cmd_[0], q_dot_cmd_[1], q_dot_cmd_[2], 
-    q_dot_cmd_[3], q_dot_cmd_[4], q_dot_cmd_[5]);
+  // Debug IK input/output
+  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+    "IK: Payload vel [%.3f,%.3f,%.3f] m/s -> Joint vel [%.3f,%.3f,%.3f,%.3f,%.3f,%.3f] rad/s",
+    V_P_B.vel.x(), V_P_B.vel.y(), V_P_B.vel.z(),
+    q_dot_cmd_[0], q_dot_cmd_[1], q_dot_cmd_[2], q_dot_cmd_[3], q_dot_cmd_[4], q_dot_cmd_[5]);
   
   // Publish to hardware
   velocity_msg_.data = q_dot_cmd_;
@@ -281,21 +295,21 @@ bool AdmittanceNode::load_kinematics() {
     return false;
   }
   
-  // Step 4: Compute tool offset transform (wrist_3 → tool = fixed transform)
+  // Step 4: Compute tool offset transform (wrist_3 → payload = fixed transform)
   KDL::Chain tool_chain;
   if (!kdl_tree_.getChain("wrist_3_link", params_.tip_link, tool_chain)) {
-    RCLCPP_ERROR(get_logger(), "Cannot find tool: wrist_3_link -> %s", params_.tip_link.c_str());
+    RCLCPP_ERROR(get_logger(), "Cannot find payload: wrist_3_link -> %s", params_.tip_link.c_str());
     return false;
   }
   
   KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
   KDL::JntArray zero_joints(tool_chain.getNrOfJoints());  // 0 joints for fixed transform
-  tool_fk.JntToCart(zero_joints, wrist3_to_tool_transform_);
+  tool_fk.JntToCart(zero_joints, X_W3P);
   
-  RCLCPP_INFO_ONCE(get_logger(), "Tool offset: [%.3f, %.3f, %.3f] m",
-              wrist3_to_tool_transform_.p.x(), 
-              wrist3_to_tool_transform_.p.y(), 
-              wrist3_to_tool_transform_.p.z());
+  RCLCPP_INFO_ONCE(get_logger(), "Payload offset: [%.3f, %.3f, %.3f] m",
+              X_W3P.p.x(), 
+              X_W3P.p.y(), 
+              X_W3P.p.z());
 
   // Step 5: Create solvers and allocate working arrays
   constexpr double PRECISION = 1e-5;

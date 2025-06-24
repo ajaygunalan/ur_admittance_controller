@@ -28,6 +28,11 @@
   <depend>controller_manager_msgs</depend>
   <depend>rcl_interfaces</depend>
   
+  <!-- Transform dependencies -->
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_eigen</depend>
+  
   <!-- Kinematics dependencies -->
   <depend>kdl_parser</depend>
   <depend>urdf</depend>
@@ -35,6 +40,7 @@
   
   <!-- System dependencies -->
   <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
   
   <!-- Testing dependencies -->
   <test_depend>ament_cmake_gmock</test_depend>
