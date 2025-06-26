@@ -195,6 +195,11 @@ target_compile_definitions(wrench_calibration_node PRIVATE
   PACKAGE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
+# Define package source directory for wrench_node to find calibration file
+target_compile_definitions(wrench_node PRIVATE
+  PACKAGE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
 ament_target_dependencies(wrench_node rclcpp geometry_msgs std_srvs tf2 tf2_ros tf2_eigen)
 

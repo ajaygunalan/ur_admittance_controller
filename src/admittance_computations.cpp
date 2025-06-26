@@ -15,9 +15,9 @@ void AdmittanceNode::initializeStateVectors() {
   q_dot_cmd_.resize(joint_count, 0.0);
   
   // Cartesian space vectors
-  F_P_B_ = Vector6d::Zero();
+  F_P_B = Vector6d::Zero();
   V_P_B_commanded = Vector6d::Zero();
-  pose_error = Vector6d::Zero();
+  X_BP_error = Vector6d::Zero();
   
   // Poses
   X_BP_current = Eigen::Isometry3d::Identity();
@@ -98,7 +98,7 @@ void AdmittanceNode::get_X_BP_current() {
 
 void AdmittanceNode::compute_pose_error() {
   // Use same convention as ur3_admittance_controller: current - desired
-  pose_error.head<3>() = X_BP_current.translation() - X_BP_desired.translation();
+  X_BP_error.head<3>() = X_BP_current.translation() - X_BP_desired.translation();
   
   Eigen::Quaterniond q_current(X_BP_current.rotation());
   Eigen::Quaterniond q_desired(X_BP_desired.rotation());
@@ -117,35 +117,35 @@ void AdmittanceNode::compute_pose_error() {
   
   // Convert to axis-angle representation
   Eigen::AngleAxisd aa_error(q_error);
-  pose_error.tail<3>() = aa_error.axis() * aa_error.angle();
+  X_BP_error.tail<3>() = aa_error.axis() * aa_error.angle();
   
   // Log payload error for debugging
-  double position_error_norm = pose_error.head<3>().norm();
-  double orientation_error_norm = pose_error.tail<3>().norm();
+  double position_error_norm = X_BP_error.head<3>().norm();
+  double orientation_error_norm = X_BP_error.tail<3>().norm();
   
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
     "Payload Error - Position: %.4f m [%.3f, %.3f, %.3f], Orientation: %.4f rad [%.3f, %.3f, %.3f]",
-    position_error_norm, pose_error(0), pose_error(1), pose_error(2),
-    orientation_error_norm, pose_error(3), pose_error(4), pose_error(5));
+    position_error_norm, X_BP_error(0), X_BP_error(1), X_BP_error(2),
+    orientation_error_norm, X_BP_error(3), X_BP_error(4), X_BP_error(5));
 }
 
 
 void AdmittanceNode::compute_admittance() {
   // Scale external wrench by admittance ratio (0-1) for safety/tuning
-  Vector6d scaled_wrench = admittance_ratio_ * F_P_B_;
+  Vector6d scaled_wrench = admittance_ratio_ * F_P_B;
   
   // Core admittance equation: M*a + D*v + K*x = F_ext
   // Solving for acceleration: a = M^(-1) * (F_ext - D*v - K*x)
   Vector6d acceleration = M_inverse_diag.array() *
       (scaled_wrench.array() - D_diag.array() * V_P_B_commanded.array() -
-       K_diag.array() * pose_error.array());
+       K_diag.array() * X_BP_error.array());
   
   // Debug the actual equation components
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
     "Admittance calc: F=[%.2f,%.2f,%.2f] - D*v=[%.2f,%.2f,%.2f] - K*x=[%.2f,%.2f,%.2f] => a=[%.3f,%.3f,%.3f]",
     scaled_wrench(0), scaled_wrench(1), scaled_wrench(2),
     D_diag(0)*V_P_B_commanded(0), D_diag(1)*V_P_B_commanded(1), D_diag(2)*V_P_B_commanded(2),
-    K_diag(0)*pose_error(0), K_diag(1)*pose_error(1), K_diag(2)*pose_error(2),
+    K_diag(0)*X_BP_error(0), K_diag(1)*X_BP_error(1), K_diag(2)*X_BP_error(2),
     acceleration(0), acceleration(1), acceleration(2));
   
   // Safety limit: cap translational acceleration to prevent violent motions
@@ -172,7 +172,7 @@ void AdmittanceNode::compute_admittance() {
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
     "Payload vel cmd: [%.3f,%.3f,%.3f] m/s (err=[%.3f,%.3f,%.3f])",
     V_P_B_commanded(0), V_P_B_commanded(1), V_P_B_commanded(2),
-    pose_error(0), pose_error(1), pose_error(2));
+    X_BP_error(0), X_BP_error(1), X_BP_error(2));
 }
 
 // Apply workspace limits to Cartesian motion

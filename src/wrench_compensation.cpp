@@ -6,7 +6,7 @@
 
 namespace ur_admittance_controller {
 
-// Apply sensor bias correction
+// Apply sensor bias correction only (used by two-step interface)
 Wrench GravityCompensator::applyBiasCorrection(const Wrench& raw) const
 {
     Wrench corrected;
@@ -15,45 +15,60 @@ Wrench GravityCompensator::applyBiasCorrection(const Wrench& raw) const
     return corrected;
 }
 
-// Apply gravity compensation
-Wrench GravityCompensator::applyGravityCompensation(const Wrench& wrench, const Transform& X_BP) const
+// Apply gravity compensation following Yu et al. method (pulse_force_estimation line 227-233)
+Wrench GravityCompensator::applyGravityCompensation(const Wrench& wrench, const Transform& X_EB) const
 {
-    // Get rotation from end-effector to base
-    const Matrix3d R_EB = X_BP.rotation();
+    // Extract rotation matrix R_EB from transform (pulse_force_estimation line 227)
+    const Matrix3d R_EB = X_EB.rotation();
     
-    // Compute gravity force in payload frame (Yu et al. Eq. 10)
-    // F_gravity_P = R_PP * R_PE * R_EB * F_gravity_B
-    // Since P≈E for UR robots, R_PE ≈ I, so F_gravity_P = R_PP * R_EB * F_gravity_B
-    const Vector3d F_gravity_P = params_.R_PP * R_EB * params_.F_gravity_B;
+    // Compute gravity force in sensor frame: f_grav_s = R_SE * R_EB * f_grav_b
+    // (pulse_force_estimation line 227, Yu et al. Equation 10)
+    // Note: R_SE is params_.R_PP (sensor to end-effector rotation)
+    const Vector3d f_grav_s = params_.R_PP * R_EB * params_.F_gravity_B;
     
-    // Subtract gravity effects from forces
-    const Vector3d force_P = wrench.head<3>() - F_gravity_P;
+    // Force compensation: F_compensated = F_raw - F_gravity - F_bias
+    // (pulse_force_estimation line 232)
+    const Vector3d force_compensated = wrench.head<3>() - f_grav_s;
     
-    // Gravity torque: T = p_CoM × F_gravity
-    const Vector3d gravity_torque = params_.p_CoM_P.cross(F_gravity_P);
-    const Vector3d torque_P = wrench.tail<3>() - gravity_torque;
+    // Torque compensation: T_compensated = T_raw - (p_CoM × F_gravity) - T_bias
+    // (pulse_force_estimation line 233, Yu et al. Equation 11)
+    // Use skew-symmetric matrix for cross product (p_grav_s_hat * f_grav_s)
+    const Vector3d gravity_torque = skew_symmetric(params_.p_CoM_P) * f_grav_s;
+    const Vector3d torque_compensated = wrench.tail<3>() - gravity_torque;
     
-    // Combine and return
+    // Combine compensated forces and torques
     Wrench compensated;
-    compensated << force_P, torque_P;
+    compensated << force_compensated, torque_compensated;
     return compensated;
 }
 
-// Combined compensation method (for backward compatibility with calibration)
+// Yu et al. bias and gravity compensation (matching pulse_force_estimation exactly)
 Wrench GravityCompensator::compensate(
-    const Wrench& F_P_P_raw,
+    const Wrench& f_raw_s,
     const Transform& X_EB,
     const JointState&) const
 {
-    // Step 1: Apply bias correction
-    const Wrench bias_corrected = applyBiasCorrection(F_P_P_raw);
+    // Extract rotation matrix R_EB (pulse_force_estimation line 227)
+    const Matrix3d R_EB = X_EB.rotation();
     
-    // Step 2: Apply gravity compensation
-    return applyGravityCompensation(bias_corrected, X_EB);
+    // Compute gravity force in sensor frame (pulse_force_estimation line 227)
+    const Vector3d f_grav_s = params_.R_PP * R_EB * params_.F_gravity_B;
+    
+    // Apply Yu et al. compensation (pulse_force_estimation line 232-233)
+    Wrench ft_proc_s;
+    
+    // Force compensation: f_compensated = f_raw - f_grav - f_bias
+    ft_proc_s.head<3>() = f_raw_s.head<3>() - f_grav_s - params_.F_bias_P;
+    
+    // Torque compensation: t_compensated = t_raw - (p_CoM × f_grav) - t_bias  
+    const Vector3d gravity_torque = skew_symmetric(params_.p_CoM_P) * f_grav_s;
+    ft_proc_s.tail<3>() = f_raw_s.tail<3>() - gravity_torque - params_.T_bias_P;
+    
+    return ft_proc_s;
 }
 
 // Convert vector to skew-symmetric matrix for cross product operations
-Matrix3d GravityCompensator::skewSymmetric(const Vector3d& v) {
+Matrix3d GravityCompensator::skew_symmetric(const Vector3d& v) {
     return (Matrix3d() << 0, -v.z(), v.y(), v.z(), 0, -v.x(), -v.y(), v.x(), 0).finished();
 }
 
@@ -112,7 +127,7 @@ std::pair<Vector3d, Matrix3d> LROMCalibrator::estimateGravityAndRotation(
         const auto row = 3 * i;
         const auto& force = samples[i].F_P_P_raw.head<3>();
         
-        A6.block<3, 3>(row, 0) = -samples[i].X_EB.rotation();
+        A6.block<3, 3>(row, 0) = -samples[i].X_PB.rotation();
         A6.block<3, 3>(row, 3) = -Matrix3d::Identity();
         
         // Build A9 following Yu et al.
@@ -152,7 +167,7 @@ std::pair<Vector3d, Matrix3d> LROMCalibrator::estimateGravityAndRotation(
 }
 
 // Step 2: Estimate constant force bias in sensor frame
-// Bias = mean(F_measured - R_PP * R_EB * m*g)
+// Bias = mean(F_measured - R_PP * R_BP * m*g)
 // Critical: Uses ALL samples (not per-pose averages) for better statistical accuracy
 Vector3d LROMCalibrator::estimateForceBias(
     const std::vector<CalibrationSample>& samples,
@@ -164,9 +179,9 @@ Vector3d LROMCalibrator::estimateForceBias(
     
     for (const auto& sample : samples) {
         const Vector3d force = sample.F_P_P_raw.head<3>();
-        const Matrix3d R_EB = sample.X_EB.rotation();
+        const Matrix3d R_PB = sample.X_PB.rotation();
         // Transform gravity to sensor frame for each sample's orientation
-        const Vector3d gravity_in_sensor = rotation_s_to_e * R_EB * gravity_in_base;
+        const Vector3d gravity_in_sensor = rotation_s_to_e * R_PB * gravity_in_base;
         
         force_sum += force;
         gravity_sum += gravity_in_sensor;
@@ -201,7 +216,7 @@ std::pair<Vector3d, Vector3d> LROMCalibrator::estimateCOMAndTorqueBias(
         
         const size_t row_idx = 3 * i;
         
-        C.block<3, 3>(row_idx, 0) = GravityCompensator::skewSymmetric(compensated_force);  // p_CoM cross product matrix
+        C.block<3, 3>(row_idx, 0) = GravityCompensator::skew_symmetric(compensated_force);  // p_CoM cross product matrix
         C.block<3, 3>(row_idx, 3) = Matrix3d::Identity();                                  // torque bias terms
         b.segment<3>(row_idx)      = torque;                                               // measured torques
     }
@@ -228,7 +243,7 @@ std::pair<double, double> LROMCalibrator::computeResiduals(
     for (const auto& sample : samples) {
         const Wrench compensated = compensator.compensate(
             sample.F_P_P_raw,
-            sample.X_EB);
+            sample.X_PB);
         
         force_error_sum += compensated.head<3>().squaredNorm();
         torque_error_sum += compensated.tail<3>().squaredNorm();
@@ -256,13 +271,7 @@ Wrench extractWrench(const geometry_msgs::msg::WrenchStamped& msg) {
     return w;
 }
 
-// Transform wrench between frames
-Wrench transformWrench(const Wrench& F_P_P, const Matrix3d& R_BP) {
-    Wrench F_P_B;
-    F_P_B.head<3>() = R_BP * F_P_P.head<3>();  // Transform force
-    F_P_B.tail<3>() = R_BP * F_P_P.tail<3>();  // Transform torque
-    return F_P_B;
-}
+// Note: transformWrench removed - Yu et al. method handles frame transforms internally
 
 // Fill ROS message from Eigen wrench
 void fillWrenchMsg(geometry_msgs::msg::Wrench& msg, const Wrench& wrench) {

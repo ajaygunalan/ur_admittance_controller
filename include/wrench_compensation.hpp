@@ -20,41 +20,48 @@ class WrenchCompensator {
 public:
     virtual ~WrenchCompensator() = default;
     
-    // Main compensation method - transforms must be in consistent frames:
-    // - F_P_P_raw: raw wrench at Payload in Payload frame
-    // - X_EB: transform from End-effector to Base (matching pulse_force)
+    // Main Yu et al. compensation method - follows pulse_force_estimation exactly:
+    // - f_raw_s: raw wrench in sensor frame
+    // - X_EB: transform from end-effector to base (matching pulse_force_estimation)
     // - joint_state: optional for dynamic compensation
     [[nodiscard]] virtual Wrench compensate(
-        const Wrench& F_P_P_raw,
+        const Wrench& f_raw_s,
         const Transform& X_EB,
         const JointState& joint_state = JointState()) const = 0;
     
-    // Explicit two-step compensation methods
+    // Explicit two-step compensation methods (for compatibility)
     [[nodiscard]] virtual Wrench applyBiasCorrection(const Wrench& raw) const = 0;
-    [[nodiscard]] virtual Wrench applyGravityCompensation(const Wrench& wrench, const Transform& X_BP) const = 0;
+    [[nodiscard]] virtual Wrench applyGravityCompensation(const Wrench& wrench, const Transform& X_EB) const = 0;
     
     [[nodiscard]] virtual std::string getType() const = 0;
 };
 
-// Gravity and bias compensator (current implementation)
+// Gravity and bias compensator - parameter access only
 class GravityCompensator : public WrenchCompensator {
 public:
     explicit GravityCompensator(const GravityCompensationParams& params) : params_(params) {}
     
+    // Legacy interface for compatibility (deprecated)
     [[nodiscard]] Wrench compensate(
-        const Wrench& F_P_P_raw,
+        const Wrench& f_raw_s,
         const Transform& X_EB,
         const JointState& joint_state = JointState()) const override;
     
-    // Explicit two-step compensation methods
     [[nodiscard]] Wrench applyBiasCorrection(const Wrench& raw) const override;
-    [[nodiscard]] Wrench applyGravityCompensation(const Wrench& wrench, const Transform& X_BP) const override;
+    [[nodiscard]] Wrench applyGravityCompensation(const Wrench& wrench, const Transform& X_EB) const override;
+    
+    // Parameter accessors for modular pipeline
+    [[nodiscard]] const Matrix3d& get_R_SE() const { return params_.R_PP; }
+    [[nodiscard]] const Vector3d& get_f_grav_b() const { return params_.F_gravity_B; }
+    [[nodiscard]] const Vector3d& get_f_bias_s() const { return params_.F_bias_P; }
+    [[nodiscard]] const Vector3d& get_t_bias_s() const { return params_.T_bias_P; }
+    [[nodiscard]] const Vector3d& get_p_CoM_s() const { return params_.p_CoM_P; }
     
     [[nodiscard]] const GravityCompensationParams& getParams() const { return params_; }
     void updateParams(const GravityCompensationParams& params) { params_ = params; }
     
     [[nodiscard]] std::string getType() const override { return "gravity_bias"; }
-    [[nodiscard]] static Matrix3d skewSymmetric(const Vector3d& v);
+    [[nodiscard]] static Matrix3d skew_symmetric(const Vector3d& v);
     
 private:
     GravityCompensationParams params_;
@@ -89,10 +96,8 @@ private:
         const GravityCompensationParams& params) const;
 };
 
-// Utility function declarations
+// Utility function declarations  
 [[nodiscard]] Wrench extractWrench(const geometry_msgs::msg::WrenchStamped& msg);
-[[nodiscard]] Wrench transformWrench(const Wrench& F_P_P, 
-                                     const Matrix3d& R_BP);
 void fillWrenchMsg(geometry_msgs::msg::Wrench& msg, const Wrench& wrench);
 void writeVec3Yaml(YAML::Emitter& out, const char* key, const Vector3d& v);
 [[nodiscard]] Vector3d readVec3Yaml(const YAML::Node& node, const std::string& key);

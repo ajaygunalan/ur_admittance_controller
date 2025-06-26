@@ -39,7 +39,7 @@ namespace CalibrationConstants {
 // Calibration data structures
 struct CalibrationSample {
     Wrench F_P_P_raw;  // Raw wrench at Payload in Payload frame
-    Transform X_EB;     // Transform from End-effector to Base (matching pulse_force)
+    Transform X_PB;     // Transform from Payload to Base
     size_t pose_index;  // Which pose (0-31) this sample belongs to
 };
 

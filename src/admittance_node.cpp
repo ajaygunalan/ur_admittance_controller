@@ -63,18 +63,18 @@ void AdmittanceNode::setupROSInterfaces() {
 
 
 void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  F_P_B_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
+  F_P_B << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
             msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
   
   
   // Log wrench if non-zero
-  double force_norm = F_P_B_.head<3>().norm();
-  double torque_norm = F_P_B_.tail<3>().norm();
+  double force_norm = F_P_B.head<3>().norm();
+  double torque_norm = F_P_B.tail<3>().norm();
   if (force_norm > 0.1 || torque_norm > 0.1) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
       "External wrench - Force: %.2f N [%.2f, %.2f, %.2f], Torque: %.2f Nm [%.2f, %.2f, %.2f]",
-      force_norm, F_P_B_(0), F_P_B_(1), F_P_B_(2),
-      torque_norm, F_P_B_(3), F_P_B_(4), F_P_B_(5));
+      force_norm, F_P_B(0), F_P_B(1), F_P_B(2),
+      torque_norm, F_P_B(3), F_P_B(4), F_P_B(5));
   }
 }
 

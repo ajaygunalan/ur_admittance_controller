@@ -88,7 +88,7 @@ class AdmittanceNode : public rclcpp::Node {
   // Kinematics initialization flag
   bool kinematics_initialized_ = false;
   // Core admittance control state vectors (6-DOF: xyz + rpy) 
-  Vector6d F_P_B_;                   // External forces/torques at Payload in Base frame (filtered & bias-compensated)
+  Vector6d F_P_B;                    // External forces/torques at Payload in Base frame (filtered & bias-compensated)
   Vector6d V_P_B_commanded;          // Commanded Cartesian velocity at Payload in Base frame (integrated and limited)
   // Admittance equation matrices: M*accel + D*vel + K*pos = F_external
   // Only diagonal elements are used - removed redundant full matrix storage
@@ -98,7 +98,7 @@ class AdmittanceNode : public rclcpp::Node {
   // Pose representations for admittance control
   Eigen::Isometry3d X_BP_current;    // Current transform from Base to Payload
   Eigen::Isometry3d X_BP_desired;    // Target transform from Base to Payload
-  Vector6d pose_error;                // Payload pose error (position + orientation)
+  Vector6d X_BP_error;               // Payload pose error (position + orientation)
   // Pre-allocated ROS2 messages to avoid real-time allocations
   std_msgs::msg::Float64MultiArray velocity_msg_;
   

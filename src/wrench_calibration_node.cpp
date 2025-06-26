@@ -84,18 +84,18 @@ void WrenchCalibrationNode::waitFor(std::function<bool()> condition) {
 
 // Collect 10 samples at 10Hz (1 second of data)
 void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationSample>& samples, size_t pose_idx) {
-    // Get current pose transform (E→B to match pulse_force_estimation)
-    const auto X_EB = tf2::transformToEigen(
+    // Get current pose transform (P→B: Payload to Base)
+    const auto X_PB = tf2::transformToEigen(
         tf_buffer_.lookupTransform(ee_frame_, base_frame_, tf2::TimePointZero));
     
-    logTransform(X_EB);
+    logTransform(X_PB);
     
     // Collect wrench data at 10Hz
     Wrench F_P_P_raw_avg = Wrench::Zero();
     for (size_t i = 0; i < CalibrationConstants::SAMPLES_PER_POSE; ++i) {
         auto wrench = extractWrench(latest_wrench_);
         F_P_P_raw_avg += wrench;
-        samples.push_back(CalibrationSample{wrench, X_EB, pose_idx});
+        samples.push_back(CalibrationSample{wrench, X_PB, pose_idx});
         
         std::this_thread::sleep_for(Milliseconds(100));
         rclcpp::spin_some(shared_from_this());
