@@ -2,6 +2,7 @@
 #include "wrench_node.hpp"
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <filesystem>
+#include <yaml-cpp/yaml.h>
 
 namespace ur_admittance_controller {
 
@@ -14,40 +15,19 @@ WrenchNode::WrenchNode() : Node("wrench_node"),
     tf_buffer_(std::make_unique<tf2_ros::Buffer>(get_clock())),
     tf_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this, true))
 {
-    // Load calibration parameters
-    const auto calib_file = declare_parameter<std::string>("calibration_file", 
-        std::string(PACKAGE_SOURCE_DIR) + "/config/wrench_calibration.yaml");
-    const auto comp_type = declare_parameter<std::string>("compensation_type", "gravity_bias");
+    if (!loadCalibrationParams()) return;
     
-    if (!std::filesystem::exists(calib_file)) {
-        RCLCPP_ERROR(get_logger(), "Calibration file not found: %s", calib_file.c_str());
-        return;
-    }
-    
-    // Create compensator following Yu et al. method
-    compensator_ = createCompensator(comp_type, calib_file);
-    RCLCPP_INFO(get_logger(), "Yu bias compensation loaded from: %s", calib_file.c_str());
-    
-    // Setup ROS2 interfaces (ur_admittance_controller topics)
-    using namespace std::placeholders;
-    wrench_sub_ = create_subscription<WrenchMsg>(
-        "/F_P_P_raw", rclcpp::SensorDataQoS(),
-        std::bind(&WrenchNode::wrench_callback, this, _1));
-    
-    // Output for admittance controller
+    wrench_sub_ = create_subscription<WrenchMsg>("/F_P_P_raw", rclcpp::SensorDataQoS(),
+        std::bind(&WrenchNode::wrench_callback, this, std::placeholders::_1));
     wrench_sensor_pub_ = create_publisher<WrenchMsg>("/F_P_B", rclcpp::SensorDataQoS());
     
-    // Initialize pipeline state
-    f_raw_s_ = Wrench::Zero();
-    X_EB_ = Transform::Identity();
+    f_raw_s_ = ft_proc_s_ = ft_proc_b_ = Wrench::Zero();
     f_grav_s_ = Vector3d::Zero();
-    ft_proc_s_ = Wrench::Zero();
-    ft_proc_b_ = Wrench::Zero();
+    X_EB_ = Transform::Identity();
 }
 
 void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
-    auto* gravity_comp = static_cast<GravityCompensator*>(compensator_.get());
-    if (!gravity_comp || !tf_buffer_->canTransform(EE_FRAME, BASE_FRAME, tf2::TimePointZero)) {
+    if (!tf_buffer_->canTransform(EE_FRAME, BASE_FRAME, tf2::TimePointZero)) {
         return;
     }
     
@@ -62,30 +42,51 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
     
     // STEP 4: Compute gravity force in sensor frame (Yu et al. Equation 10)
     // f_grav_s = R_SE × R_EB × f_grav_b
-    f_grav_s_ = gravity_comp->get_R_SE() * R_EB * gravity_comp->get_f_grav_b();
+    f_grav_s_ = R_SE_ * R_EB * f_grav_b_;
     
     // STEP 5: Force compensation (Yu et al. Equation 10)
     // F_compensated = F_raw - F_gravity - F_bias
-    ft_proc_s_.head<3>() = f_raw_s_.head<3>() - f_grav_s_ - gravity_comp->get_f_bias_s();
+    ft_proc_s_.head<3>() = f_raw_s_.head<3>() - f_grav_s_ - f_bias_s_;
     
     // STEP 6: Torque compensation (Yu et al. Equation 11)
     // T_compensated = T_raw - (p_CoM × F_gravity) - T_bias
-    const Vector3d gravity_torque = gravity_comp->skew_symmetric(gravity_comp->get_p_CoM_s()) * f_grav_s_;
-    ft_proc_s_.tail<3>() = f_raw_s_.tail<3>() - gravity_torque - gravity_comp->get_t_bias_s();
+    const Vector3d gravity_torque = p_CoM_s_.cross(f_grav_s_);
+    ft_proc_s_.tail<3>() = f_raw_s_.tail<3>() - gravity_torque - t_bias_s_;
     
     // STEP 7: Transform compensated wrench from payload to base frame
     // TODO: Implement proper R_BP rotation - for now using identity
     ft_proc_b_ = ft_proc_s_;
     
     // STEP 8: Publish compensated wrench in base frame for admittance controller
-    WrenchMsg proc_msg;
-    proc_msg.header = msg->header;
-    proc_msg.header.frame_id = BASE_FRAME;
-    fillWrenchMsg(proc_msg.wrench, ft_proc_b_);
-    wrench_sensor_pub_->publish(proc_msg);
+    proc_msg_.header = msg->header;
+    proc_msg_.header.frame_id = BASE_FRAME;
+    fillWrenchMsg(proc_msg_.wrench, ft_proc_b_);
+    wrench_sensor_pub_->publish(proc_msg_);
 }
 
-
+bool WrenchNode::loadCalibrationParams() {
+    auto calib_file = declare_parameter<std::string>("calibration_file", 
+        std::string(PACKAGE_SOURCE_DIR) + "/config/wrench_calibration.yaml");
+    
+    if (!std::filesystem::exists(calib_file)) {
+        RCLCPP_ERROR(get_logger(), "Calibration file not found");
+        return false;
+    }
+    
+    YAML::Node config = YAML::LoadFile(calib_file);
+    auto rot_data = config["rotation_sensor_to_endeffector"].as<std::vector<std::vector<double>>>();
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            R_SE_(i,j) = rot_data[i][j];
+    
+    f_grav_b_ = Vector3d(config["gravity_in_base_frame"].as<std::vector<double>>().data());
+    f_bias_s_ = Vector3d(config["force_bias"].as<std::vector<double>>().data());
+    t_bias_s_ = Vector3d(config["torque_bias"].as<std::vector<double>>().data());
+    p_CoM_s_ = Vector3d(config["tool_center_of_mass"].as<std::vector<double>>().data());
+    
+    RCLCPP_INFO(get_logger(), "Calibration loaded");
+    return true;
+}
 
 }  // namespace ur_admittance_controller
 
