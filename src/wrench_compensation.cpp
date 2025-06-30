@@ -6,42 +6,6 @@
 
 namespace ur_admittance_controller {
 
-// Apply sensor bias correction only (used by two-step interface)
-Wrench GravityCompensator::applyBiasCorrection(const Wrench& raw) const
-{
-    Wrench corrected;
-    corrected.head<3>() = raw.head<3>() - params_.F_bias_P;
-    corrected.tail<3>() = raw.tail<3>() - params_.T_bias_P;
-    return corrected;
-}
-
-// Apply gravity compensation following Yu et al. method (pulse_force_estimation line 227-233)
-Wrench GravityCompensator::applyGravityCompensation(const Wrench& wrench, const Transform& X_EB) const
-{
-    // Extract rotation matrix R_EB from transform (pulse_force_estimation line 227)
-    const Matrix3d R_EB = X_EB.rotation();
-    
-    // Compute gravity force in sensor frame: f_grav_s = R_SE * R_EB * f_grav_b
-    // (pulse_force_estimation line 227, Yu et al. Equation 10)
-    // Note: R_SE is params_.R_PP (sensor to end-effector rotation)
-    const Vector3d f_grav_s = params_.R_PP * R_EB * params_.F_gravity_B;
-    
-    // Force compensation: F_compensated = F_raw - F_gravity - F_bias
-    // (pulse_force_estimation line 232)
-    const Vector3d force_compensated = wrench.head<3>() - f_grav_s;
-    
-    // Torque compensation: T_compensated = T_raw - (p_CoM × F_gravity) - T_bias
-    // (pulse_force_estimation line 233, Yu et al. Equation 11)
-    // Use skew-symmetric matrix for cross product (p_grav_s_hat * f_grav_s)
-    const Vector3d gravity_torque = skew_symmetric(params_.p_CoM_P) * f_grav_s;
-    const Vector3d torque_compensated = wrench.tail<3>() - gravity_torque;
-    
-    // Combine compensated forces and torques
-    Wrench compensated;
-    compensated << force_compensated, torque_compensated;
-    return compensated;
-}
-
 // Yu et al. bias and gravity compensation (matching pulse_force_estimation exactly)
 Wrench GravityCompensator::compensate(
     const Wrench& f_raw_s,
@@ -87,8 +51,7 @@ CalibrationResult LROMCalibrator::calibrate(
     // LROM algorithm steps (Yu et al. paper)
     auto [gravity_in_base, rotation_s_to_e] = estimateGravityAndRotation(samples);
     auto force_bias = estimateForceBias(samples, gravity_in_base, rotation_s_to_e);
-    auto [com_in_sensor, torque_bias] = estimateCOMAndTorqueBias(
-        samples, gravity_in_base, rotation_s_to_e, force_bias);
+    auto [com_in_sensor, torque_bias] = estimateCOMAndTorqueBias(samples, force_bias);
     
     // Fill result
     result.params.F_gravity_B = gravity_in_base;
@@ -195,8 +158,6 @@ Vector3d LROMCalibrator::estimateForceBias(
 // Solves: T = p_CoM × F_gravity + T_bias via least squares
 std::pair<Vector3d, Vector3d> LROMCalibrator::estimateCOMAndTorqueBias(
     const std::vector<CalibrationSample>& samples,
-    [[maybe_unused]] const Vector3d& gravity_in_base,
-    [[maybe_unused]] const Matrix3d& rotation_s_to_e,
     const Vector3d& force_bias) const
 {
     const size_t n = samples.size();
@@ -256,71 +217,8 @@ std::pair<double, double> LROMCalibrator::computeResiduals(
     return {force_rmse, torque_rmse};
 }
 
-// Utility functions for ROS2 message conversion and transformation
+// Note: ROS message conversion functions removed - inlined at call sites for clarity
 
-// Extract Eigen wrench from ROS message
-Wrench extractWrench(const geometry_msgs::msg::WrenchStamped& msg) {
-    Wrench w;
-    // Direct extraction without ATI corrections (matching pulse_force_estimation)
-    w << msg.wrench.force.x,
-         msg.wrench.force.y, 
-         msg.wrench.force.z,
-         msg.wrench.torque.x,
-         msg.wrench.torque.y, 
-         msg.wrench.torque.z;
-    return w;
-}
 
-// Note: transformWrench removed - Yu et al. method handles frame transforms internally
-
-// Fill ROS message from Eigen wrench
-void fillWrenchMsg(geometry_msgs::msg::Wrench& msg, const Wrench& wrench) {
-    msg.force.x = wrench[0]; msg.force.y = wrench[1]; msg.force.z = wrench[2];
-    msg.torque.x = wrench[3]; msg.torque.y = wrench[4]; msg.torque.z = wrench[5];
-}
-
-// YAML helper - write 3D vector
-void writeVec3Yaml(YAML::Emitter& out, const char* key, const Vector3d& v) {
-    out << YAML::Key << key << YAML::Value << YAML::Flow << YAML::BeginSeq << v.x() << v.y() << v.z() << YAML::EndSeq;
-}
-
-// YAML helper - read 3D vector
-Vector3d readVec3Yaml(const YAML::Node& node, const std::string& key) {
-    auto v = node[key].as<std::vector<double>>();
-    return {v[0], v[1], v[2]};
-}
-
-// Factory function - create compensator from calibration file
-std::unique_ptr<WrenchCompensator> createCompensator(
-    const std::string& type,
-    const std::string& calibration_file)
-{
-    if (type != "gravity_bias") 
-        throw std::runtime_error("Unknown compensator type: " + type);
-        
-    // Load calibration parameters from YAML
-    YAML::Node config = YAML::LoadFile(calibration_file);
-    GravityCompensationParams params;
-    params.tool_mass_kg = config["tool_mass_kg"].as<double>();
-    params.p_CoM_P = readVec3Yaml(config, "tool_center_of_mass");
-    params.F_gravity_B = readVec3Yaml(config, "gravity_in_base_frame");
-    params.F_bias_P = readVec3Yaml(config, "force_bias");
-    params.T_bias_P = readVec3Yaml(config, "torque_bias");
-    
-    // Load 3x3 rotation matrix
-    auto rot_yaml = config["rotation_sensor_to_endeffector"];
-    for (int i = 0; i < 3; ++i) {
-        auto row = rot_yaml[i].as<std::vector<double>>();
-        params.R_PP.row(i) = Eigen::Map<const Eigen::RowVector3d>(row.data());
-    }
-    
-    // Load quaternion [x,y,z,w] format
-    auto q_yaml = config["quaternion_sensor_to_endeffector"].as<std::vector<double>>();
-    params.quaternion_sensor_to_endeffector = {{q_yaml[0], q_yaml[1], q_yaml[2], q_yaml[3]}};
-    
-    params.num_poses_collected = config["num_poses"].as<size_t>();
-    
-    return std::make_unique<GravityCompensator>(params);
-}
 
 } // namespace ur_admittance_controller

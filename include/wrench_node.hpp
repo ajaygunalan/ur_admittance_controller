@@ -41,7 +41,9 @@ private:
     
     // ROS2 interfaces
     rclcpp::Subscription<WrenchMsg>::SharedPtr wrench_sub_;
-    rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_sensor_pub_;
+    rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_sensor_pub_;
+    rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_probe_pub_;
+    rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_probe_base_pub_;
     
     // Reusable message object
     WrenchMsg proc_msg_;

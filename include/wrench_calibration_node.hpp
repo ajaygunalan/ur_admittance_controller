@@ -27,31 +27,8 @@ public:
 private:
     // Core functionality
     void updateJointPositions(const JointStateMsg::ConstSharedPtr& msg);
-    void waitFor(std::function<bool()> condition);
     void collectSamplesAtCurrentPose(std::vector<CalibrationSample>& samples, size_t pose_idx);
-    bool moveToJointPosition(const JointAngles& target_joints);
-    TrajectoryAction::Goal createTrajectoryGoal(const JointAngles& target);
     PoseSequence generateCalibrationPoses();
-    
-    // Logging
-    void logCalibrationSuccess(const GravityCompensationParams& params);
-    void logTransform(const Transform& tf);
-    void logCalibrationMathematics();
-    
-    template<typename FutureT>
-    bool waitForGoalAcceptance(FutureT& future) {
-        auto status = rclcpp::spin_until_future_complete(
-            get_node_base_interface(), future);
-        return status == rclcpp::FutureReturnCode::SUCCESS;
-    }
-    
-    template<typename GoalHandleT>
-    bool waitForMotionComplete(GoalHandleT goal_handle) {
-        auto result_future = trajectory_client_->async_get_result(goal_handle);
-        auto status = rclcpp::spin_until_future_complete(
-            get_node_base_interface(), result_future);
-        return status == rclcpp::FutureReturnCode::SUCCESS;
-    }
     
     // Member variables
     TrajectoryClient::SharedPtr trajectory_client_;
