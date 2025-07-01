@@ -20,7 +20,7 @@ WrenchNode::WrenchNode() : Node("wrench_node"),
     
     // DESIGN: SensorDataQoS ensures reliable, real-time F/T data flow (~100-1000Hz)
     wrench_sub_ = create_subscription<WrenchMsg>("/netft/raw_sensor", rclcpp::SensorDataQoS(),
-        std::bind(&WrenchNode::wrench_callback, this, std::placeholders::_1));
+        [this](const WrenchMsg::ConstSharedPtr& msg) { wrench_callback(msg); });
     wrench_proc_sensor_pub_ = create_publisher<WrenchMsg>("/netft/proc_sensor", rclcpp::SensorDataQoS());
     wrench_proc_probe_pub_ = create_publisher<WrenchMsg>("/netft/proc_probe", rclcpp::SensorDataQoS());
     wrench_proc_probe_base_pub_ = create_publisher<WrenchMsg>("/netft/proc_probe_base", rclcpp::SensorDataQoS());

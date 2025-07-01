@@ -44,7 +44,7 @@ public:
     // Create subscription and clients
     joint_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
       "/joint_states", 10,
-      std::bind(&EquilibriumInitializer::jointStateCallback, this, std::placeholders::_1));
+      [this](const sensor_msgs::msg::JointState::SharedPtr msg) { jointStateCallback(msg); });
     trajectory_client_ = rclcpp_action::create_client<FollowJointTrajectory>(
       this, "/scaled_joint_trajectory_controller/follow_joint_trajectory");
     switch_controller_client_ = this->create_client<controller_manager_msgs::srv::SwitchController>(

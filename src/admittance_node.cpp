@@ -45,15 +45,15 @@ void AdmittanceNode::initializeParameters() {
 void AdmittanceNode::setupROSInterfaces() {
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
       "/F_P_B", rclcpp::SensorDataQoS(),
-      std::bind(&AdmittanceNode::wrench_callback, this, std::placeholders::_1));
+      [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) { wrench_callback(msg); });
       
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "/joint_states", 1,  // Queue size = 1 for always fresh data
-      std::bind(&AdmittanceNode::joint_state_callback, this, std::placeholders::_1));
+      [this](const sensor_msgs::msg::JointState::ConstSharedPtr& msg) { joint_state_callback(msg); });
       
   desired_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       "/admittance_node/desired_pose", 10,
-      std::bind(&AdmittanceNode::desired_pose_callback, this, std::placeholders::_1));
+      [this](const geometry_msgs::msg::PoseStamped::ConstSharedPtr& msg) { desired_pose_callback(msg); });
   
   velocity_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
       "/forward_velocity_controller/commands", 10);

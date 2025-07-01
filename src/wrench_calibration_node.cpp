@@ -14,46 +14,8 @@
 
 namespace ur_admittance_controller {
 
-// ============================================================================
-// CONSOLIDATED UTILITY FUNCTIONS (previously in separate files)
-// ============================================================================
 
-// Generic wait function for conditions
-void waitFor(rclcpp::Node::SharedPtr node, std::function<bool()> condition) {
-    while (!condition() && rclcpp::ok()) {
-        rclcpp::spin_some(node);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-}
-
-// Template helper functions for action handling
-template<typename FutureT>
-bool waitForGoalAcceptance(rclcpp::Node::SharedPtr node, FutureT& future) {
-    auto status = rclcpp::spin_until_future_complete(
-        node->get_node_base_interface(), future);
-    return status == rclcpp::FutureReturnCode::SUCCESS;
-}
-
-template<typename GoalHandleT, typename ActionClientT>
-bool waitForMotionComplete(rclcpp::Node::SharedPtr node, 
-                          GoalHandleT goal_handle,
-                          ActionClientT& client) {
-    auto result_future = client->async_get_result(goal_handle);
-    auto status = rclcpp::spin_until_future_complete(
-        node->get_node_base_interface(), result_future);
-    return status == rclcpp::FutureReturnCode::SUCCESS;
-}
-
-// Build trajectory action goal
-control_msgs::action::FollowJointTrajectory::Goal createTrajectoryGoal(
-    const JointAngles& target, const JointNames& joint_names) {
-    control_msgs::action::FollowJointTrajectory::Goal goal;
-    goal.trajectory.joint_names = joint_names;
-    goal.trajectory.points.resize(1);
-    goal.trajectory.points[0].positions = target;
-    goal.trajectory.points[0].time_from_start = rclcpp::Duration::from_seconds(3.0);
-    return goal;
-}
+// Helper functions removed - inlined into moveToJointPosition for better performance
 
 // Execute robot motion to target joint angles
 bool moveToJointPosition(
@@ -62,34 +24,31 @@ bool moveToJointPosition(
     const JointAngles& target_joints,
     const JointNames& joint_names) {
     
-    auto goal = createTrajectoryGoal(target_joints, joint_names);
+    // Build trajectory action goal (inlined from createTrajectoryGoal)
+    control_msgs::action::FollowJointTrajectory::Goal goal;
+    goal.trajectory.joint_names = joint_names;
+    goal.trajectory.points.resize(1);
+    goal.trajectory.points[0].positions = target_joints;
+    goal.trajectory.points[0].time_from_start = rclcpp::Duration::from_seconds(3.0);
+    
     auto goal_future = client->async_send_goal(goal);
     
-    if (!waitForGoalAcceptance(node, goal_future)) return false;
+    // Wait for goal acceptance
+    auto status = rclcpp::spin_until_future_complete(
+        node->get_node_base_interface(), goal_future);
+    if (status != rclcpp::FutureReturnCode::SUCCESS) return false;
     
     auto goal_handle = goal_future.get();
-    return goal_handle ? waitForMotionComplete(node, goal_handle, client) : false;
+    if (!goal_handle) return false;
+    
+    // Wait for motion completion (inlined from waitForMotionComplete)
+    auto result_future = client->async_get_result(goal_handle);
+    auto result_status = rclcpp::spin_until_future_complete(
+        node->get_node_base_interface(), result_future);
+    return result_status == rclcpp::FutureReturnCode::SUCCESS;
 }
 
-// Logging helpers
-void logCalibrationSuccess(rclcpp::Logger logger, const GravityCompensationParams& params) {
-    RCLCPP_INFO(logger, "Success! Mass: %.3fkg, COM: [%.3f,%.3f,%.3f]m",
-        params.tool_mass_kg, params.p_CoM_P.x(), params.p_CoM_P.y(), params.p_CoM_P.z());
-}
-
-void logTransform(rclcpp::Logger logger, const Transform& tf, 
-                  const std::string& ee_frame, const std::string& base_frame) {
-    const auto& t = tf.translation();
-    const auto q = Eigen::Quaterniond(tf.rotation());
-    RCLCPP_INFO(logger, "Pose of %s w.r.t. %s: pos[%.3f,%.3f,%.3f] quat[%.3f,%.3f,%.3f,%.3f]",
-        ee_frame.c_str(), base_frame.c_str(),
-        t.x(), t.y(), t.z(), q.x(), q.y(), q.z(), q.w());
-}
-
-// YAML helper - write 3D vector
-void writeVec3Yaml(YAML::Emitter& out, const char* key, const Vector3d& v) {
-    out << YAML::Key << key << YAML::Value << YAML::Flow << YAML::BeginSeq << v.x() << v.y() << v.z() << YAML::EndSeq;
-}
+// Logging and YAML helper functions removed - inlined at call sites
 
 // Save calibration parameters to YAML file
 void saveCalibrationToYaml(const GravityCompensationParams& p, const std::string& filename) {
@@ -98,10 +57,10 @@ void saveCalibrationToYaml(const GravityCompensationParams& p, const std::string
         << YAML::Key << "tool_mass_kg" << YAML::Value << p.tool_mass_kg;
     
     // Write all vectors directly
-    writeVec3Yaml(out, "tool_center_of_mass", p.p_CoM_P);
-    writeVec3Yaml(out, "gravity_in_base_frame", p.F_gravity_B);
-    writeVec3Yaml(out, "force_bias", p.F_bias_P);
-    writeVec3Yaml(out, "torque_bias", p.T_bias_P);
+    out << YAML::Key << "tool_center_of_mass" << YAML::Value << YAML::Flow << YAML::BeginSeq << p.p_CoM_P.x() << p.p_CoM_P.y() << p.p_CoM_P.z() << YAML::EndSeq;
+    out << YAML::Key << "gravity_in_base_frame" << YAML::Value << YAML::Flow << YAML::BeginSeq << p.F_gravity_B.x() << p.F_gravity_B.y() << p.F_gravity_B.z() << YAML::EndSeq;
+    out << YAML::Key << "force_bias" << YAML::Value << YAML::Flow << YAML::BeginSeq << p.F_bias_P.x() << p.F_bias_P.y() << p.F_bias_P.z() << YAML::EndSeq;
+    out << YAML::Key << "torque_bias" << YAML::Value << YAML::Flow << YAML::BeginSeq << p.T_bias_P.x() << p.T_bias_P.y() << p.T_bias_P.z() << YAML::EndSeq;
     
     // Rotation matrix as nested sequences
     out << YAML::Key << "rotation_sensor_to_endeffector" << YAML::Value << YAML::BeginSeq;
@@ -140,8 +99,8 @@ WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node")
         this, "/scaled_joint_trajectory_controller/follow_joint_trajectory");
     
     // Subscribe to joint states to track current robot configuration
-    joint_state_sub_ = create_subscription<JointStateMsg>("/joint_states", 10, 
-        std::bind(&WrenchCalibrationNode::updateJointPositions, this, std::placeholders::_1));
+    joint_state_sub_ = create_subscription<JointStateMsg>("/joint_states", 10,
+        [this](const JointStateMsg::ConstSharedPtr& msg) { updateJointPositions(msg); });
     
     // Subscribe to raw F/T sensor data - lambda captures latest reading atomically
     wrench_sub_ = create_subscription<WrenchMsg>("/netft/raw_sensor", 10,
@@ -150,6 +109,9 @@ WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node")
     // Ensure trajectory controller is available before proceeding with calibration
     if (!trajectory_client_->wait_for_action_server(Seconds(10)))
         throw std::runtime_error("Trajectory action server not available");
+    
+    // Pre-allocate joint positions vector to avoid resize() in high-frequency callback
+    current_joint_positions_.resize(joint_names_.size());
     
     RCLCPP_INFO(get_logger(), "Calibration ready");
 }
@@ -160,7 +122,10 @@ CalibrationResult WrenchCalibrationNode::runCalibration() {
     samples.reserve(CalibrationConstants::TOTAL_SAMPLES);  // Pre-allocate for 320 samples (32 poses × 10 samples each)
     
     // Block until both F/T sensor and joint state data are available
-    waitFor(shared_from_this(), [this] { return has_wrench_ && has_joint_states_; });
+    while (!(has_wrench_ && has_joint_states_) && rclcpp::ok()) {
+        rclcpp::spin_some(shared_from_this());
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     
     const auto poses = generateCalibrationPoses();  // Generate 32 poses varying wrist joints only
     RCLCPP_INFO(get_logger(), "Starting %zu-pose calibration", poses.size());
@@ -177,16 +142,49 @@ CalibrationResult WrenchCalibrationNode::runCalibration() {
     }
     
     // Execute LROM (Limited Robot Orientation Method) calibration algorithm
-    auto result = LROMCalibrator().calibrate(samples);
-    if (result.success) logCalibrationSuccess(get_logger(), result.params);
+    CalibrationResult result;
+    
+    // Validate input - expecting all samples (10 per pose)
+    if (samples.size() < CalibrationConstants::NUM_POSES * CalibrationConstants::SAMPLES_PER_POSE) {
+        result.error_message = "Insufficient calibration samples";
+        return result;
+    }
+    
+    // LROM algorithm steps (Yu et al. paper)
+    auto [gravity_in_base, rotation_s_to_e] = estimateGravityAndRotation(samples);
+    auto force_bias = estimateForceBias(samples, gravity_in_base, rotation_s_to_e);
+    auto [com_in_sensor, torque_bias] = estimateCOMAndTorqueBias(samples, force_bias);
+    
+    // Fill result
+    result.params.F_gravity_B = gravity_in_base;
+    result.params.R_PP = rotation_s_to_e;
+    result.params.F_bias_P = force_bias;
+    result.params.p_CoM_P = com_in_sensor;
+    result.params.T_bias_P = torque_bias;
+    result.params.tool_mass_kg = gravity_in_base.norm() / 9.81;
+    result.params.num_poses_collected = samples.size();
+    
+    // Convert rotation matrix to quaternion [x,y,z,w] format
+    Eigen::Quaterniond q(rotation_s_to_e);
+    result.params.quaternion_sensor_to_endeffector = {{q.x(), q.y(), q.z(), q.w()}};
+    
+    // Validate results
+    auto [force_rmse, torque_rmse] = computeResiduals(samples, result.params);
+    result.force_fit_rmse = force_rmse;
+    result.torque_fit_rmse = torque_rmse;
+    
+    result.success = true;
+    
+    if (result.success) {
+        RCLCPP_INFO(get_logger(), "Success! Mass: %.3fkg, COM: [%.3f,%.3f,%.3f]m",
+            result.params.tool_mass_kg, result.params.p_CoM_P.x(), result.params.p_CoM_P.y(), result.params.p_CoM_P.z());
+    }
     
     return result;
 }
 
 // Extract UR joint positions by name from joint_states topic
 void WrenchCalibrationNode::updateJointPositions(const JointStateMsg::ConstSharedPtr& msg) {
-    current_joint_positions_.resize(joint_names_.size());
-    
     // Map joint names to positions - joint_states may have different ordering than expected
     for (size_t i = 0; i < joint_names_.size(); ++i) {
         auto it = std::find(msg->name.begin(), msg->name.end(), joint_names_[i]);
@@ -207,7 +205,12 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
     const auto X_PB = tf2::transformToEigen(
         tf_buffer_.lookupTransform(ee_frame_, base_frame_, tf2::TimePointZero));
     
-    logTransform(get_logger(), X_PB, ee_frame_, base_frame_);
+    // Log transform details
+    const auto& t = X_PB.translation();
+    const auto q = Eigen::Quaterniond(X_PB.rotation());
+    RCLCPP_INFO(get_logger(), "Pose of %s w.r.t. %s: pos[%.3f,%.3f,%.3f] quat[%.3f,%.3f,%.3f,%.3f]",
+        ee_frame_.c_str(), base_frame_.c_str(),
+        t.x(), t.y(), t.z(), q.x(), q.y(), q.z(), q.w());
     
     // Collect wrench data at 10Hz for statistical averaging
     Wrench raw_sensor_avg = Wrench::Zero();
@@ -231,12 +234,13 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
 }
 
 
-
-
-
 // Generate 32 poses varying only wrist joints (LROM method)
 PoseSequence WrenchCalibrationNode::generateCalibrationPoses() {
-    waitFor(shared_from_this(), [this] { return has_joint_states_.load(); });
+    // Wait for joint states to be available
+    while (!has_joint_states_.load() && rclcpp::ok()) {
+        rclcpp::spin_some(shared_from_this());
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     
     constexpr auto NUM_POSES = CalibrationConstants::NUM_POSES;
     PoseSequence poses(NUM_POSES, current_joint_positions_);  // Initialize all poses with current position
@@ -253,7 +257,6 @@ PoseSequence WrenchCalibrationNode::generateCalibrationPoses() {
     }
     return poses;
 }
-
 
 
 } 
@@ -276,4 +279,154 @@ int main(int argc, char** argv) {
     saveCalibrationToYaml(result.params, config_file.string());
     RCLCPP_INFO(node->get_logger(), "Calibration saved to %s", config_file.c_str());
     return 0;  // Success
+}
+
+// ============================================================================
+// CALIBRATION MATH METHODS - LROM Algorithm Implementation
+// ============================================================================
+
+// Convert vector to skew-symmetric matrix for cross product operations
+ur_admittance_controller::Matrix3d ur_admittance_controller::WrenchCalibrationNode::skew_symmetric(const ur_admittance_controller::Vector3d& v) {
+    return (ur_admittance_controller::Matrix3d() << 0, -v.z(), v.y(), v.z(), 0, -v.x(), -v.y(), v.x(), 0).finished();
+}
+
+// Step 1: Estimate gravity vector and sensor-to-endeffector rotation
+std::pair<ur_admittance_controller::Vector3d, ur_admittance_controller::Matrix3d> ur_admittance_controller::WrenchCalibrationNode::estimateGravityAndRotation(
+    const std::vector<ur_admittance_controller::CalibrationSample>& samples) const
+{
+    const size_t n = samples.size();
+    
+    // Build constraint matrices
+    Eigen::MatrixXd A6 = Eigen::MatrixXd::Zero(3 * n, 6);
+    Eigen::MatrixXd A9 = Eigen::MatrixXd::Zero(3 * n, 9);
+    
+    for (size_t i = 0; i < n; ++i) {
+        const auto row = 3 * i;
+        const auto& force = samples[i].F_P_P_raw.head<3>();
+        
+        A6.block<3, 3>(row, 0) = -samples[i].X_PB.rotation();
+        A6.block<3, 3>(row, 3) = -ur_admittance_controller::Matrix3d::Identity();
+        
+        // Build A9 following Yu et al.
+        for (int j = 0; j < 3; ++j) {
+            A9.block<1, 3>(row + j, 3 * j) = force.transpose();
+        }
+    }
+    
+    // Constrained least squares with SO(3) constraint
+    const auto I9 = std::sqrt(3.0) * Eigen::MatrixXd::Identity(9, 9);
+    const auto A6_inv = (A6.transpose() * A6).inverse();
+    const auto H = A9 * I9 - A6 * A6_inv * A6.transpose() * A9 * I9;
+    
+    // Find minimum eigenvalue eigenvector
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(H.transpose() * H, Eigen::ComputeThinU);
+    const auto& sigma = svd.singularValues();
+    const int min_idx = std::distance(sigma.data(), 
+        std::min_element(sigma.data(), sigma.data() + sigma.size()));
+    
+    // Recover solution
+    const auto y_opt = svd.matrixU().col(min_idx);
+    const auto x6 = -(A6_inv * A6.transpose() * A9 * I9) * y_opt;
+    const auto x9 = I9 * y_opt;
+    
+    // Extract gravity (ensure downward)
+    const ur_admittance_controller::Vector3d gravity = x6(2) < 0 ? x6.head<3>() : ur_admittance_controller::Vector3d(-x6.head<3>());
+    
+    // Reconstruct and project rotation to SO(3)
+    ur_admittance_controller::Matrix3d R;
+    R << x9.segment<3>(0).transpose(),
+         x9.segment<3>(3).transpose(), 
+         x9.segment<3>(6).transpose();
+    
+    Eigen::JacobiSVD<ur_admittance_controller::Matrix3d> rot_svd(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    
+    return {gravity, rot_svd.matrixU() * rot_svd.matrixV().transpose()};
+}
+
+// Step 2: Estimate constant force bias in sensor frame
+ur_admittance_controller::Vector3d ur_admittance_controller::WrenchCalibrationNode::estimateForceBias(
+    const std::vector<ur_admittance_controller::CalibrationSample>& samples,
+    const ur_admittance_controller::Vector3d& gravity_in_base,
+    const ur_admittance_controller::Matrix3d& rotation_s_to_e) const
+{
+    ur_admittance_controller::Vector3d force_sum = ur_admittance_controller::Vector3d::Zero();
+    ur_admittance_controller::Vector3d gravity_sum = ur_admittance_controller::Vector3d::Zero();
+    
+    for (const auto& sample : samples) {
+        const ur_admittance_controller::Vector3d force = sample.F_P_P_raw.head<3>();
+        const ur_admittance_controller::Matrix3d R_PB = sample.X_PB.rotation();
+        // Transform gravity to sensor frame for each sample's orientation
+        const ur_admittance_controller::Vector3d gravity_in_sensor = rotation_s_to_e * R_PB * gravity_in_base;
+        
+        force_sum += force;
+        gravity_sum += gravity_in_sensor;
+    }
+    
+    const size_t n = samples.size();
+    return (force_sum - gravity_sum) / static_cast<double>(n);
+}
+
+// Step 3: Estimate tool center of mass and torque bias
+std::pair<ur_admittance_controller::Vector3d, ur_admittance_controller::Vector3d> ur_admittance_controller::WrenchCalibrationNode::estimateCOMAndTorqueBias(
+    const std::vector<ur_admittance_controller::CalibrationSample>& samples,
+    const ur_admittance_controller::Vector3d& force_bias) const
+{
+    const size_t n = samples.size();
+    
+    // Linear system: torque = COM × force + bias
+    // Matrix form: [F×  I₃] × [p_CoM; T_bias] = T_measured
+    Eigen::MatrixXd C(3 * n, 6);
+    Eigen::VectorXd b(3 * n);
+    
+    for (size_t i = 0; i < n; ++i) {
+        const auto& sample = samples[i];
+        const ur_admittance_controller::Vector3d torque = sample.F_P_P_raw.tail<3>();
+        const ur_admittance_controller::Vector3d force  = sample.F_P_P_raw.head<3>();
+        
+        // Critical: Negate to get reaction force at sensor (Newton's 3rd law)
+        const ur_admittance_controller::Vector3d compensated_force = -(force - force_bias);
+        
+        const size_t row_idx = 3 * i;
+        
+        C.block<3, 3>(row_idx, 0) = skew_symmetric(compensated_force);  // p_CoM cross product matrix
+        C.block<3, 3>(row_idx, 3) = ur_admittance_controller::Matrix3d::Identity();               // torque bias terms
+        b.segment<3>(row_idx)      = torque;                            // measured torques
+    }
+    
+    // Solve normal equations: x = (C'C)⁻¹C'b
+    const Eigen::VectorXd solution = (C.transpose() * C).inverse() * C.transpose() * b;
+    
+    const ur_admittance_controller::Vector3d com_in_sensor = solution.head<3>();  // First 3: center of mass
+    const ur_admittance_controller::Vector3d torque_bias   = solution.tail<3>();  // Last 3: torque bias
+    
+    return {com_in_sensor, torque_bias};
+}
+
+// Validate calibration by computing residual errors
+std::pair<double, double> ur_admittance_controller::WrenchCalibrationNode::computeResiduals(
+    const std::vector<ur_admittance_controller::CalibrationSample>& samples,
+    const ur_admittance_controller::GravityCompensationParams& params) const
+{
+    double force_error_sum = 0.0;
+    double torque_error_sum = 0.0;
+    
+    for (const auto& sample : samples) {
+        // Direct compensation math (same as GravityCompensator::compensate but without class overhead)
+        const ur_admittance_controller::Matrix3d R_EB = sample.X_PB.rotation();
+        const ur_admittance_controller::Vector3d f_grav_s = params.R_PP * R_EB * params.F_gravity_B;
+        const ur_admittance_controller::Vector3d gravity_torque = params.p_CoM_P.cross(f_grav_s);
+        
+        ur_admittance_controller::Wrench compensated;
+        compensated.head<3>() = sample.F_P_P_raw.head<3>() - f_grav_s - params.F_bias_P;
+        compensated.tail<3>() = sample.F_P_P_raw.tail<3>() - gravity_torque - params.T_bias_P;
+        
+        force_error_sum += compensated.head<3>().squaredNorm();
+        torque_error_sum += compensated.tail<3>().squaredNorm();
+    }
+    
+    const size_t n = samples.size();
+    const double force_rmse = std::sqrt(force_error_sum / n);
+    const double torque_rmse = std::sqrt(torque_error_sum / n);
+    
+    return {force_rmse, torque_rmse};
 }

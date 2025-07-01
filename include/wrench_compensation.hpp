@@ -33,52 +33,8 @@ public:
     [[nodiscard]] virtual std::string getType() const = 0;
 };
 
-// Gravity and bias compensator - parameter access only
-class GravityCompensator : public WrenchCompensator {
-public:
-    explicit GravityCompensator(const GravityCompensationParams& params) : params_(params) {}
-    
-    // Legacy interface for compatibility (deprecated)
-    [[nodiscard]] Wrench compensate(
-        const Wrench& f_raw_s,
-        const Transform& X_EB,
-        const JointState& joint_state = JointState()) const override;
-    
-    [[nodiscard]] const GravityCompensationParams& getParams() const { return params_; }
-    
-    [[nodiscard]] std::string getType() const override { return "gravity_bias"; }
-    [[nodiscard]] static Matrix3d skew_symmetric(const Vector3d& v);
-    
-private:
-    GravityCompensationParams params_;
-};
 
-// LROM calibrator
-class LROMCalibrator {
-public:
-    static constexpr size_t NUM_CALIBRATION_POSES = CalibrationConstants::NUM_POSES;
-    static constexpr size_t SAMPLES_PER_POSE = CalibrationConstants::SAMPLES_PER_POSE;
-    static constexpr size_t TOTAL_SAMPLES = CalibrationConstants::TOTAL_SAMPLES;
-    
-    [[nodiscard]] CalibrationResult calibrate(const std::vector<CalibrationSample>& samples);
-    
-private:
-    [[nodiscard]] std::pair<Vector3d, Matrix3d> estimateGravityAndRotation(
-        const std::vector<CalibrationSample>& samples) const;
-    
-    [[nodiscard]] Vector3d estimateForceBias(
-        const std::vector<CalibrationSample>& samples,
-        const Vector3d& gravity_in_base,
-        const Matrix3d& rotation_s_to_e) const;
-    
-    [[nodiscard]] std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
-        const std::vector<CalibrationSample>& samples,
-        const Vector3d& force_bias) const;
-    
-    [[nodiscard]] std::pair<double, double> computeResiduals(
-        const std::vector<CalibrationSample>& samples,
-        const GravityCompensationParams& params) const;
-};
+// LROMCalibrator class removed - functionality moved to WrenchCalibrationNode
 
 // Utility function declarations  
 void writeVec3Yaml(YAML::Emitter& out, const char* key, const Vector3d& v);

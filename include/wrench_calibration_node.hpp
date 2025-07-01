@@ -7,7 +7,6 @@
 #include <geometry_msgs/msg/wrench_stamped.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
-#include "wrench_compensation.hpp"
 #include "calibration_types.hpp"
 #include <atomic>
 #include <functional>
@@ -25,10 +24,29 @@ public:
     CalibrationResult runCalibration();
     
 private:
-    // Core functionality
+    // Data collection functionality
     void updateJointPositions(const JointStateMsg::ConstSharedPtr& msg);
     void collectSamplesAtCurrentPose(std::vector<CalibrationSample>& samples, size_t pose_idx);
     PoseSequence generateCalibrationPoses();
+    
+    // Calibration math methods (implemented in wrench_compensation.cpp)
+    [[nodiscard]] std::pair<Vector3d, Matrix3d> estimateGravityAndRotation(
+        const std::vector<CalibrationSample>& samples) const;
+    
+    [[nodiscard]] Vector3d estimateForceBias(
+        const std::vector<CalibrationSample>& samples,
+        const Vector3d& gravity_in_base,
+        const Matrix3d& rotation_s_to_e) const;
+    
+    [[nodiscard]] std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
+        const std::vector<CalibrationSample>& samples,
+        const Vector3d& force_bias) const;
+    
+    [[nodiscard]] std::pair<double, double> computeResiduals(
+        const std::vector<CalibrationSample>& samples,
+        const GravityCompensationParams& params) const;
+    
+    [[nodiscard]] static Matrix3d skew_symmetric(const Vector3d& v);
     
     // Member variables
     TrajectoryClient::SharedPtr trajectory_client_;

@@ -87,20 +87,9 @@ set(NODE_DEPENDENCIES
 # ==============================================================================
 # Build Gravity Compensation Library
 # ==============================================================================
-add_library(gravity_compensator SHARED
-  src/wrench_compensation.cpp
-)
 
-target_include_directories(gravity_compensator PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
 
-target_link_libraries(gravity_compensator
-  Eigen3::Eigen
-)
 
-ament_target_dependencies(gravity_compensator rclcpp tf2_eigen)
 
 # ==============================================================================
 # Build Admittance Node Executable (New Standalone Implementation)
@@ -171,7 +160,6 @@ target_link_libraries(admittance_node
 )
 
 target_link_libraries(wrench_node
-  gravity_compensator
   Eigen3::Eigen
   yaml-cpp
 )
@@ -185,7 +173,6 @@ target_link_libraries(verify_poses
 )
 
 target_link_libraries(wrench_calibration_node
-  gravity_compensator
   Eigen3::Eigen
   yaml-cpp
 )
@@ -246,9 +233,9 @@ ament_target_dependencies(wrench_calibration_node ${CALIBRATION_DEPENDENCIES})
 # ==============================================================================
 # Installation
 # ==============================================================================
-# Install parameter library and gravity compensator
+# Install parameter library
 install(
-  TARGETS ur_admittance_controller_parameters gravity_compensator
+  TARGETS ur_admittance_controller_parameters
   EXPORT export_${PROJECT_NAME}
   RUNTIME DESTINATION lib
   LIBRARY DESTINATION lib
