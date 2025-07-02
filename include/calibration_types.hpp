@@ -22,7 +22,7 @@ using Milliseconds = std::chrono::milliseconds;
 
 // Calibration constants
 namespace CalibrationConstants {
-    static constexpr size_t NUM_POSES = 32;
+    static constexpr int NUM_POSES = 32;
     static constexpr size_t SAMPLES_PER_POSE = 10;
     static constexpr size_t TOTAL_SAMPLES = NUM_POSES * SAMPLES_PER_POSE;
     static constexpr double SAMPLE_RATE_HZ = 10.0;
@@ -44,16 +44,12 @@ struct CalibrationSample {
 };
 
 struct GravityCompensationParams {
-    double tool_mass_kg{0.0};
     Vector3d p_CoM_P{Vector3d::Zero()};  // Position of CoM in Payload frame
     Vector3d F_gravity_B{Vector3d::Zero()};  // Gravity force in Base frame
     Vector3d F_bias_P{Vector3d::Zero()};     // Force bias in Payload frame
     Vector3d T_bias_P{Vector3d::Zero()};     // Torque bias in Payload frame
     Matrix3d R_PP{Matrix3d::Identity()};     // Rotation from Payload to Payload (identity for UR)
     std::array<double, 4> quaternion_sensor_to_endeffector{{0, 0, 0, 1}};  // Keep for compatibility
-    size_t num_poses_collected{0};
-    double residual_force_error{0.0};
-    double residual_torque_error{0.0};
 };
 
 struct CalibrationResult {
