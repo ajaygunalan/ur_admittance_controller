@@ -27,6 +27,7 @@ endif()
 # Core ROS2 packages
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 
 # Parameter generation and plugin loading
 find_package(pluginlib REQUIRED)
@@ -111,6 +112,7 @@ add_executable(wrench_node
 # ==============================================================================
 add_executable(wrench_calibration_node
   src/wrench_calibration_node.cpp
+  src/wrench_calibration_algorithm.cpp
 )
 
 # ==============================================================================
@@ -177,18 +179,10 @@ target_link_libraries(wrench_calibration_node
   yaml-cpp
 )
 
-# Define package source directory for calibration file saving
-target_compile_definitions(wrench_calibration_node PRIVATE
-  PACKAGE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-)
-
-# Define package source directory for wrench_node to find calibration file
-target_compile_definitions(wrench_node PRIVATE
-  PACKAGE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-)
+# Note: Removed PACKAGE_SOURCE_DIR definitions - now using ament_index_cpp for proper installation support
 
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
-ament_target_dependencies(wrench_node rclcpp geometry_msgs std_srvs tf2 tf2_ros tf2_eigen)
+ament_target_dependencies(wrench_node rclcpp geometry_msgs std_srvs tf2 tf2_ros tf2_eigen ament_index_cpp)
 
 # Additional dependencies for init_robot and verify_poses
 set(INIT_ROBOT_DEPENDENCIES
@@ -226,6 +220,7 @@ set(CALIBRATION_DEPENDENCIES
   tf2
   tf2_ros
   tf2_eigen
+  ament_index_cpp
 )
 
 ament_target_dependencies(wrench_calibration_node ${CALIBRATION_DEPENDENCIES})
@@ -258,6 +253,13 @@ install(
 install(
   DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
+)
+
+# Ensure config directory structure is maintained for calibration file output
+install(
+  FILES config/wrench_calibration.yaml
+  DESTINATION share/${PROJECT_NAME}/config
+  OPTIONAL  # File may not exist initially
 )
 
 # ==============================================================================

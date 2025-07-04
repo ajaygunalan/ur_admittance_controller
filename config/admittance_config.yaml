@@ -45,7 +45,7 @@ ur_admittance_controller:
 
   tip_link:
     type: string
-    default_value: "tool_payload"
+    default_value: "tool0"
     description: "Robot end-effector frame"
     read_only: true
 

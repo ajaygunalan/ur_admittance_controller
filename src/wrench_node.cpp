@@ -3,13 +3,14 @@
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <filesystem>
 #include <yaml-cpp/yaml.h>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 namespace ur_admittance_controller {
 
 // Frame names for ur_admittance_controller kinematic tree
 static constexpr const char* BASE_FRAME = "base_link";
-static constexpr const char* EE_FRAME = "tool_payload";
-static constexpr const char* SENSOR_FRAME = "tool_payload";
+static constexpr const char* EE_FRAME = "tool0";
+static constexpr const char* SENSOR_FRAME = "netft_link1";
 
 WrenchNode::WrenchNode() : Node("wrench_node"),
     tf_buffer_(std::make_unique<tf2_ros::Buffer>(get_clock())),
@@ -97,12 +98,20 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
 
 bool WrenchNode::loadCalibrationParams() {
     // DESIGN: ROS2 parameter system allows runtime reconfiguration via launch files
-    auto calib_file = declare_parameter<std::string>("calibration_file", 
-        std::string(PACKAGE_SOURCE_DIR) + "/config/wrench_calibration.yaml");
+    std::string default_calib_file;
+    try {
+        std::string package_share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
+        default_calib_file = package_share_dir + "/config/wrench_calibration.yaml";
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(get_logger(), "Package not found: %s", e.what());
+        return false;
+    }
+    
+    auto calib_file = declare_parameter<std::string>("calibration_file", default_calib_file);
     
     // CRITICAL: Fail fast if calibration missing - prevents undefined behavior
     if (!std::filesystem::exists(calib_file)) {
-        RCLCPP_ERROR(get_logger(), "Calibration file not found");
+        RCLCPP_ERROR(get_logger(), "Calibration file not found: %s", calib_file.c_str());
         return false;
     }
     

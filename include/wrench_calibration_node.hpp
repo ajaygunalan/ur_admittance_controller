@@ -1,15 +1,19 @@
 #pragma once
 
+// System headers (C++ standard library)
+#include <atomic>
+
+// Third-party headers (ROS2)
+#include <control_msgs/action/follow_joint_trajectory.hpp>
+#include <geometry_msgs/msg/wrench_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
-#include <control_msgs/action/follow_joint_trajectory.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
-#include <geometry_msgs/msg/wrench_stamped.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+
+// Local headers
 #include "calibration_types.hpp"
-#include <atomic>
-#include <functional>
 
 namespace ur_admittance_controller {
 
@@ -20,33 +24,26 @@ public:
     using JointStateMsg = sensor_msgs::msg::JointState;
     using WrenchMsg = geometry_msgs::msg::WrenchStamped;
     
+    
     WrenchCalibrationNode();
-    CalibrationResult runCalibration();
+    bool initialize();  // New: separate initialization method
+    bool executeCalibrationSequence();
+    bool computeCalibrationParameters();
     
 private:
     // Data collection functionality
     void updateJointPositions(const JointStateMsg::ConstSharedPtr& msg);
     void collectSamplesAtCurrentPose(std::vector<CalibrationSample>& samples, size_t pose_idx);
-    PoseSequence generateCalibrationPoses();
+    void generateCalibrationPoses();  // New: extracted from constructor
     
     // Calibration math methods (implemented in wrench_compensation.cpp)
-    [[nodiscard]] std::pair<Vector3d, Matrix3d> estimateGravityAndRotation(
-        const std::vector<CalibrationSample>& samples) const;
-    
-    [[nodiscard]] Vector3d estimateForceBias(
-        const std::vector<CalibrationSample>& samples,
-        const Vector3d& gravity_in_base,
-        const Matrix3d& rotation_s_to_e) const;
-    
-    [[nodiscard]] std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
-        const std::vector<CalibrationSample>& samples,
-        const Vector3d& force_bias) const;
-    
     [[nodiscard]] std::pair<double, double> computeResiduals(
         const std::vector<CalibrationSample>& samples,
         const GravityCompensationParams& params) const;
     
-    [[nodiscard]] static Matrix3d skew_symmetric(const Vector3d& v);
+    // New member functions (converted from free functions)
+    bool moveToJointPosition(const JointAngles& target_joints);
+    bool saveCalibrationToYaml();
     
     // Member variables
     TrajectoryClient::SharedPtr trajectory_client_;
@@ -55,10 +52,18 @@ private:
     tf2_ros::Buffer tf_buffer_;
     tf2_ros::TransformListener tf_listener_;
     
+    
     WrenchMsg latest_wrench_;
     JointAngles current_joint_positions_;
+    PoseSequence calibration_poses_;
+    std::vector<CalibrationSample> calibration_samples_;
     std::atomic<bool> has_wrench_{false};
     std::atomic<bool> has_joint_states_{false};
+    
+    // New member variables for calibration state
+    GravityCompensationParams calibration_params_;
+    bool calibration_computed_{false};
+    
     
     inline static const JointNames joint_names_ = CalibrationConstants::UR_JOINT_NAMES;
     std::string base_frame_;
