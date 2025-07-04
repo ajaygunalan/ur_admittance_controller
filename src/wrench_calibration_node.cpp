@@ -187,10 +187,10 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
         t.x(), t.y(), t.z(), q.x(), q.y(), q.z(), q.w());
     
     // Collect wrench data at 10Hz for statistical averaging
-    Wrench raw_sensor_avg = Wrench::Zero();
+    Wrench6d raw_sensor_avg = Wrench6d::Zero();
     for (size_t i = 0; i < CalibrationConstants::SAMPLES_PER_POSE; ++i) {
         // Convert ROS WrenchStamped message to Eigen 6D vector for calibration math
-        Wrench wrench;
+        Wrench6d wrench;
         wrench << latest_wrench_.wrench.force.x, latest_wrench_.wrench.force.y, latest_wrench_.wrench.force.z,    // Forces [N]
                   latest_wrench_.wrench.torque.x, latest_wrench_.wrench.torque.y, latest_wrench_.wrench.torque.z;  // Torques [Nm]
         raw_sensor_avg += wrench;  // Accumulate for averaging
@@ -202,9 +202,12 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
     raw_sensor_avg /= CalibrationConstants::SAMPLES_PER_POSE;  // Calculate mean
     
     // Log averaged F/T readings for this pose in sensor coordinate frame
+    // Drake notation: use .head<3>() for force, .tail<3>() for torque
+    Force3d force_avg = raw_sensor_avg.head<3>();
+    Torque3d torque_avg = raw_sensor_avg.tail<3>();
     RCLCPP_INFO(get_logger(), "Raw F/T (sensor frame): F[%.2f,%.2f,%.2f]N, T[%.3f,%.3f,%.3f]Nm",
-        raw_sensor_avg(0), raw_sensor_avg(1), raw_sensor_avg(2),  // Forces X,Y,Z
-        raw_sensor_avg(3), raw_sensor_avg(4), raw_sensor_avg(5)); // Torques X,Y,Z
+        force_avg.x(), force_avg.y(), force_avg.z(),   // Forces X,Y,Z
+        torque_avg.x(), torque_avg.y(), torque_avg.z()); // Torques X,Y,Z
 }
 
 // =============================================================================
@@ -216,26 +219,26 @@ bool WrenchCalibrationNode::computeCalibrationParameters() {
     RCLCPP_INFO(get_logger(), "Processing %zu calibration samples", calibration_samples_.size());
     
     // LROM algorithm steps (Yu et al. paper)
-    auto [gravity_in_base, rotation_s_to_e] = ur_admittance_controller::estimateGravityAndRotation(calibration_samples_);
-    auto force_bias = ur_admittance_controller::estimateForceBias(calibration_samples_, gravity_in_base, rotation_s_to_e);
-    auto [com_in_sensor, torque_bias] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, force_bias);
+    auto [f_gravity_B, R_SE] = ur_admittance_controller::estimateGravityAndRotation(calibration_samples_);
+    auto f_bias_S = ur_admittance_controller::estimateForceBias(calibration_samples_, f_gravity_B, R_SE);
+    auto [p_SCoM_S, t_bias_S] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, f_bias_S);
     
     // Robot installation bias estimation (matches old system sequence)
-    [[maybe_unused]] auto rot_b_g = ur_admittance_controller::estimateRobotInstallationBias(gravity_in_base);
+    [[maybe_unused]] auto rot_b_g = ur_admittance_controller::estimateRobotInstallationBias(f_gravity_B);
     
     // Fill calibration parameters using member variable
-    calibration_params_.F_gravity_B = gravity_in_base;
-    calibration_params_.R_PP = rotation_s_to_e;
-    calibration_params_.F_bias_P = force_bias;
-    calibration_params_.p_CoM_P = com_in_sensor;
-    calibration_params_.T_bias_P = torque_bias;
+    calibration_params_.f_gravity_B = f_gravity_B;
+    calibration_params_.R_SE = R_SE;
+    calibration_params_.f_bias_S = f_bias_S;
+    calibration_params_.p_SCoM_S = p_SCoM_S;
+    calibration_params_.t_bias_S = t_bias_S;
     
     // Convert rotation matrix to quaternion [x,y,z,w] format
-    Eigen::Quaterniond q(rotation_s_to_e);
+    Eigen::Quaterniond q(R_SE);
     calibration_params_.quaternion_sensor_to_endeffector = {{q.x(), q.y(), q.z(), q.w()}};
     
     RCLCPP_INFO(get_logger(), "Calibration successful! COM: [%.3f,%.3f,%.3f]m",
-                calibration_params_.p_CoM_P.x(), calibration_params_.p_CoM_P.y(), calibration_params_.p_CoM_P.z());
+                calibration_params_.p_SCoM_S.x(), calibration_params_.p_SCoM_S.y(), calibration_params_.p_SCoM_S.z());
     
     // Mark calibration as computed
     calibration_computed_ = true;
@@ -272,22 +275,22 @@ bool WrenchCalibrationNode::saveCalibrationToYaml() {
     
     // Write all vectors directly
     out << YAML::Key << "tool_center_of_mass" << YAML::Value << YAML::Flow 
-        << YAML::BeginSeq << calibration_params_.p_CoM_P.x() << calibration_params_.p_CoM_P.y() 
-        << calibration_params_.p_CoM_P.z() << YAML::EndSeq;
+        << YAML::BeginSeq << calibration_params_.p_SCoM_S.x() << calibration_params_.p_SCoM_S.y() 
+        << calibration_params_.p_SCoM_S.z() << YAML::EndSeq;
     out << YAML::Key << "gravity_in_base_frame" << YAML::Value << YAML::Flow 
-        << YAML::BeginSeq << calibration_params_.F_gravity_B.x() << calibration_params_.F_gravity_B.y() 
-        << calibration_params_.F_gravity_B.z() << YAML::EndSeq;
+        << YAML::BeginSeq << calibration_params_.f_gravity_B.x() << calibration_params_.f_gravity_B.y() 
+        << calibration_params_.f_gravity_B.z() << YAML::EndSeq;
     out << YAML::Key << "force_bias" << YAML::Value << YAML::Flow 
-        << YAML::BeginSeq << calibration_params_.F_bias_P.x() << calibration_params_.F_bias_P.y() 
-        << calibration_params_.F_bias_P.z() << YAML::EndSeq;
+        << YAML::BeginSeq << calibration_params_.f_bias_S.x() << calibration_params_.f_bias_S.y() 
+        << calibration_params_.f_bias_S.z() << YAML::EndSeq;
     out << YAML::Key << "torque_bias" << YAML::Value << YAML::Flow 
-        << YAML::BeginSeq << calibration_params_.T_bias_P.x() << calibration_params_.T_bias_P.y() 
-        << calibration_params_.T_bias_P.z() << YAML::EndSeq;
+        << YAML::BeginSeq << calibration_params_.t_bias_S.x() << calibration_params_.t_bias_S.y() 
+        << calibration_params_.t_bias_S.z() << YAML::EndSeq;
     
     // Rotation matrix as nested sequences
     out << YAML::Key << "rotation_sensor_to_endeffector" << YAML::Value << YAML::BeginSeq;
     for (int i = 0; i < 3; ++i) {
-        out << YAML::Flow << std::vector<double>{calibration_params_.R_PP(i,0), calibration_params_.R_PP(i,1), calibration_params_.R_PP(i,2)};
+        out << YAML::Flow << std::vector<double>{calibration_params_.R_SE(i,0), calibration_params_.R_SE(i,1), calibration_params_.R_SE(i,2)};
     }
     out << YAML::EndSeq;
     

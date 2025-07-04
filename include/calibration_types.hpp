@@ -12,7 +12,10 @@ namespace ur_admittance_controller {
 // Common type aliases
 using Vector3d = Eigen::Vector3d;
 using Matrix3d = Eigen::Matrix3d;
-using Wrench = Eigen::Matrix<double, 6, 1>;
+using Wrench6d = Eigen::Matrix<double, 6, 1>;  // 6D [fx,fy,fz,tx,ty,tz]
+using Force3d = Eigen::Vector3d;                // 3D force only
+using Torque3d = Eigen::Vector3d;               // 3D torque only
+using Wrench = Wrench6d;  // Keep for backward compatibility
 using Transform = Eigen::Isometry3d;
 using JointAngles = std::vector<double>;
 using JointNames = std::vector<std::string>;
@@ -44,11 +47,11 @@ struct CalibrationSample {
 };
 
 struct GravityCompensationParams {
-    Vector3d p_CoM_P{Vector3d::Zero()};  // Position of CoM in Payload frame
-    Vector3d F_gravity_B{Vector3d::Zero()};  // Gravity force in Base frame
-    Vector3d F_bias_P{Vector3d::Zero()};     // Force bias in Payload frame
-    Vector3d T_bias_P{Vector3d::Zero()};     // Torque bias in Payload frame
-    Matrix3d R_PP{Matrix3d::Identity()};     // Rotation from Payload to Payload (identity for UR)
+    Vector3d p_SCoM_S{Vector3d::Zero()};  // Position of CoM from S, expressed in S
+    Force3d f_gravity_B{Vector3d::Zero()};  // Gravity force in Base frame
+    Force3d f_bias_S{Vector3d::Zero()};     // Force bias in Sensor frame
+    Torque3d t_bias_S{Vector3d::Zero()};     // Torque bias in Sensor frame
+    Matrix3d R_SE{Matrix3d::Identity()};     // Rotation from E to S
     std::array<double, 4> quaternion_sensor_to_endeffector{{0, 0, 0, 1}};  // Keep for compatibility
 };
 
