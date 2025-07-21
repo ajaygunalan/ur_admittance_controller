@@ -129,6 +129,13 @@ add_executable(verify_poses
   src/verify_poses.cpp
 )
 
+# ==============================================================================
+# Build Test IK Executable
+# ==============================================================================
+add_executable(test_ik
+  src/test_ik.cpp
+)
+
 # Include directories for nodes
 target_include_directories(admittance_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -146,6 +153,11 @@ target_include_directories(init_robot PUBLIC
 )
 
 target_include_directories(verify_poses PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_include_directories(test_ik PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
@@ -168,10 +180,16 @@ target_link_libraries(wrench_node
 
 target_link_libraries(init_robot
   Eigen3::Eigen
+  yaml-cpp
 )
 
 target_link_libraries(verify_poses
   Eigen3::Eigen
+)
+
+target_link_libraries(test_ik
+  Eigen3::Eigen
+  yaml-cpp
 )
 
 target_link_libraries(wrench_calibration_node
@@ -209,6 +227,7 @@ set(VERIFY_POSES_DEPENDENCIES
 
 ament_target_dependencies(init_robot ${INIT_ROBOT_DEPENDENCIES})
 ament_target_dependencies(verify_poses ${VERIFY_POSES_DEPENDENCIES})
+ament_target_dependencies(test_ik ${INIT_ROBOT_DEPENDENCIES})
 
 # Dependencies for wrench_calibration_node
 set(CALIBRATION_DEPENDENCIES
@@ -239,7 +258,7 @@ install(
 
 # Install the node executables
 install(
-  TARGETS admittance_node wrench_node wrench_calibration_node init_robot verify_poses
+  TARGETS admittance_node wrench_node wrench_calibration_node init_robot verify_poses test_ik
   DESTINATION lib/${PROJECT_NAME}
 )
 

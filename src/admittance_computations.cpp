@@ -34,10 +34,12 @@ void AdmittanceNode::initializeStateVectors() {
 }
 
 void AdmittanceNode::setDefaultEquilibrium() {
+  // Declare parameters with fallback defaults
   declare_parameter("equilibrium.position", std::vector<double>{0.49, 0.13, 0.49});
   // Using positive-w convention for quaternion (w,x,y,z)
   declare_parameter("equilibrium.orientation", std::vector<double>{0.00, 0.71, -0.71, 0.00});
   
+  // Get parameters - will use YAML values if loaded with --params-file
   auto eq_pos = get_parameter("equilibrium.position").as_double_array();
   auto eq_ori = get_parameter("equilibrium.orientation").as_double_array();
   
@@ -45,8 +47,9 @@ void AdmittanceNode::setDefaultEquilibrium() {
   // Convert from WXYZ (parameter format) to Eigen's WXYZ constructor format
   X_BP_desired.linear() = Eigen::Quaterniond(eq_ori[0], eq_ori[1], eq_ori[2], eq_ori[3]).toRotationMatrix();
   
-  RCLCPP_DEBUG(get_logger(), "Equilibrium pose set: position=[%.3f, %.3f, %.3f]", 
-               eq_pos[0], eq_pos[1], eq_pos[2]);
+  RCLCPP_INFO(get_logger(), "Equilibrium pose set: position=[%.3f, %.3f, %.3f], orientation=[%.3f, %.3f, %.3f, %.3f]", 
+               eq_pos[0], eq_pos[1], eq_pos[2],
+               eq_ori[0], eq_ori[1], eq_ori[2], eq_ori[3]);
 }
 
 void AdmittanceNode::update_admittance_parameters() {

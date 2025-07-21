@@ -18,12 +18,13 @@
 #include <kdl/tree.hpp>
 #include <kdl/chain.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
-#include <kdl/chainiksolverpos_lma.hpp>
 #include <kdl/frames.hpp>
 #include <chrono>
 #include <memory>
 #include <vector>
 #include <string>
+#include <fstream>
+#include <yaml-cpp/yaml.h>
 
 class EquilibriumInitializer : public rclcpp::Node {
 public:
@@ -32,9 +33,16 @@ public:
   EquilibriumInitializer() : Node("equilibrium_initializer"),
     joint_names_({"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
                   "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"}) {
-    // Declare parameters
-    this->declare_parameter("equilibrium.position", std::vector<double>{0.49, 0.13, 0.49});
-    this->declare_parameter("equilibrium.orientation", std::vector<double>{-0.00, -0.71, 0.71, 0.00});
+    // Declare parameters - now using joint space equilibrium
+    // Good working pose: shoulder at -90°, elbow bent ~90°, wrist oriented down
+    this->declare_parameter("equilibrium.joints", std::vector<double>{
+      0.0,     // shoulder_pan: facing forward
+      -1.571,  // shoulder_lift: -90° (horizontal)
+      1.571,   // elbow: ~90° bend
+      -1.571,  // wrist_1: -90° 
+      -1.571,  // wrist_2: ~-90°
+      0.0      // wrist_3: 0°
+    });
     this->declare_parameter("movement_duration", 12.0);
     movement_duration_ = this->get_parameter("movement_duration").as_double();
     
@@ -92,9 +100,9 @@ private:
     if (!kdl_tree_.getChain("base_link", "wrist_3_link", kdl_chain_))
       return false;
     
-    // Get the fixed transform from wrist_3_link to tool_payload
+    // Get the fixed transform from wrist_3_link to p42v_link1 (probe tip)
     KDL::Chain tool_chain;
-    if (!kdl_tree_.getChain("wrist_3_link", "tool_payload", tool_chain))
+    if (!kdl_tree_.getChain("wrist_3_link", "p42v_link1", tool_chain))
       return false;
     KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
     KDL::JntArray zero_joint(tool_chain.getNrOfJoints());
@@ -103,62 +111,46 @@ private:
     RCLCPP_INFO(get_logger(), "Tool offset from wrist_3_link: [%.3f, %.3f, %.3f]",
                 ft_offset_.p.x(), ft_offset_.p.y(), ft_offset_.p.z());
     
-    // Create FK and IK solvers
+    // Create FK solver (no IK needed for joint space approach)
     fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(kdl_chain_);
-    ik_solver_ = std::make_unique<KDL::ChainIkSolverPos_LMA>(kdl_chain_);
     
     RCLCPP_INFO(get_logger(), "KDL kinematics initialized with %d joints", kdl_chain_.getNrOfJoints());
     return true;
   }
   
   bool computeEquilibriumJoints() {
-    // Get equilibrium parameters
-    auto eq_pos = this->get_parameter("equilibrium.position").as_double_array();
-    auto eq_ori = this->get_parameter("equilibrium.orientation").as_double_array();
+    // Get equilibrium joint parameters
+    auto eq_joints = this->get_parameter("equilibrium.joints").as_double_array();
     
-    if (eq_pos.size() != 3 || eq_ori.size() != 4)
-      return false;
-    
-    // Create target frame for tool from position and quaternion (wxyz format)
-    KDL::Frame target_tool_frame(KDL::Rotation::Quaternion(eq_ori[1], eq_ori[2], eq_ori[3], eq_ori[0]),
-                                 KDL::Vector(eq_pos[0], eq_pos[1], eq_pos[2]));
-    
-    // Convert target from tool frame to wrist_3 frame for IK
-    KDL::Frame target_wrist3_frame = target_tool_frame * ft_offset_.Inverse();
-    
-    // Initial joint positions for IK seed (6 joints)
-    KDL::JntArray q_init(6);
-    double init_vals[] = {0.0, -1.57, 1.57, -1.57, -1.57, 0.0};
-    for (int i = 0; i < 6; ++i) q_init(i) = init_vals[i];
-    
-    // Solve IK for wrist_3 position
-    KDL::JntArray q_out(6);
-    int ik_result = ik_solver_->CartToJnt(q_init, target_wrist3_frame, q_out);
-    
-    if (ik_result < 0) {
-      RCLCPP_ERROR(get_logger(), "IK failed with error code %d", ik_result);
+    if (eq_joints.size() != 6) {
+      RCLCPP_ERROR(get_logger(), "equilibrium.joints must have 6 values");
       return false;
     }
     
-    // Store equilibrium positions (6 joints)
-    equilibrium_positions_.resize(6);
-    for (unsigned int i = 0; i < 6; ++i) equilibrium_positions_[i] = q_out(i);
+    // Store equilibrium positions directly from parameter
+    equilibrium_positions_ = eq_joints;
     
-    RCLCPP_INFO(get_logger(), "IK solved: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+    RCLCPP_INFO(get_logger(), "Joint space equilibrium: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
                 equilibrium_positions_[0], equilibrium_positions_[1], equilibrium_positions_[2],
                 equilibrium_positions_[3], equilibrium_positions_[4], equilibrium_positions_[5]);
     
-    // Verify with FK
+    // Compute FK to verify tool position
+    KDL::JntArray q_eq(6);
+    for (size_t i = 0; i < 6; ++i) q_eq(i) = equilibrium_positions_[i];
+    
     KDL::Frame fk_wrist3_frame;
-    fk_solver_->JntToCart(q_out, fk_wrist3_frame);
+    fk_solver_->JntToCart(q_eq, fk_wrist3_frame);
     
     // Apply fixed transform to get tool position
     KDL::Frame fk_tool_frame = fk_wrist3_frame * ft_offset_;
     
-    RCLCPP_INFO(get_logger(), "FK verification - tool at: [%.3f, %.3f, %.3f]",
+    RCLCPP_INFO(get_logger(), "FK computed - tool at: [%.3f, %.3f, %.3f]",
                 fk_tool_frame.p.x(), fk_tool_frame.p.y(), fk_tool_frame.p.z());
-    RCLCPP_INFO(get_logger(), "Target was: [%.3f, %.3f, %.3f]", 
-                eq_pos[0], eq_pos[1], eq_pos[2]);
+    
+    // Extract quaternion for logging
+    double x, y, z, w;
+    fk_tool_frame.M.GetQuaternion(x, y, z, w);
+    RCLCPP_INFO(get_logger(), "Tool orientation (wxyz): [%.3f, %.3f, %.3f, %.3f]", w, x, y, z);
     
     return true;
   }
@@ -250,10 +242,81 @@ private:
     return true;
   }
   
+  void computeForwardKinematics(const std::vector<double>& joint_positions, 
+                               std::vector<double>& position, 
+                               std::vector<double>& orientation) {
+    // Compute FK for given joint positions
+    KDL::JntArray q_joints(6);
+    for (size_t i = 0; i < 6; ++i) q_joints(i) = joint_positions[i];
+    
+    KDL::Frame fk_wrist3_frame;
+    fk_solver_->JntToCart(q_joints, fk_wrist3_frame);
+    
+    // Apply fixed transform to get tool position
+    KDL::Frame fk_tool_frame = fk_wrist3_frame * ft_offset_;
+    
+    // Extract position
+    position.clear();
+    position.push_back(fk_tool_frame.p.x());
+    position.push_back(fk_tool_frame.p.y());
+    position.push_back(fk_tool_frame.p.z());
+    
+    // Extract orientation (quaternion WXYZ)
+    double x, y, z, w;
+    fk_tool_frame.M.GetQuaternion(x, y, z, w);
+    orientation.clear();
+    orientation.push_back(w);
+    orientation.push_back(x);
+    orientation.push_back(y);
+    orientation.push_back(z);
+  }
+  
+  bool saveEquilibriumToConfig(const std::vector<double>& position, const std::vector<double>& orientation) {
+    try {
+      // Write to separate equilibrium.yaml for runtime parameters
+      std::string config_path = "src/ur_admittance_controller/config/equilibrium.yaml";
+      
+      // Create clean structure for runtime parameters
+      YAML::Emitter out;
+      out << YAML::BeginMap;
+      out << YAML::Key << "admittance_node";
+      out << YAML::Value << YAML::BeginMap;
+      out << YAML::Key << "ros__parameters";
+      out << YAML::Value << YAML::BeginMap;
+      out << YAML::Key << "equilibrium.position" << YAML::Value << YAML::Flow << position;
+      out << YAML::Key << "equilibrium.orientation" << YAML::Value << YAML::Flow << orientation;
+      out << YAML::EndMap; // ros__parameters
+      out << YAML::EndMap; // admittance_node
+      out << YAML::EndMap; // root
+      
+      // Write to file
+      std::ofstream fout(config_path);
+      fout << out.c_str();
+      fout.close();
+      
+      RCLCPP_INFO(get_logger(), "Saved equilibrium to equilibrium.yaml: pos=[%.3f, %.3f, %.3f], ori=[%.3f, %.3f, %.3f, %.3f]",
+                  position[0], position[1], position[2],
+                  orientation[0], orientation[1], orientation[2], orientation[3]);
+      RCLCPP_INFO(get_logger(), "Run admittance_node with: ros2 run ur_admittance_controller admittance_node --ros-args --params-file src/ur_admittance_controller/config/equilibrium.yaml");
+      return true;
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(get_logger(), "Failed to save equilibrium to config: %s", e.what());
+      return false;
+    }
+  }
+  
   void executeInitialization() {
     if (moveToEquilibrium()) {
       RCLCPP_INFO(get_logger(), "Robot moved to equilibrium position");
       std::this_thread::sleep_for(std::chrono::seconds(1));
+      
+      // Compute FK for equilibrium joint positions
+      std::vector<double> cart_position, cart_orientation;
+      computeForwardKinematics(equilibrium_positions_, cart_position, cart_orientation);
+      
+      // Save to config file
+      saveEquilibriumToConfig(cart_position, cart_orientation);
+      
       // Controller switching is now done manually after calibration
       // switchToVelocityController();
     }
@@ -267,9 +330,8 @@ private:
   // KDL structures
   KDL::Tree kdl_tree_;
   KDL::Chain kdl_chain_;
-  KDL::Frame ft_offset_;  // Fixed transform from wrist_3 to tool_payload
+  KDL::Frame ft_offset_;  // Fixed transform from wrist_3 to p42v_link1 (probe tip)
   std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver_;
-  std::unique_ptr<KDL::ChainIkSolverPos_LMA> ik_solver_;
   // ROS interfaces
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp_action::Client<FollowJointTrajectory>::SharedPtr trajectory_client_;
