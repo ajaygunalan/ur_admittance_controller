@@ -25,16 +25,16 @@
 namespace ur_admittance_controller {
 
 /**
- * @brief Estimates gravity vector and sensor-to-endeffector rotation using LROM algorithm
+ * @brief Estimates gravitational force in base frame using LROM algorithm
  * 
- * Implements the Limited Robot Orientation Method (LROM) as described in Section III-A.2.
- * Uses constrained least squares with SO(3) normalization (Equations 26, 32-34).
+ * Implements Section 1 of the paper (Equations 24-34).
+ * Uses constrained least squares to find F_b without needing to know R_SE.
  * 
  * @param samples Calibration samples containing force readings and robot poses
- * @return Pair of (gravity_vector_in_base_frame, rotation_sensor_to_endeffector)
+ * @return Gravitational force vector in base frame (F_b)
  * @throws std::invalid_argument if insufficient samples provided
  */
-std::pair<Vector3d, Matrix3d> estimateGravityAndRotation(
+Vector3d estimateGravitationalForceInBaseFrame(
     const std::vector<CalibrationSample>& samples)
 {
     // Validate minimum samples for overdetermined system
@@ -60,11 +60,11 @@ std::pair<Vector3d, Matrix3d> estimateGravityAndRotation(
         // A6 left block: -R_EB (negative rotation from base to end-effector)
         A6.block<3, 3>(row_offset, 0) = -R_EB;
         
-        // A6 right block: -I (negative identity for force bias term)
+        // A6 right block: -I (negative identity for R_SE^T * force_bias term)
         A6.block<3, 3>(row_offset, 3) = -Matrix3d::Identity();
 
-        // A9: Force readings arranged for rotation matrix estimation
-        // Matches indexing from old implementation exactly
+        // A9: Force readings arranged for R_SE^T multiplication
+        // Note: These are columns of R_SE^T, not R_SE itself!
         for (int row = 0; row < 3; ++row) {
             for (int col = 0; col < 3; ++col) {
                 A9(row_offset + row, 3 * row + col) = force[col];
@@ -75,7 +75,7 @@ std::pair<Vector3d, Matrix3d> estimateGravityAndRotation(
     // Solve constrained least squares problem with SO(3) constraint (Eq. 32)
     // Constraint: ||sqrt(3) * I9 * y||² = 1 ensures rotation matrix normalization
     const double sqrt3 = std::sqrt(3.0);
-    const auto I9 = sqrt3 * Eigen::Matrix<double, 9, 9>::Identity();
+    const auto I9 = sqrt3 * Eigen::Matrix<double, 9, 9>::Identity();  // Using Γ⁻¹ = √3·I₉ directly instead of paper's Γ = (√3/3)·I₉ to avoid inversion
     
     // Compute (A6ᵀA6)⁻¹ for null space projection
     const auto A6_inv = (A6.transpose() * A6).inverse();
@@ -99,79 +99,82 @@ std::pair<Vector3d, Matrix3d> estimateGravityAndRotation(
     // Extract optimal solution from eigenvector (Eq. 33)
     const auto y_opt = svd.matrixU().col(min_idx);
     
-    // Recover x6 (gravity + bias) and x9 (vectorized rotation)
+    // Recover x6 (gravity + bias terms)
     const auto x6 = -(A6_inv * A6.transpose() * A9 * I9) * y_opt;
-    const auto x9 = I9 * y_opt;
 
     // Extract gravity vector ensuring downward direction (Eq. 34)
     // Convention: gravity points down (negative z in base frame)
-    const Vector3d gravity = x6(2) < 0 ? x6.head<3>() : Vector3d(-x6.head<3>());
+    const Vector3d gravity = x6(2) < 0 ? x6.head<3>() : Vector3d(-x6.head<3>());  // Simplified Eq.34: ensure F_b points down (-Z) for fixed horizontal installation
 
-    // Reconstruct 3x3 rotation matrix from vectorized form
-    Matrix3d R_raw;
-    R_raw << x9.segment<3>(0).transpose(),  // Row 1
-             x9.segment<3>(3).transpose(),  // Row 2
-             x9.segment<3>(6).transpose();  // Row 3
-
-    // Project to SO(3) to ensure valid rotation matrix
-    // Removes numerical errors: ensures orthogonality and det(R) = 1
-    Eigen::JacobiSVD<Matrix3d> rot_svd(R_raw, 
-                                       Eigen::ComputeFullU | Eigen::ComputeFullV);
-    const Matrix3d rotation = rot_svd.matrixU() * rot_svd.matrixV().transpose();
-
-    // Note: Old code doesn't handle reflection case (det < 0)
-    // Maintaining exact compatibility by not adding this check
-
-    return {gravity, rotation};
+    // NOTE: We do NOT extract rotation here - that comes from Procrustes in Section 2!
+    return gravity;
 }
 
 /**
- * @brief Estimates the constant force bias in the sensor frame
+ * @brief Estimates sensor-to-endeffector rotation and force bias using Procrustes alignment
  * 
- * Implements force bias estimation as described in Section III-B.
- * - Equation (37): Computes averages of force readings and rotation matrices
- * - Equation (39): f_bias_s = force_avg - R_SE * R_EB_avg * f_gravity_base
+ * Implements Section 2 of the paper (Equations 37-39).
+ * Solves the 3D point set alignment problem to find R_SE and force bias.
  * 
  * @param samples Calibration samples with force readings and robot poses
- * @param gravity_in_base Estimated gravity vector in base frame (Fb from Step 1)
- * @param rotation_s_to_e Sensor-to-endeffector rotation (R_SE from Step 1)
- * @return Force bias vector in sensor frame
+ * @param gravity_in_base Estimated gravity vector in base frame (F_b from Section 1)
+ * @return Pair of (R_SE, force_bias) - rotation and bias in sensor frame
  */
-Vector3d estimateForceBias(
+std::pair<Matrix3d, Vector3d> estimateSensorRotationAndForceBias(
     const std::vector<CalibrationSample>& samples,
-    const Vector3d& gravity_in_base,
-    const Matrix3d& rotation_s_to_e)
+    const Vector3d& gravity_in_base)
 {
-    // ===== Step 1: Average force readings (Eq. 37) =====
+    const size_t n = samples.size();
+    
+    // ===== Step 1: Compute averages (Eq. 37) =====
     // Compute: F̄ = (1/n) * Σ F_i
     Vector3d force_readings_avg = Vector3d::Zero();
     
     for (const auto& sample : samples) {
         force_readings_avg += sample.F_S_S_raw.head<3>();
     }
-    force_readings_avg /= static_cast<double>(samples.size());
+    force_readings_avg /= static_cast<double>(n);
 
-    // ===== Step 2: Average robot transformations (Eq. 37) =====
     // Compute: R̄_EB = (1/n) * Σ R_EB_i
     Matrix3d rotation_EB_avg = Matrix3d::Zero();
     
     for (const auto& sample : samples) {
         rotation_EB_avg += sample.X_EB.rotation();
     }
-    rotation_EB_avg /= static_cast<double>(samples.size());
+    rotation_EB_avg /= static_cast<double>(n);
 
-    // ===== Step 3: Calculate force bias (Eq. 39) =====
+    // ===== Step 2: Build D matrix for Procrustes (Eq. 38) =====
+    // Minimizing: J1 = Σ ||(s_Fi - s̄_F) - R_SE * (R_EB_i - R̄_EB) * F_b||²
+    // Solution via SVD of D = Σ (R_EB_i - R̄_EB) * F_b * (s_Fi - s̄_F)^T
+    Matrix3d D = Matrix3d::Zero();
+    
+    for (const auto& sample : samples) {
+        const Vector3d force_centered = sample.F_S_S_raw.head<3>() - force_readings_avg;
+        const Matrix3d rotation_centered = sample.X_EB.rotation() - rotation_EB_avg;
+        
+        // Accumulate outer product
+        D += rotation_centered * gravity_in_base * force_centered.transpose();
+    }
+
+    // ===== Step 3: SVD solution for rotation =====
+    Eigen::JacobiSVD<Matrix3d> svd(D, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    
+    // Handle reflection case to ensure proper rotation (det = +1)
+    Matrix3d correction = Matrix3d::Identity();
+    const double det = (svd.matrixU() * svd.matrixV().transpose()).determinant();
+    if (det < 0) {
+        correction(2, 2) = -1;  // Flip last singular value
+    }
+    
+    // Optimal rotation: R_SE = U * diag(1, 1, det(UV^T)) * V^T
+    const Matrix3d R_SE = svd.matrixU() * correction * svd.matrixV().transpose();  // Theorem 1 from [20]: optimal SO(3) solution to Eq.40 via SVD
+
+    // ===== Step 4: Calculate force bias (Eq. 39) =====
     // F0 = F̄ - R_SE * R̄_EB * Fb
-    // Where:
-    //   F0 = force bias in sensor frame
-    //   F̄ = average of force readings
-    //   R_SE = sensor-to-endeffector rotation
-    //   R̄_EB = average base-to-endeffector rotation
-    //   Fb = gravity vector in base frame
     const Vector3d force_bias = 
-        force_readings_avg - (rotation_s_to_e * rotation_EB_avg * gravity_in_base);
+        force_readings_avg - (R_SE * rotation_EB_avg * gravity_in_base);
 
-    return force_bias;
+    return {R_SE, force_bias};
 }
 
 

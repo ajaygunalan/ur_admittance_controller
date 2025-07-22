@@ -218,12 +218,17 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
 bool WrenchCalibrationNode::computeCalibrationParameters() {
     RCLCPP_INFO(get_logger(), "Processing %zu calibration samples", calibration_samples_.size());
     
-    // LROM algorithm steps (Yu et al. paper)
-    auto [f_gravity_B, R_SE] = ur_admittance_controller::estimateGravityAndRotation(calibration_samples_);
-    auto f_bias_S = ur_admittance_controller::estimateForceBias(calibration_samples_, f_gravity_B, R_SE);
+    // LROM algorithm steps matching paper structure
+    // Section 1: Estimate gravitational force in base frame
+    auto f_gravity_B = ur_admittance_controller::estimateGravitationalForceInBaseFrame(calibration_samples_);
+    
+    // Section 2: Estimate sensor rotation and force bias using Procrustes
+    auto [R_SE, f_bias_S] = ur_admittance_controller::estimateSensorRotationAndForceBias(calibration_samples_, f_gravity_B);
+    
+    // Section 3: Estimate COM and torque bias
     auto [p_SCoM_S, t_bias_S] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, f_bias_S);
     
-    // Robot installation bias estimation (matches old system sequence)
+    // Section 4: Robot installation bias estimation
     [[maybe_unused]] auto rot_b_g = ur_admittance_controller::estimateRobotInstallationBias(f_gravity_B);
     
     // Fill calibration parameters using member variable

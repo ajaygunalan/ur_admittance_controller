@@ -29,35 +29,37 @@
 namespace ur_admittance_controller {
 
 /**
- * @brief Estimates gravity vector and sensor-to-endeffector rotation using LROM algorithm
+ * @brief Estimates gravitational force in base frame using LROM algorithm
  * 
- * Implements the Limited Robot Orientation Method (LROM) from:
+ * Implements Section 1 of the paper (Equations 24-34):
  * Yu et al. "Bias Estimation and Gravity Compensation for Wrist-Mounted Force/Torque Sensor"
- * IEEE Sensors Journal, 2022, Section III-A.2
+ * IEEE Sensors Journal, 2022
+ * 
+ * Uses constrained least squares to find F_b without needing to know R_SE.
  * 
  * @param samples Calibration samples containing force readings and robot poses
- * @return Pair of (f_gravity_B, R_SE)
+ * @return Gravitational force vector in base frame (F_b)
  * @throws std::invalid_argument if insufficient samples provided
  */
-std::pair<Force3d, Matrix3d> estimateGravityAndRotation(
+Force3d estimateGravitationalForceInBaseFrame(
     const std::vector<CalibrationSample>& samples);
 
 /**
- * @brief Estimates the constant force bias in the sensor frame
+ * @brief Estimates sensor-to-endeffector rotation and force bias using Procrustes alignment
  * 
- * Implements force bias estimation from:
+ * Implements Section 2 of the paper (Equations 37-39):
  * Yu et al. "Bias Estimation and Gravity Compensation for Wrist-Mounted Force/Torque Sensor"
- * IEEE Sensors Journal, 2022, Section III-B
+ * IEEE Sensors Journal, 2022
+ * 
+ * Solves the 3D point set alignment problem to find R_SE and force bias.
  * 
  * @param samples Calibration samples with force readings and robot poses
- * @param f_gravity_B Estimated gravity vector in base frame (Fb from Step 1)
- * @param R_SE Sensor-to-endeffector rotation (R_SE from Step 1)
- * @return Force bias vector in sensor frame
+ * @param f_gravity_B Estimated gravity vector in base frame (F_b from Section 1)
+ * @return Pair of (R_SE, f_bias_S) - rotation and bias in sensor frame
  */
-Force3d estimateForceBias(
+std::pair<Matrix3d, Force3d> estimateSensorRotationAndForceBias(
     const std::vector<CalibrationSample>& samples,
-    const Force3d& f_gravity_B,
-    const Matrix3d& R_SE);
+    const Force3d& f_gravity_B);
 
 /**
  * @brief Estimates tool center of mass and torque bias in sensor frame
