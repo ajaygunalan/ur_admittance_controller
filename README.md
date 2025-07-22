@@ -50,6 +50,7 @@ ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
 # Terminal 2: Initialize robot to equilibrium position
 ros2 run ur_admittance_controller init_robot
 # This moves robot to safe working pose and saves equilibrium to config
+# Note: init_robot now gets robot_description from the /robot_description topic
 
 # Terminal 3: Run admittance control with saved equilibrium
 ros2 control switch_controllers --deactivate scaled_joint_trajectory_controller --activate forward_velocity_controller
@@ -246,6 +247,7 @@ ros2 param set /admittance_node admittance.stiffness "[0,0,0,0,0,0]"  # Pure adm
 # Initialize robot to equilibrium position (required first)
 ros2 run ur_admittance_controller init_robot
 # This defines equilibrium in joint space and saves calculated Cartesian pose to config
+# Gets robot_description from /robot_description topic published by robot_state_publisher
 
 # Calibration (run once per tool change)
 ros2 run ur_admittance_controller wrench_calibration_node

@@ -28,6 +28,11 @@
   <depend>controller_manager_msgs</depend>
   <depend>rcl_interfaces</depend>
   
+  <!-- Launch file dependencies -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ur_simulation_gz</exec_depend>
+  
   <!-- Transform dependencies -->
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
