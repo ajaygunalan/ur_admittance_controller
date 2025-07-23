@@ -5,7 +5,8 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
 #include "wrench_compensation.hpp"
-#include "ur_admittance_controller/error.hpp"
+#include <ur_admittance_controller/utilities/error.hpp>
+#include <ur_admittance_controller/utilities/types.hpp>
 #include <memory>
 #include <chrono>
 
@@ -37,6 +38,9 @@ private:
     Vector3d t_bias_s_;    // Torque bias in sensor frame
     Vector3d p_CoM_s_;     // Center of mass in sensor frame
     
+    // Consolidated calibration params for algorithm
+    GravityCompensationParams calibration_params_;
+    
     // TF2 for robot kinematics
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -46,9 +50,6 @@ private:
     rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_sensor_pub_;
     rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_probe_pub_;
     rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_probe_base_pub_;
-    
-    // Reusable message object
-    WrenchMsg proc_msg_;
 };
 
 } // namespace ur_admittance_controller

@@ -129,14 +129,14 @@ add_executable(init_robot
 # Build Verify Poses Executable
 # ==============================================================================
 add_executable(verify_poses
-  src/verify_poses.cpp
+  src/temp/verify_poses.cpp
 )
 
 # ==============================================================================
 # Build Test IK Executable
 # ==============================================================================
 add_executable(test_ik
-  src/test_ik.cpp
+  src/temp/test_ik.cpp
 )
 
 # Include directories for nodes
@@ -203,7 +203,7 @@ target_link_libraries(wrench_calibration_node
 # Note: Removed PACKAGE_SOURCE_DIR definitions - now using ament_index_cpp for proper installation support
 
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
-ament_target_dependencies(wrench_node rclcpp geometry_msgs std_srvs tf2 tf2_ros tf2_eigen ament_index_cpp)
+ament_target_dependencies(wrench_node rclcpp geometry_msgs sensor_msgs std_srvs tf2 tf2_ros tf2_eigen ament_index_cpp)
 
 # Additional dependencies for init_robot and verify_poses
 set(INIT_ROBOT_DEPENDENCIES

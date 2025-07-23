@@ -21,8 +21,8 @@
  *       (center of mass), not the gravity frame G.
  */
 
-#include "calibration_types.hpp"
-#include "ur_admittance_controller/error.hpp"
+#include <ur_admittance_controller/utilities/types.hpp>
+#include <ur_admittance_controller/utilities/error.hpp>
 #include <Eigen/Dense>
 #include <vector>
 #include <utility>

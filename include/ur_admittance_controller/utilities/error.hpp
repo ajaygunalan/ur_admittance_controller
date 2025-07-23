@@ -17,7 +17,8 @@ enum class ErrorCode {
   kIKSolverFailed,
   kTrajectoryExecutionFailed,
   kTimeout,
-  kCommunicationTimeout   // General communication timeout
+  kCommunicationTimeout,   // General communication timeout
+  kCalibrationFailed       // Calibration matrix ill-conditioned
 };
 
 // Simple error struct with code and message

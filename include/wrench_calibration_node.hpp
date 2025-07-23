@@ -13,8 +13,8 @@
 #include <tf2_ros/transform_listener.h>
 
 // Local headers
-#include "calibration_types.hpp"
-#include "ur_admittance_controller/error.hpp"
+#include <ur_admittance_controller/utilities/types.hpp>
+#include <ur_admittance_controller/utilities/error.hpp>
 
 namespace ur_admittance_controller {
 

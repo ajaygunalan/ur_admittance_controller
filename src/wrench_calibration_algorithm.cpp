@@ -16,8 +16,8 @@
  * @date 2024-2025
  */
 
-#include "calibration_types.hpp"
-#include "ur_admittance_controller/error.hpp"
+#include <ur_admittance_controller/utilities/types.hpp>
+#include <ur_admittance_controller/utilities/error.hpp>
 #include <Eigen/Dense>
 #include <Eigen/SVD>
 #include <stdexcept>
@@ -84,8 +84,18 @@ Result<Vector3d> estimateGravitationalForceInBaseFrame(
     const double sqrt3 = std::sqrt(3.0);
     const auto I9 = sqrt3 * Eigen::Matrix<double, 9, 9>::Identity();  // Using Γ⁻¹ = √3·I₉ directly instead of paper's Γ = (√3/3)·I₉ to avoid inversion
     
-    // Compute (A6ᵀA6)⁻¹ for null space projection
-    const auto A6_inv = (A6.transpose() * A6).inverse();
+    // Compute (A6ᵀA6)⁻¹ for null space projection with condition check
+    Eigen::MatrixXd gram_A6 = A6.transpose() * A6;
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd_A6(gram_A6);
+    double cond_A6 = svd_A6.singularValues()(0) / svd_A6.singularValues()(svd_A6.singularValues().size()-1);
+    
+    if (cond_A6 > 1e8) {  // Drake's threshold
+        return tl::unexpected(make_error(ErrorCode::kCalibrationFailed,
+            "Calibration matrix ill-conditioned (condition number " + std::to_string(cond_A6) + 
+            "). Need more diverse robot poses."));
+    }
+    
+    const auto A6_inv = gram_A6.inverse();
     
     // Form H matrix: projects A9 onto null space of A6
     const auto H = A9 * I9 - A6 * A6_inv * A6.transpose() * A9 * I9;
@@ -256,6 +266,17 @@ Result<std::pair<Vector3d, Vector3d>> estimateCOMAndTorqueBias(
     // y* = (C'C)^(-1) * C'b
     const auto CtC = C.transpose() * C;
     const auto Ctb = C.transpose() * b;
+    
+    // Check condition number before inversion
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd_CtC(CtC);
+    double cond_CtC = svd_CtC.singularValues()(0) / svd_CtC.singularValues()(svd_CtC.singularValues().size()-1);
+    
+    if (cond_CtC > 1e8) {  // Drake's threshold
+        return tl::unexpected(make_error(ErrorCode::kCalibrationFailed,
+            "Torque calibration matrix ill-conditioned (condition number " + std::to_string(cond_CtC) + 
+            "). Robot poses may be coplanar or insufficient."));
+    }
+    
     const Eigen::VectorXd solution = CtC.inverse() * Ctb;
 
     // ===== Extract results =====

@@ -1,4 +1,5 @@
 #include "admittance_node.hpp"
+#include <ur_admittance_controller/utilities/conversions.hpp>
 #include <chrono>
 #include <thread>
 #include <unordered_map>
@@ -66,8 +67,7 @@ void AdmittanceNode::setupROSInterfaces() {
 
 
 void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  F_P_B << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,
-            msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;
+  F_P_B = conversions::fromMsg(*msg);
   
   
   // Log wrench if non-zero

@@ -15,9 +15,9 @@
 #include <yaml-cpp/yaml.h>
 
 // Local headers
-#include "calibration_types.hpp"
 #include "wrench_calibration_node.hpp"
 #include "wrench_calibration_algorithm.hpp"
+#include <ur_admittance_controller/utilities/conversions.hpp>
 #include <fmt/core.h>
 
 namespace ur_admittance_controller {
@@ -219,8 +219,7 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
     for (size_t i = 0; i < CalibrationConstants::SAMPLES_PER_POSE; ++i) {
         // Convert ROS WrenchStamped message to Eigen 6D vector for calibration math
         Wrench6d wrench;
-        wrench << latest_wrench_.wrench.force.x, latest_wrench_.wrench.force.y, latest_wrench_.wrench.force.z,    // Forces [N]
-                  latest_wrench_.wrench.torque.x, latest_wrench_.wrench.torque.y, latest_wrench_.wrench.torque.z;  // Torques [Nm]
+        wrench = conversions::fromMsg(latest_wrench_);
         raw_sensor_avg += wrench;  // Accumulate for averaging
         samples.push_back(CalibrationSample{wrench, X_EB, pose_idx});  // Store individual sample
         

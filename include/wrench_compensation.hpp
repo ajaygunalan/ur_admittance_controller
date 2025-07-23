@@ -1,6 +1,6 @@
 #pragma once
 
-#include "calibration_types.hpp"
+#include <ur_admittance_controller/utilities/types.hpp>
 #include <geometry_msgs/msg/wrench_stamped.hpp>
 #include <yaml-cpp/yaml.h>
 #include <memory>

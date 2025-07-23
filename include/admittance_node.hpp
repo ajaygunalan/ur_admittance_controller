@@ -5,8 +5,8 @@
 
 // Related header
 #include "ur_admittance_controller/ur_admittance_controller_parameters.hpp"
-#include "admittance_node_types.hpp"
-#include "ur_admittance_controller/error.hpp"
+#include <ur_admittance_controller/utilities/types.hpp>
+#include <ur_admittance_controller/utilities/error.hpp>
 
 // Standard library headers
 #include <atomic>

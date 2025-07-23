@@ -9,21 +9,42 @@
 
 namespace ur_admittance_controller {
 
-// Common type aliases
+// =============================================================================
+// Core Type Definitions
+// =============================================================================
+
+// Degrees of freedom for 6D Cartesian space (3 translation + 3 rotation)
+static constexpr size_t DOF = 6;
+
+// Basic Eigen types
 using Vector3d = Eigen::Vector3d;
 using Matrix3d = Eigen::Matrix3d;
-using Wrench6d = Eigen::Matrix<double, 6, 1>;  // 6D [fx,fy,fz,tx,ty,tz]
-using Force3d = Eigen::Vector3d;                // 3D force only
-using Torque3d = Eigen::Vector3d;               // 3D torque only
-using Wrench = Wrench6d;  // Keep for backward compatibility
 using Transform = Eigen::Isometry3d;
-using JointAngles = std::vector<double>;
+
+// 6D types for admittance control
+using Matrix6d = Eigen::Matrix<double, 6, 6>;  // Mass, damping, stiffness matrices
+using Vector6d = Eigen::Matrix<double, 6, 1>;  // Velocities, poses
+using Wrench6d = Eigen::Matrix<double, 6, 1>;  // 6D [fx,fy,fz,tx,ty,tz]
+using Wrench = Wrench6d;  // Backward compatibility alias
+
+// 3D force/torque components
+using Force3d = Eigen::Vector3d;
+using Torque3d = Eigen::Vector3d;
+
+// Joint space types
+using JointVector = std::vector<double>;  // For joint positions/velocities
+using JointAngles = std::vector<double>;  // Alias for clarity
 using JointNames = std::vector<std::string>;
 using PoseSequence = std::vector<JointAngles>;
+
+// Time types
 using Seconds = std::chrono::seconds;
 using Milliseconds = std::chrono::milliseconds;
 
-// Calibration constants
+// =============================================================================
+// Calibration Types
+// =============================================================================
+
 namespace CalibrationConstants {
     static constexpr int NUM_POSES = 32;
     static constexpr size_t SAMPLES_PER_POSE = 10;

@@ -1,5 +1,8 @@
 // F/T sensor bias and gravity compensation node (Yu et al. method)
 #include "wrench_node.hpp"
+#include <ur_admittance_controller/utilities/conversions.hpp>
+#include <ur_admittance_controller/utilities/spatial_math.hpp>
+#include <ur_admittance_controller/algorithms/wrench_compensation.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <filesystem>
 #include <yaml-cpp/yaml.h>
@@ -64,62 +67,37 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
     }
     
     // STEP 1: Extract raw F/T data from sensor (ROS WrenchStamped → Eigen 6D vector)
-    f_raw_s_ << msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z,    // Forces [N]
-                msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z;  // Torques [Nm]
+    f_raw_s_ = conversions::fromMsg(*msg);
     
     // STEP 2: Get robot end-effector to base transform (X_EB)
     X_EB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(EE_FRAME, BASE_FRAME, tf2::TimePointZero));
     
-    // STEP 3: Extract rotation matrix R_EB from transform
-    const Matrix3d R_EB = X_EB_.rotation();
+    // Tier 2: Validate external transform from TF2 (minimal sanity check)
+    if (!X_EB_.matrix().allFinite()) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+            "Invalid transform from TF2 detected (contains NaN/Inf), skipping wrench update");
+        return;  // Use last valid transform
+    }
     
-    // STEP 4: Compute gravity force in sensor frame (Yu et al. Equation 10)
-    // f_grav_s = R_SE × R_EB × f_grav_b
-    f_grav_s_ = R_SE_ * R_EB * f_grav_b_;
+    // STEP 3: Apply compensation algorithm
+    ft_proc_s_ = algorithms::compensateWrench(f_raw_s_, X_EB_, calibration_params_);
     
-    // STEP 5: Force compensation (Yu et al. Equation 10)
-    // F_compensated = F_raw - F_gravity - F_bias
-    ft_proc_s_.head<3>() = f_raw_s_.head<3>() - f_grav_s_ - f_bias_s_;
+    // STEP 4: Transform to base frame
+    Transform X_BS = X_EB_.inverse() * Transform(calibration_params_.R_SE);
+    ft_proc_b_ = algorithms::transformWrenchToBase(ft_proc_s_, X_BS);
     
-    // STEP 6: Torque compensation (Yu et al. Equation 11)
-    // T_compensated = T_raw - (p_CoM × F_gravity) - T_bias
-    const Vector3d gravity_torque = p_CoM_s_.cross(f_grav_s_);
-    ft_proc_s_.tail<3>() = f_raw_s_.tail<3>() - gravity_torque - t_bias_s_;
+    // STEP 5: Publish compensated wrench in all three coordinate representations
+    // 5a. Sensor frame (after bias/gravity compensation)
+    auto sensor_msg = conversions::toMsg(ft_proc_s_, SENSOR_FRAME, msg->header.stamp);
+    wrench_proc_sensor_pub_->publish(sensor_msg);
     
-    // STEP 7: Transform compensated wrench from probe to base frame using adjoint matrix
-    // Apply adjoint transformation: w_base = Ad(T_base_probe) * w_probe
-    const Matrix3d R_BP = X_EB_.rotation().transpose();  // Base to Probe rotation
-    const Vector3d p_BP = -R_BP * X_EB_.translation();   // Base to Probe translation
+    // 5b. Probe frame (same as processed sensor data in this case since sensor==probe)
+    auto probe_msg = conversions::toMsg(ft_proc_s_, EE_FRAME, msg->header.stamp);
+    wrench_proc_probe_pub_->publish(probe_msg);
     
-    // Force transformation: f_base = R_BP * f_probe  
-    ft_proc_b_.head<3>() = R_BP * ft_proc_s_.head<3>();
-    
-    // Torque transformation: tau_base = R_BP * tau_probe + [p_BP]× * R_BP * f_probe
-    Vector3d cross_term = p_BP.cross(R_BP * ft_proc_s_.head<3>());
-    ft_proc_b_.tail<3>() = R_BP * ft_proc_s_.tail<3>() + cross_term;
-    
-    // STEP 8: Publish compensated wrench in all three coordinate representations
-    // 8a. Sensor frame (after bias/gravity compensation, before probe transformation)
-    proc_msg_.header = msg->header;
-    proc_msg_.header.frame_id = SENSOR_FRAME;
-    // Convert Eigen 6D vector → ROS Wrench message for sensor frame output
-    proc_msg_.wrench.force.x = ft_proc_s_[0]; proc_msg_.wrench.force.y = ft_proc_s_[1]; proc_msg_.wrench.force.z = ft_proc_s_[2];
-    proc_msg_.wrench.torque.x = ft_proc_s_[3]; proc_msg_.wrench.torque.y = ft_proc_s_[4]; proc_msg_.wrench.torque.z = ft_proc_s_[5];
-    wrench_proc_sensor_pub_->publish(proc_msg_);
-    
-    // 8b. Probe frame (same as processed sensor data in this case since sensor==probe)
-    proc_msg_.header.frame_id = EE_FRAME;
-    // Convert Eigen 6D vector → ROS Wrench message for probe frame output (same data as sensor)
-    proc_msg_.wrench.force.x = ft_proc_s_[0]; proc_msg_.wrench.force.y = ft_proc_s_[1]; proc_msg_.wrench.force.z = ft_proc_s_[2];
-    proc_msg_.wrench.torque.x = ft_proc_s_[3]; proc_msg_.wrench.torque.y = ft_proc_s_[4]; proc_msg_.wrench.torque.z = ft_proc_s_[5];
-    wrench_proc_probe_pub_->publish(proc_msg_);
-    
-    // 8c. Base frame (transformed using adjoint matrix)
-    proc_msg_.header.frame_id = BASE_FRAME;
-    // Convert Eigen 6D vector → ROS Wrench message for base frame output (after spatial transform)
-    proc_msg_.wrench.force.x = ft_proc_b_[0]; proc_msg_.wrench.force.y = ft_proc_b_[1]; proc_msg_.wrench.force.z = ft_proc_b_[2];
-    proc_msg_.wrench.torque.x = ft_proc_b_[3]; proc_msg_.wrench.torque.y = ft_proc_b_[4]; proc_msg_.wrench.torque.z = ft_proc_b_[5];
-    wrench_proc_probe_base_pub_->publish(proc_msg_);
+    // 5c. Base frame (transformed using adjoint matrix)
+    auto base_msg = conversions::toMsg(ft_proc_b_, BASE_FRAME, msg->header.stamp);
+    wrench_proc_probe_base_pub_->publish(base_msg);
 }
 
 Status WrenchNode::loadCalibrationParams() {
@@ -175,6 +153,13 @@ Status WrenchNode::loadCalibrationParams() {
     f_bias_s_ = Vector3d(force_bias_vec.data());              // Sensor force offset
     t_bias_s_ = Vector3d(torque_bias_vec.data());             // Sensor torque offset  
     p_CoM_s_ = Vector3d(com_vec.data());      // Tool CoM for gravity torque calc
+    
+    // Populate calibration params structure for algorithm
+    calibration_params_.R_SE = R_SE_;
+    calibration_params_.f_gravity_B = f_grav_b_;
+    calibration_params_.f_bias_S = f_bias_s_;
+    calibration_params_.t_bias_S = t_bias_s_;
+    calibration_params_.p_SCoM_S = p_CoM_s_;
     
     RCLCPP_INFO(get_logger(), "Calibration loaded");
     return {};  // Success
