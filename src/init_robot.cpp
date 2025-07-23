@@ -42,22 +42,7 @@ struct KinematicSolver {
   KDL::Frame tool_offset;
 };
 
-// Helper templates for error handling
-template<typename Logger>
-inline void checkFuture(rclcpp::FutureReturnCode status, Logger logger, const std::string& msg) {
-  if (status != rclcpp::FutureReturnCode::SUCCESS) {
-    RCLCPP_ERROR(logger, "%s", msg.c_str());
-    throw std::runtime_error(msg);
-  }
-}
-
-template<typename Logger>
-inline void checkCondition(bool condition, Logger logger, const std::string& msg) {
-  if (!condition) {
-    RCLCPP_ERROR(logger, "%s", msg.c_str());
-    throw std::runtime_error(msg);
-  }
-}
+// Removed legacy error handling macros - using explicit error handling per Drake philosophy
 
 std::string waitForRobotDescription(rclcpp::Node::SharedPtr node,
                                    rclcpp::executors::SingleThreadedExecutor::SharedPtr executor) {
@@ -84,8 +69,12 @@ std::string waitForRobotDescription(rclcpp::Node::SharedPtr node,
   // Use the provided executor instead of creating a new one
   auto status = executor->spin_until_future_complete(description_future, ROBOT_DESC_TIMEOUT);
   
-  checkFuture(status, node->get_logger(), 
-              "Timeout waiting for robot_description topic. Is robot_state_publisher running?");
+  // Tier 2: Setup failure - throw on timeout
+  if (status != rclcpp::FutureReturnCode::SUCCESS) {
+    auto msg = "Timeout waiting for robot_description topic. Is robot_state_publisher running?";
+    RCLCPP_ERROR(node->get_logger(), "%s", msg);
+    throw std::runtime_error(msg);
+  }
   
   return description_future.get();
 }
@@ -95,12 +84,20 @@ KinematicSolver parseUrdfToKinematicSolver(const std::string& urdf, rclcpp::Logg
   
   // Parse URDF to KDL tree
   KDL::Tree kdl_tree;
-  checkCondition(kdl_parser::treeFromString(urdf, kdl_tree), logger, 
-                 "Failed to parse URDF to KDL tree");
+  // Tier 2: Setup failure - throw on parse error
+  if (!kdl_parser::treeFromString(urdf, kdl_tree)) {
+    auto msg = "Failed to parse URDF to KDL tree";
+    RCLCPP_ERROR(logger, "%s", msg);
+    throw std::runtime_error(msg);
+  }
   
   // Extract main chain
-  checkCondition(kdl_tree.getChain("base_link", "wrist_3_link", solver.kdl_chain), logger,
-                 "Failed to extract kinematic chain from base_link to wrist_3_link");
+  // Tier 2: Setup failure - throw on chain extraction error
+  if (!kdl_tree.getChain("base_link", "wrist_3_link", solver.kdl_chain)) {
+    auto msg = "Failed to extract kinematic chain from base_link to wrist_3_link";
+    RCLCPP_ERROR(logger, "%s", msg);
+    throw std::runtime_error(msg);
+  }
   
   // Extract tool transform inline
   KDL::Chain tool_chain;
@@ -152,7 +149,12 @@ std::vector<double> waitForJointStates(rclcpp::Node::SharedPtr node,
   // Use the provided executor instead of creating a new one
   auto status = executor->spin_until_future_complete(positions_future, JOINT_STATE_TIMEOUT);
   
-  checkFuture(status, node->get_logger(), "Timeout waiting for joint states");
+  // Tier 2: Setup failure - throw on timeout
+  if (status != rclcpp::FutureReturnCode::SUCCESS) {
+    auto msg = "Timeout waiting for joint states";
+    RCLCPP_ERROR(node->get_logger(), "%s", msg);
+    throw std::runtime_error(msg);
+  }
   
   return positions_future.get();
 }
@@ -206,8 +208,12 @@ void computeToolPoseAndSaveYaml(const KinematicSolver& solver,
   
   // Compute FK
   KDL::Frame wrist_frame;
-  checkCondition(solver.fk_solver->JntToCart(q, wrist_frame) >= 0, logger,
-                 "Forward kinematics computation failed");
+  // Tier 2: Setup failure - throw on FK error
+  if (solver.fk_solver->JntToCart(q, wrist_frame) < 0) {
+    auto msg = "Forward kinematics computation failed";
+    RCLCPP_ERROR(logger, "%s", msg);
+    throw std::runtime_error(msg);
+  }
   
   // Apply tool offset to get p42v_link1 (probe tip) frame
   KDL::Frame tool_frame = wrist_frame * solver.tool_offset;
@@ -229,7 +235,12 @@ void computeToolPoseAndSaveYaml(const KinematicSolver& solver,
   
   // Save to YAML
   std::ofstream fout("src/ur_admittance_controller/config/equilibrium.yaml");
-  checkCondition(fout.is_open(), logger, "Failed to open equilibrium.yaml for writing");
+  // Tier 2: Setup failure - throw on file error
+  if (!fout.is_open()) {
+    auto msg = "Failed to open equilibrium.yaml for writing";
+    RCLCPP_ERROR(logger, "%s", msg);
+    throw std::runtime_error(msg);
+  }
   
   fout << "admittance_node:\n"
        << "  ros__parameters:\n"
@@ -300,8 +311,12 @@ int main(int argc, char** argv) {
     double movement_duration = node->get_parameter("movement_duration").as_double();
     
     // Validate
-    checkCondition(equilibrium_positions.size() == JOINT_COUNT, node->get_logger(),
-                   "Invalid configuration: equilibrium.joints must have 6 values");
+    // Tier 2: Setup failure - throw on invalid configuration
+    if (equilibrium_positions.size() != JOINT_COUNT) {
+      auto msg = "Invalid configuration: equilibrium.joints must have 6 values";
+      RCLCPP_ERROR(node->get_logger(), "%s", msg);
+      throw std::runtime_error(msg);
+    }
     
     RCLCPP_INFO(node->get_logger(), "Joint space equilibrium: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
                 equilibrium_positions[0], equilibrium_positions[1], 

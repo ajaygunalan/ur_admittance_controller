@@ -5,6 +5,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
 #include "wrench_compensation.hpp"
+#include "ur_admittance_controller/error.hpp"
 #include <memory>
 #include <chrono>
 
@@ -18,7 +19,8 @@ public:
     
 private:
     void wrench_callback(const WrenchMsg::ConstSharedPtr msg);
-    bool loadCalibrationParams();
+    Status loadCalibrationParams();
+    void setupROSInterfaces();
     
     
     // Yu pipeline state

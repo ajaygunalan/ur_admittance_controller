@@ -24,13 +24,13 @@ public:
     // - f_raw_s: raw wrench in sensor frame
     // - X_EB: transform from end-effector to base (matching pulse_force_estimation)
     // - joint_state: optional for dynamic compensation
-    [[nodiscard]] virtual Wrench compensate(
+    virtual Wrench compensate(
         const Wrench& f_raw_s,
         const Transform& X_EB,
         const JointState& joint_state = JointState()) const = 0;
     
     
-    [[nodiscard]] virtual std::string getType() const = 0;
+    virtual std::string getType() const = 0;
 };
 
 

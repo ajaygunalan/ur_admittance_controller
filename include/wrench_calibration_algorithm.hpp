@@ -22,6 +22,7 @@
  */
 
 #include "calibration_types.hpp"
+#include "ur_admittance_controller/error.hpp"
 #include <Eigen/Dense>
 #include <vector>
 #include <utility>
@@ -38,10 +39,10 @@ namespace ur_admittance_controller {
  * Uses constrained least squares to find F_b without needing to know R_SE.
  * 
  * @param samples Calibration samples containing force readings and robot poses
- * @return Gravitational force vector in base frame (F_b)
- * @throws std::invalid_argument if insufficient samples provided
+ * @return Result containing gravitational force vector in base frame (F_b) or error
+ * @note Tier 2 callers can use .value() to throw on error
  */
-Force3d estimateGravitationalForceInBaseFrame(
+Result<Force3d> estimateGravitationalForceInBaseFrame(
     const std::vector<CalibrationSample>& samples);
 
 /**
@@ -55,9 +56,10 @@ Force3d estimateGravitationalForceInBaseFrame(
  * 
  * @param samples Calibration samples with force readings and robot poses
  * @param f_gravity_B Estimated gravity vector in base frame (F_b from Section 1)
- * @return Pair of (R_SE, f_bias_S) - rotation and bias in sensor frame
+ * @return Result containing pair of (R_SE, f_bias_S) - rotation and bias in sensor frame
+ * @note Tier 2 callers can use .value() to throw on error
  */
-std::pair<Matrix3d, Force3d> estimateSensorRotationAndForceBias(
+Result<std::pair<Matrix3d, Force3d>> estimateSensorRotationAndForceBias(
     const std::vector<CalibrationSample>& samples,
     const Force3d& f_gravity_B);
 
@@ -70,9 +72,10 @@ std::pair<Matrix3d, Force3d> estimateSensorRotationAndForceBias(
  * 
  * @param samples Calibration samples with force/torque readings
  * @param f_bias_S Previously estimated force bias (F0 from Step 2)
- * @return Pair of (p_SCoM_S, t_bias_S) in sensor frame
+ * @return Result containing pair of (p_SCoM_S, t_bias_S) in sensor frame
+ * @note Tier 2 callers can use .value() to throw on error
  */
-std::pair<Vector3d, Torque3d> estimateCOMAndTorqueBias(
+Result<std::pair<Vector3d, Torque3d>> estimateCOMAndTorqueBias(
     const std::vector<CalibrationSample>& samples,
     const Force3d& f_bias_S);
 
@@ -84,10 +87,11 @@ std::pair<Vector3d, Torque3d> estimateCOMAndTorqueBias(
  * IEEE Sensors Journal, 2022, Section III-D
  * 
  * @param f_gravity_B Gravity vector in base frame (Fb from Step 1)
- * @return Rotation matrix from gravity frame to base frame
+ * @return Result containing rotation matrix from gravity frame to base frame
  * @note Potential singularity when robot base is horizontal (F_z ≈ 0)
+ * @note Tier 2 callers can use .value() to throw on error
  */
-Matrix3d estimateRobotInstallationBias(const Force3d& f_gravity_B);
+Result<Matrix3d> estimateRobotInstallationBias(const Force3d& f_gravity_B);
 
 /**
  * @brief Extracts tool mass from gravity vector magnitude
@@ -95,9 +99,9 @@ Matrix3d estimateRobotInstallationBias(const Force3d& f_gravity_B);
  * From Equation (48): mg = ||Fb||
  * 
  * @param f_gravity_B Gravity vector in base frame
- * @return Tool mass in kg
+ * @return Result containing tool mass in kg
+ * @note Tier 2 callers can use .value() to throw on error
  */
-double extractToolMass(const Force3d& f_gravity_B);
-
+Result<double> extractToolMass(const Force3d& f_gravity_B);
 
 } // namespace ur_admittance_controller

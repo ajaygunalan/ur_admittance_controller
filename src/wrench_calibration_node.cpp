@@ -18,6 +18,7 @@
 #include "calibration_types.hpp"
 #include "wrench_calibration_node.hpp"
 #include "wrench_calibration_algorithm.hpp"
+#include <fmt/core.h>
 
 namespace ur_admittance_controller {
 
@@ -46,29 +47,29 @@ WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node")
 }
 
 // Initialize system - wait for dependencies and generate poses
-bool WrenchCalibrationNode::initialize() {
+Status WrenchCalibrationNode::initialize() {
     RCLCPP_INFO(get_logger(), "Initializing calibration system...");
     
     // Wait for robot controller with timeout
     if (!trajectory_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "Trajectory action server not available within 10 seconds");
-        return false;
+        return tl::unexpected(make_error(ErrorCode::kCommunicationTimeout,
+                                       "Trajectory action server not available within 10 seconds"));
     }
     RCLCPP_INFO(get_logger(), "Trajectory action server connected");
     
     // Wait for joint state data with timeout 
     sensor_msgs::msg::JointState joint_msg;
     if (!rclcpp::wait_for_message(joint_msg, shared_from_this(), "/joint_states", std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "Joint states not available within 10 seconds");
-        return false;
+        return tl::unexpected(make_error(ErrorCode::kCommunicationTimeout,
+                                       "Joint states not available within 10 seconds"));
     }
     RCLCPP_INFO(get_logger(), "Joint states received");
     
     // Wait for F/T sensor data with timeout 
     geometry_msgs::msg::WrenchStamped wrench_msg;
     if (!rclcpp::wait_for_message(wrench_msg, shared_from_this(), "/netft/raw_sensor", std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "F/T sensor data not available within 10 seconds");
-        return false;
+        return tl::unexpected(make_error(ErrorCode::kCommunicationTimeout,
+                                       "F/T sensor data not available within 10 seconds"));
     }
     RCLCPP_INFO(get_logger(), "F/T sensor data received");
     
@@ -76,7 +77,7 @@ bool WrenchCalibrationNode::initialize() {
     generateCalibrationPoses();
     
     RCLCPP_INFO(get_logger(), "Calibration system ready for data collection with %zu poses generated", calibration_poses_.size());
-    return true;
+    return {};  // Success
 }
 
 // Generate 32 calibration poses 
@@ -112,7 +113,7 @@ void WrenchCalibrationNode::updateJointPositions(const JointStateMsg::ConstShare
 // =============================================================================
 
 // Execute robot movement sequence and collect F/T sensor data
-bool WrenchCalibrationNode::executeCalibrationSequence() {
+Status WrenchCalibrationNode::executeCalibrationSequence() {
     // Clear any existing samples
     calibration_samples_.clear();
     
@@ -123,27 +124,34 @@ bool WrenchCalibrationNode::executeCalibrationSequence() {
         const auto& pose = calibration_poses_[i];
         RCLCPP_INFO(get_logger(), "Pose %zu/%zu", i + 1, calibration_poses_.size());
         
-        // Move to calibration pose - return false if movement fails
-        if (!moveToJointPosition(pose)) {
-            RCLCPP_ERROR(get_logger(), "Failed to move to pose %zu", i + 1);
-            return false;
+        // Move to calibration pose - propagate error if movement fails
+        auto move_status = moveToJointPosition(pose);
+        if (!move_status) {
+            RCLCPP_ERROR(get_logger(), "Failed to move to pose %zu: %s", 
+                        i + 1, move_status.error().message.c_str());
+            return tl::unexpected(make_error(ErrorCode::kTrajectoryExecutionFailed,
+                                           "Failed at pose " + std::to_string(i + 1) + ": " + 
+                                           move_status.error().message));
         }
         RCLCPP_INFO(get_logger(), "✓ Reached pose %zu", i + 1);
         
         collectSamplesAtCurrentPose(calibration_samples_, i);  // Collect 10 samples at 10Hz
         
-        if (!moveToJointPosition(calibration_poses_[0])) {
-            RCLCPP_WARN(get_logger(), "Failed to return to home position");
+        // Return to home position (best effort - don't fail if this fails)
+        auto home_status = moveToJointPosition(calibration_poses_[0]);
+        if (!home_status) {
+            RCLCPP_WARN(get_logger(), "Failed to return to home position: %s",
+                       home_status.error().message.c_str());
         }
     }
     
     RCLCPP_INFO(get_logger(), "Data collection completed with %zu samples", calibration_samples_.size());
-    return true;
+    return {};  // Success
 }
 
 
 // Execute robot motion to target joint angles
-bool WrenchCalibrationNode::moveToJointPosition(const JointAngles& target_joints) {
+Status WrenchCalibrationNode::moveToJointPosition(const JointAngles& target_joints) {
     // Build trajectory action goal
     control_msgs::action::FollowJointTrajectory::Goal goal;
     goal.trajectory.joint_names = joint_names_;
@@ -156,21 +164,41 @@ bool WrenchCalibrationNode::moveToJointPosition(const JointAngles& target_joints
     // Wait for goal acceptance
     auto status = rclcpp::spin_until_future_complete(
         get_node_base_interface(), goal_future);
-    if (status != rclcpp::FutureReturnCode::SUCCESS) return false;
+    if (status != rclcpp::FutureReturnCode::SUCCESS) {
+        return tl::unexpected(make_error(ErrorCode::kTimeout,
+                                       "Timeout waiting for trajectory goal acceptance"));
+    }
     
     auto goal_handle = goal_future.get();
-    if (!goal_handle) return false;
+    if (!goal_handle) {
+        return tl::unexpected(make_error(ErrorCode::kTrajectoryExecutionFailed,
+                                       "Trajectory goal was rejected by controller"));
+    }
     
     // Wait for motion completion
     auto result_future = trajectory_client_->async_get_result(goal_handle);
     auto result_status = rclcpp::spin_until_future_complete(
         get_node_base_interface(), result_future);
-    if (result_status != rclcpp::FutureReturnCode::SUCCESS) return false;
+    if (result_status != rclcpp::FutureReturnCode::SUCCESS) {
+        return tl::unexpected(make_error(ErrorCode::kTimeout,
+                                       "Timeout waiting for trajectory execution"));
+    }
     
     // Check actual result
     auto result = result_future.get();
-    return (result.code == rclcpp_action::ResultCode::SUCCEEDED && 
-            result.result->error_code == control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL);
+    if (result.code != rclcpp_action::ResultCode::SUCCEEDED) {
+        return tl::unexpected(make_error(ErrorCode::kTrajectoryExecutionFailed,
+                                       "Trajectory execution failed with action result code: " + 
+                                       std::to_string(static_cast<int>(result.code))));
+    }
+    
+    if (result.result->error_code != control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL) {
+        return tl::unexpected(make_error(ErrorCode::kTrajectoryExecutionFailed,
+                                       "Trajectory execution failed with error code: " + 
+                                       std::to_string(result.result->error_code)));
+    }
+    
+    return {};  // Success
 }
 
 // Collect 10 samples at 10Hz (1 second of data)
@@ -215,21 +243,21 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
 // =============================================================================
 
 // Process collected data and compute calibration parameters with YAML saving
-bool WrenchCalibrationNode::computeCalibrationParameters() {
+Status WrenchCalibrationNode::computeCalibrationParameters() {
     RCLCPP_INFO(get_logger(), "Processing %zu calibration samples", calibration_samples_.size());
     
     // LROM algorithm steps matching paper structure
     // Section 1: Estimate gravitational force in base frame
-    auto f_gravity_B = ur_admittance_controller::estimateGravitationalForceInBaseFrame(calibration_samples_);
+    auto f_gravity_B = ur_admittance_controller::estimateGravitationalForceInBaseFrame(calibration_samples_).value();
     
     // Section 2: Estimate sensor rotation and force bias using Procrustes
-    auto [R_SE, f_bias_S] = ur_admittance_controller::estimateSensorRotationAndForceBias(calibration_samples_, f_gravity_B);
+    auto [R_SE, f_bias_S] = ur_admittance_controller::estimateSensorRotationAndForceBias(calibration_samples_, f_gravity_B).value();
     
     // Section 3: Estimate COM and torque bias
-    auto [p_SCoM_S, t_bias_S] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, f_bias_S);
+    auto [p_SCoM_S, t_bias_S] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, f_bias_S).value();
     
     // Section 4: Robot installation bias estimation
-    [[maybe_unused]] auto rot_b_g = ur_admittance_controller::estimateRobotInstallationBias(f_gravity_B);
+    [[maybe_unused]] auto rot_b_g = ur_admittance_controller::estimateRobotInstallationBias(f_gravity_B).value();
     
     // Fill calibration parameters using member variable
     calibration_params_.f_gravity_B = f_gravity_B;
@@ -254,10 +282,10 @@ bool WrenchCalibrationNode::computeCalibrationParameters() {
 
 
 // Save calibration parameters to YAML file
-bool WrenchCalibrationNode::saveCalibrationToYaml() {
+Status WrenchCalibrationNode::saveCalibrationToYaml() {
     if (!calibration_computed_) {
-        RCLCPP_ERROR(get_logger(), "No calibration data to save");
-        return false;
+        return tl::unexpected(make_error(ErrorCode::kInvalidConfiguration,
+                                       "No calibration data to save - run calibration first"));
     }
     
     // Generate filename internally
@@ -265,8 +293,8 @@ bool WrenchCalibrationNode::saveCalibrationToYaml() {
     try {
         package_share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
     } catch (const std::exception& e) {
-        RCLCPP_ERROR(get_logger(), "Package not found: %s", e.what());
-        return false;
+        return tl::unexpected(make_error(ErrorCode::kFileNotFound,
+                                       fmt::format("Package not found: {}", e.what())));
     }
     
     const auto config_file = std::filesystem::path(package_share_dir) / "config" / "wrench_calibration.yaml";
@@ -308,9 +336,14 @@ bool WrenchCalibrationNode::saveCalibrationToYaml() {
     out << YAML::EndSeq
         << YAML::EndMap;
     
-    std::ofstream(config_file.string()) << out.c_str();
+    std::ofstream file(config_file.string());
+    if (!file || !(file << out.c_str())) {
+        return tl::unexpected(make_error(ErrorCode::kFileNotFound,
+                                       fmt::format("Failed to write calibration to {}", config_file.string())));
+    }
+    
     RCLCPP_INFO(get_logger(), "Calibration saved to %s", config_file.c_str());
-    return true;
+    return {};  // Success
 }
 
 } 
@@ -327,20 +360,22 @@ int main(int argc, char** argv) {
     auto node = std::make_shared<ur_admittance_controller::WrenchCalibrationNode>();
     
     // Initialize system - wait for dependencies and prepare for calibration
-    if (!node->initialize()) {
-        RCLCPP_ERROR(node->get_logger(), "System initialization failed");
+    if (auto status = node->initialize(); !status) {
+        RCLCPP_ERROR(node->get_logger(), "System initialization failed: %s", status.error().message.c_str());
         return 1;
     }
     
     // Step 1: Execute robot movement sequence and collect sensor data
-    if (!node->executeCalibrationSequence()) {
-        RCLCPP_ERROR(node->get_logger(), "Data collection failed");
+    auto calibration_status = node->executeCalibrationSequence();
+    if (!calibration_status) {
+        RCLCPP_ERROR(node->get_logger(), "Data collection failed: %s", 
+                    calibration_status.error().message.c_str());
         return 1;
     }
     
     // Step 2: Process collected data and compute calibration parameters
-    if (!node->computeCalibrationParameters()) {
-        RCLCPP_ERROR(node->get_logger(), "Calibration computation failed");
+    if (auto status = node->computeCalibrationParameters(); !status) {
+        RCLCPP_ERROR(node->get_logger(), "Calibration computation failed: %s", status.error().message.c_str());
         return 1;
     }
     

@@ -17,6 +17,7 @@
  */
 
 #include "calibration_types.hpp"
+#include "ur_admittance_controller/error.hpp"
 #include <Eigen/Dense>
 #include <Eigen/SVD>
 #include <stdexcept>
@@ -34,13 +35,19 @@ namespace ur_admittance_controller {
  * @return Gravitational force vector in base frame (F_b)
  * @throws std::invalid_argument if insufficient samples provided
  */
-Vector3d estimateGravitationalForceInBaseFrame(
+Result<Vector3d> estimateGravitationalForceInBaseFrame(
     const std::vector<CalibrationSample>& samples)
 {
     // Validate minimum samples for overdetermined system
     if (samples.size() < 6) {
-        throw std::invalid_argument("LROM requires at least 6 samples for unique solution");
+        return tl::unexpected(make_error(ErrorCode::kInvalidConfiguration,
+                                       "LROM requires at least 6 samples for unique solution"));
     }
+    
+    // Tier 1: All samples must have valid data
+    ENSURE(!samples.empty() && std::all_of(samples.begin(), samples.end(), 
+           [](const auto& s) { return !s.F_S_S_raw.hasNaN() && !s.X_EB.matrix().hasNaN(); }),
+           "Calibration samples contain NaN values");
 
     const size_t n = samples.size();
     const size_t rows = 3 * n;  // 3 force components per sample
@@ -120,10 +127,14 @@ Vector3d estimateGravitationalForceInBaseFrame(
  * @param gravity_in_base Estimated gravity vector in base frame (F_b from Section 1)
  * @return Pair of (R_SE, force_bias) - rotation and bias in sensor frame
  */
-std::pair<Matrix3d, Vector3d> estimateSensorRotationAndForceBias(
+Result<std::pair<Matrix3d, Vector3d>> estimateSensorRotationAndForceBias(
     const std::vector<CalibrationSample>& samples,
     const Vector3d& gravity_in_base)
 {
+    // Tier 1: Gravity vector must be valid
+    ENSURE(!gravity_in_base.hasNaN() && gravity_in_base.norm() > 0,
+           "Invalid gravity vector provided");
+    
     const size_t n = samples.size();
     
     // ===== Step 1: Compute averages (Eq. 37) =====
@@ -174,7 +185,7 @@ std::pair<Matrix3d, Vector3d> estimateSensorRotationAndForceBias(
     const Vector3d force_bias = 
         force_readings_avg - (R_SE * rotation_EB_avg * gravity_in_base);
 
-    return {R_SE, force_bias};
+    return std::make_pair(R_SE, force_bias);
 }
 
 
@@ -192,10 +203,13 @@ std::pair<Matrix3d, Vector3d> estimateSensorRotationAndForceBias(
  * @param force_bias Previously estimated force bias (F0 from Step 2)
  * @return Pair of (center_of_mass_position, torque_bias) in sensor frame
  */
-std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
+Result<std::pair<Vector3d, Vector3d>> estimateCOMAndTorqueBias(
     const std::vector<CalibrationSample>& samples,
     const Vector3d& force_bias)
 {
+    // Tier 1: Force bias must be valid
+    ENSURE(!force_bias.hasNaN(), "Force bias contains NaN");
+    
     const size_t n = samples.size();
     const size_t rows = 3 * n;  // 3 torque components per sample
 
@@ -248,7 +262,7 @@ std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
     const Vector3d center_of_mass = solution.head<3>();  // p_g
     const Vector3d torque_bias = solution.tail<3>();     // T0
 
-    return {center_of_mass, torque_bias};
+    return std::make_pair(center_of_mass, torque_bias);
 }
 
 /**
@@ -265,7 +279,7 @@ std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
  * @return Rotation matrix from gravity frame to base frame
  * @note Potential singularity when robot base is horizontal (F_z ≈ 0)
  */
-Matrix3d estimateRobotInstallationBias(const Vector3d& gravity_in_base)
+Result<Matrix3d> estimateRobotInstallationBias(const Vector3d& gravity_in_base)
 {
     // ===== Extract gravity components =====
     const double fbx = gravity_in_base(0);  // X component
@@ -311,8 +325,12 @@ Matrix3d estimateRobotInstallationBias(const Vector3d& gravity_in_base)
  * @param gravity_in_base Gravity vector in base frame
  * @return Tool mass in kg
  */
-double extractToolMass(const Vector3d& gravity_in_base)
+Result<double> extractToolMass(const Vector3d& gravity_in_base)
 {
+    // Tier 1: Gravity vector must be valid and non-zero
+    ENSURE(!gravity_in_base.hasNaN() && gravity_in_base.norm() > 0,
+           "Invalid gravity vector for mass extraction");
+    
     const double gravity_magnitude = gravity_in_base.norm();
     const double g = 9.81;  // Standard gravity [m/s²]
     return gravity_magnitude / g;

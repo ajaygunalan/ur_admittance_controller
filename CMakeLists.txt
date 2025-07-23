@@ -18,8 +18,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Compiler warnings
 if(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Clang)")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+  add_compile_options(-Wall -Wextra -Wpedantic -Wunused-result)
 endif()
+
+# Enable fmt library in header-only mode
+add_compile_definitions(FMT_HEADER_ONLY=1)
 # ==============================================================================
 # Find Dependencies
 # ==============================================================================

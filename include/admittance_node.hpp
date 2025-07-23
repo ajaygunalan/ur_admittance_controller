@@ -6,6 +6,7 @@
 // Related header
 #include "ur_admittance_controller/ur_admittance_controller_parameters.hpp"
 #include "admittance_node_types.hpp"
+#include "ur_admittance_controller/error.hpp"
 
 // Standard library headers
 #include <atomic>
@@ -41,9 +42,10 @@ class AdmittanceNode : public rclcpp::Node {
   ~AdmittanceNode() = default;
   
   // Main control cycle - called from main loop at 100Hz
-  void control_cycle();
+  Status control_cycle();
   
   // Initialization - must be called before control loop
+  // Tier 2: Throws on setup failure
   void initialize();
 
  private:
@@ -53,7 +55,7 @@ class AdmittanceNode : public rclcpp::Node {
   void desired_pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
   
   // System initialization and setup
-  bool load_kinematics();
+  Status load_kinematics();
   void initializeParameters();
   void initializeStateVectors();
   void setupROSInterfaces();
@@ -66,7 +68,7 @@ class AdmittanceNode : public rclcpp::Node {
   void update_admittance_parameters();
   
   // Coordinate transformations and motion processing
-  void compute_and_pub_joint_velocities();
+  Status compute_and_pub_joint_velocities();
   
   // Safety validation and limits
   void limit_to_workspace();
@@ -137,7 +139,7 @@ class AdmittanceNode : public rclcpp::Node {
   bool joint_states_received_ = false;
   
   // Compute forward kinematics from joint positions (industry standard naming)
-  void get_X_BP_current();
+  Status get_X_BP_current();
 };
 
 }  // namespace ur_admittance_controller

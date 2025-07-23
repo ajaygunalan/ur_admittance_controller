@@ -8,6 +8,9 @@ namespace ur_admittance_controller {
 
 // Helper function to map joint states from JointState message to internal vector
 void AdmittanceNode::map_joint_states(const sensor_msgs::msg::JointState& msg, bool) {
+  // Tier 1: Joint configuration must be consistent
+  ENSURE(params_.joints.size() == 6, "UR robot must have exactly 6 joints configured");
+  
   // One-time setup of joint mapping
   static const auto joint_map = [this]() {
     std::unordered_map<std::string, size_t> map;
@@ -98,25 +101,43 @@ void AdmittanceNode::desired_pose_callback(const geometry_msgs::msg::PoseStamped
                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
 }
 
-void AdmittanceNode::control_cycle() {
+Status AdmittanceNode::control_cycle() {
   if (!joint_states_received_) {
     RCLCPP_WARN_ONCE(get_logger(), "Waiting for initial joint states...");
-    return;
+    return {};  // Not an error, just waiting for data
   }
   
-  get_X_BP_current();
+  // Forward kinematics - explicit error handling (Drake style)
+  if (auto fk_status = get_X_BP_current(); !fk_status) {
+    // Return the error directly - clear and debuggable
+    return fk_status;
+  }
+  
+  // These don't return errors (yet)
   compute_pose_error();
   compute_admittance();
   limit_to_workspace();
-  compute_and_pub_joint_velocities();
+  
+  // Inverse kinematics - explicit error handling
+  if (auto ik_status = compute_and_pub_joint_velocities(); !ik_status) {
+    // Return the error directly - no hidden control flow
+    return ik_status;
+  }
+  
+  return {};  // Success
 }
 
 
 void AdmittanceNode::initialize() {
-  if (!load_kinematics()) {
-    RCLCPP_ERROR(get_logger(), "Kinematics loading failed");
-    return;  // Early return to avoid running with bad kinematics
+  // Tier 1: Parameters must be loaded before initialization
+  ENSURE(param_listener_ != nullptr, "Parameter listener not initialized");
+  
+  // Tier 2: Throw on setup failure
+  if (auto status = load_kinematics(); !status) {
+    throw std::runtime_error(status.error().message);
   }
+  
+  kinematics_initialized_ = true;
   
   RCLCPP_INFO_ONCE(get_logger(), 
     "Kinematics ready, equilibrium at: [%.3f, %.3f, %.3f]",
@@ -149,7 +170,19 @@ int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
   
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
-  node->initialize();
+  
+  // Tier 1: Node must be successfully created
+  ENSURE(node != nullptr, "Failed to create admittance node");
+  
+  // Tier 2: Setup failures throw exceptions
+  try {
+    node->initialize();
+  } catch (const std::exception& e) {
+    RCLCPP_FATAL(rclcpp::get_logger("main"), 
+                 "Failed to initialize admittance controller: %s", e.what());
+    rclcpp::shutdown();
+    return 1;
+  }
   
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
@@ -160,7 +193,14 @@ int main(int argc, char* argv[]) {
   
   while (rclcpp::ok()) {
     executor.spin_some();     
-    node->control_cycle();    
+    
+    auto status = node->control_cycle();
+    if (!status) {
+      RCLCPP_ERROR_THROTTLE(node->get_logger(), *node->get_clock(), 1000,
+                           "Control cycle error: %s", status.error().message.c_str());
+      // Continue running for now - real-time loops should be resilient
+    }
+    
     loop_rate.sleep();
   }
   

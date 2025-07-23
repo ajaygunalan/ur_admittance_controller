@@ -14,6 +14,7 @@
 
 // Local headers
 #include "calibration_types.hpp"
+#include "ur_admittance_controller/error.hpp"
 
 namespace ur_admittance_controller {
 
@@ -26,9 +27,9 @@ public:
     
     
     WrenchCalibrationNode();
-    bool initialize();  // New: separate initialization method
-    bool executeCalibrationSequence();
-    bool computeCalibrationParameters();
+    Status initialize();  // Tier 2: Throws on setup failure via .value()
+    Status executeCalibrationSequence();
+    Status computeCalibrationParameters();
     
 private:
     // Data collection functionality
@@ -37,13 +38,13 @@ private:
     void generateCalibrationPoses();  // New: extracted from constructor
     
     // Calibration math methods (implemented in wrench_compensation.cpp)
-    [[nodiscard]] std::pair<double, double> computeResiduals(
+    std::pair<double, double> computeResiduals(
         const std::vector<CalibrationSample>& samples,
         const GravityCompensationParams& params) const;
     
     // New member functions (converted from free functions)
-    bool moveToJointPosition(const JointAngles& target_joints);
-    bool saveCalibrationToYaml();
+    Status moveToJointPosition(const JointAngles& target_joints);
+    Status saveCalibrationToYaml();
     
     // Member variables
     TrajectoryClient::SharedPtr trajectory_client_;

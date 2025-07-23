@@ -323,6 +323,70 @@ This would compensate for high-speed motion effects using joint velocities/accel
 - **Simple > Complex**: Hard limits only, proven algorithms
 - **Modular**: Each compensator handles one physics effect
 
+## Error Handling Philosophy
+
+This package implements Drake's three-tier error model for systematic fault handling:
+
+### Tier 1: Programmer Errors (Invariants)
+- **What**: Conditions that should NEVER be false in correct code
+- **Action**: `ENSURE()` macro throws immediately
+- **Example**: `ENSURE(fk_solver_ != nullptr, "FK solver not initialized")`
+- **When**: Null pointers, size mismatches, precondition violations
+
+### Tier 2: Setup/Configuration Failures
+- **What**: One-time initialization errors (file not found, robot offline)
+- **Action**: Functions throw exceptions during setup
+- **Example**: Robot description unavailable, calibration file missing
+- **When**: During node construction, `initialize()` methods
+
+### Tier 3: Runtime Faults
+- **What**: Expected failures in real-time loops (IK failure, timeouts)
+- **Action**: Return `Status`/`Result<T>` for explicit handling
+- **Example**: `if (!ik_status) { stop_robot(); return; }`
+- **When**: Control loops, sensor processing, trajectory execution
+
+### Implementation Details
+
+**Error Types**:
+```cpp
+enum class ErrorCode {
+  // Tier 2: Setup failures
+  kFileNotFound,
+  kInvalidConfiguration,
+  kKinematicsInitFailed,
+  
+  // Tier 3: Runtime failures  
+  kIKSolverFailed,
+  kTrajectoryExecutionFailed,
+  kTimeout,
+  kCommunicationTimeout
+};
+```
+
+**Usage Patterns**:
+```cpp
+// Tier 1: Invariant check
+ENSURE(joint_count == 6, "UR robots must have 6 joints");
+
+// Tier 2: Setup failure
+if (!loadCalibration()) {
+  throw std::runtime_error("Calibration file not found");
+}
+
+// Tier 3: Runtime fault
+if (auto status = computeIK(); !status) {
+  RCLCPP_ERROR(get_logger(), "IK failed: %s", status.error().message.c_str());
+  return status;  // Propagate error
+}
+```
+
+**Key Principles**:
+- **No hidden control flow**: Avoid macros that hide returns/throws
+- **Explicit is better**: `if (!status) return status;` over `RETURN_IF_ERROR()`
+- **Functions that can't fail return void**: Pure math functions don't return Status
+- **Log at error site**: Include context when errors occur
+- **Real-time safe**: No exceptions in control loops (Tier 3 only)
+
 ## Force/Torque Sensor Comparison: UR5e Built-in vs ATI External
 
 ### Overview

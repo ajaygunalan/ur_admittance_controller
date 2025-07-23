@@ -1,9 +1,10 @@
 #include "admittance_node.hpp"
+#include "ur_admittance_controller/error.hpp"
+#include <fmt/core.h>
+#include <fmt/ranges.h>
 #include <algorithm>
 #include <cmath>
 #include <rclcpp/parameter_client.hpp>
-#include <sstream>
-#include <iomanip>
 
 namespace ur_admittance_controller {
   
@@ -54,6 +55,13 @@ void AdmittanceNode::setDefaultEquilibrium() {
 
 void AdmittanceNode::update_admittance_parameters() {
   auto& p = params_.admittance;
+  
+  // Tier 1: Grouped invariant checks for params
+  ENSURE(p.mass.size() == 6 && p.stiffness.size() == 6 && p.damping.size() == 6,
+         "Admittance parameter vectors must all have exactly 6 elements");
+  ENSURE((Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).array() > 0).all(),
+         "All mass values must be positive to avoid division by zero");
+  
   M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
   K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
   D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
@@ -70,7 +78,12 @@ void AdmittanceNode::update_admittance_parameters() {
 
 
 
-void AdmittanceNode::get_X_BP_current() {
+Status AdmittanceNode::get_X_BP_current() {
+  // Tier 1: Single grouped invariant check
+  ENSURE(num_joints_ == 6 && q_current_.size() == num_joints_ && q_kdl_.rows() == num_joints_ &&
+         fk_pos_solver_ != nullptr,
+         "FK preconditions violated: joints must be 6 and solver initialized");
+  
   // Transfer joint positions to KDL format for FK computation
   for (size_t i = 0; i < num_joints_; ++i) {
     q_kdl_(i) = q_current_[i];
@@ -83,8 +96,11 @@ void AdmittanceNode::get_X_BP_current() {
   
   // Step 1: Compute FK from base_link to wrist_3_link (last movable joint)
   if (fk_pos_solver_->JntToCart(q_kdl_, X_BW3) < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "Forward kinematics solver failed");
-    return;
+    auto msg = fmt::format("FK failed at q=[{}] rad", 
+                          fmt::join(q_current_, ", "));
+    
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "%s", msg.c_str());
+    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed, msg));
   }
   
   // Step 2: Apply fixed tool offset to get actual payload position
@@ -97,6 +113,8 @@ void AdmittanceNode::get_X_BP_current() {
   double x, y, z, w;
   X_BP.M.GetQuaternion(x, y, z, w);
   X_BP_current.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
+  
+  return {};  // Success
 }
 
 void AdmittanceNode::compute_pose_error() {
@@ -134,6 +152,11 @@ void AdmittanceNode::compute_pose_error() {
 
 
 void AdmittanceNode::compute_admittance() {
+  // Tier 1: Single grouped invariant for all preconditions
+  ENSURE(M_inverse_diag.size() == 6 && D_diag.size() == 6 && K_diag.size() == 6 &&
+         !F_P_B.hasNaN() && !V_P_B_commanded.hasNaN() && !X_BP_error.hasNaN(),
+         "Admittance computation preconditions violated");
+  
   // Scale external wrench by admittance ratio (0-1) for safety/tuning
   Vector6d scaled_wrench = admittance_ratio_ * F_P_B;
   
@@ -220,7 +243,12 @@ void AdmittanceNode::limit_to_workspace() {
   }
 }
 
-void AdmittanceNode::compute_and_pub_joint_velocities() {
+Status AdmittanceNode::compute_and_pub_joint_velocities() {
+  // Tier 1: Single grouped invariant for all IK preconditions
+  ENSURE(ik_vel_solver_ != nullptr && V_P_B_commanded.size() == 6 && !V_P_B_commanded.hasNaN() &&
+         q_kdl_.rows() == num_joints_,
+         "IK preconditions violated: solver, velocity, or joint arrays invalid");
+  
   // Pack payload velocity
   KDL::Twist V_P_B;
   V_P_B.vel = KDL::Vector(V_P_B_commanded(0), V_P_B_commanded(1), V_P_B_commanded(2));
@@ -239,9 +267,18 @@ void AdmittanceNode::compute_and_pub_joint_velocities() {
   V_W3_B.rot = V_P_B.rot;
   
   // Solve IK
+  Status ik_status;
   if (ik_vel_solver_->CartToJnt(q_kdl_, V_W3_B, v_kdl_) < 0) {
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK solver failed - executing safety stop");
+    auto msg = fmt::format(
+        "IK failed: cart-vel=[{:.3f}, {:.3f}, {:.3f}] m/s · "
+        "[{:.3f}, {:.3f}, {:.3f}] rad/s at q=[{}] rad",
+        V_P_B.vel.x(), V_P_B.vel.y(), V_P_B.vel.z(),
+        V_P_B.rot.x(), V_P_B.rot.y(), V_P_B.rot.z(),
+        fmt::join(q_current_, ", "));
+    
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "%s - executing safety stop", msg.c_str());
     std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
+    ik_status = tl::unexpected(make_error(ErrorCode::kIKSolverFailed, msg));
   } else {
     // Copy and check for NaN in one pass
     bool hasNaN = false;
@@ -250,8 +287,18 @@ void AdmittanceNode::compute_and_pub_joint_velocities() {
       hasNaN |= std::isnan(v_kdl_(i));
     }
     if (hasNaN) {
-      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "IK returned NaN - executing safety stop");
+      // Create vector of velocity strings, marking NaN values
+      std::vector<std::string> vel_strs;
+      for (size_t i = 0; i < num_joints_; ++i) {
+        vel_strs.push_back(std::isnan(v_kdl_(i)) ? "NaN" : fmt::format("{:.3f}", v_kdl_(i)));
+      }
+      
+      auto msg = fmt::format("IK returned NaN for joint velocities: [{}] rad/s",
+                            fmt::join(vel_strs, ", "));
+      
+      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "%s - executing safety stop", msg.c_str());
       std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
+      ik_status = tl::unexpected(make_error(ErrorCode::kIKSolverFailed, msg));
     }
   }
   
@@ -261,13 +308,15 @@ void AdmittanceNode::compute_and_pub_joint_velocities() {
     V_P_B.vel.x(), V_P_B.vel.y(), V_P_B.vel.z(),
     q_dot_cmd_[0], q_dot_cmd_[1], q_dot_cmd_[2], q_dot_cmd_[3], q_dot_cmd_[4], q_dot_cmd_[5]);
   
-  // Publish to hardware
+  // Always publish velocities (zero on error for safety)
   velocity_msg_.data = q_dot_cmd_;
   velocity_pub_->publish(velocity_msg_);
+  
+  return ik_status.has_value() ? Status{} : ik_status;
 }
 
 // Initialize KDL kinematics from URDF
-bool AdmittanceNode::load_kinematics() {
+Status AdmittanceNode::load_kinematics() {
   RCLCPP_INFO_ONCE(get_logger(), "Loading robot kinematics from URDF");
   
   // Step 1: Get URDF from robot_state_publisher
@@ -276,33 +325,38 @@ bool AdmittanceNode::load_kinematics() {
   
   if (!parameters_client->wait_for_service(std::chrono::seconds(5))) {
     RCLCPP_ERROR(get_logger(), "Robot state publisher not found");
-    return false;
+    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed,
+                                   "Robot state publisher service not available after 5 seconds"));
   }
   
   auto parameters = parameters_client->get_parameters({"robot_description"});
   if (parameters.empty() || parameters[0].get_type() == rclcpp::PARAMETER_NOT_SET) {
     RCLCPP_ERROR(get_logger(), "robot_description parameter not found");
-    return false;
+    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed,
+                                   "robot_description parameter not set in robot_state_publisher"));
   }
   std::string urdf_string = parameters[0].as_string();
   
   // Step 2: Build KDL tree from URDF
   if (!kdl_parser::treeFromString(urdf_string, kdl_tree_)) {
     RCLCPP_ERROR(get_logger(), "Invalid URDF format");
-    return false;
+    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed,
+                                   "Failed to parse URDF into KDL tree"));
   }
 
   // Step 3: Extract robot arm chain (base → wrist_3 = 6 movable joints)
   if (!kdl_tree_.getChain(params_.base_link, "wrist_3_link", kdl_chain_)) {
     RCLCPP_ERROR(get_logger(), "Cannot find chain: %s -> wrist_3_link", params_.base_link.c_str());
-    return false;
+    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed,
+                                   "Cannot extract kinematic chain from " + params_.base_link + " to wrist_3_link"));
   }
   
   // Step 4: Compute tool offset transform (wrist_3 → payload = fixed transform)
   KDL::Chain tool_chain;
   if (!kdl_tree_.getChain("wrist_3_link", params_.tip_link, tool_chain)) {
     RCLCPP_ERROR(get_logger(), "Cannot find payload: wrist_3_link -> %s", params_.tip_link.c_str());
-    return false;
+    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed,
+                                   "Cannot extract tool chain from wrist_3_link to " + params_.tip_link));
   }
   
   KDL::ChainFkSolverPos_recursive tool_fk(tool_chain);
@@ -328,12 +382,16 @@ bool AdmittanceNode::load_kinematics() {
 
   // Allocate working arrays
   num_joints_ = kdl_chain_.getNrOfJoints();
+  
+  // Tier 1: UR-specific invariant
+  ENSURE(num_joints_ == 6, "UR robot kinematic chain must have exactly 6 joints, got " + std::to_string(num_joints_));
+  
   q_kdl_.resize(num_joints_);
   v_kdl_.resize(num_joints_);
 
   RCLCPP_INFO_ONCE(get_logger(), "Kinematics ready: %zu joints, %s -> %s",
               num_joints_, params_.base_link.c_str(), params_.tip_link.c_str());
-  return true;
+  return {};  // Success
 }
 
 
