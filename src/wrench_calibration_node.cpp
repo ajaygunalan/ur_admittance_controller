@@ -57,13 +57,16 @@ Status WrenchCalibrationNode::initialize() {
     }
     RCLCPP_INFO(get_logger(), "Trajectory action server connected");
     
-    // Wait for joint state data with timeout 
+    // Wait for joint state data with timeout and process it
     sensor_msgs::msg::JointState joint_msg;
     if (!rclcpp::wait_for_message(joint_msg, shared_from_this(), "/joint_states", std::chrono::seconds(10))) {
         return tl::unexpected(make_error(ErrorCode::kCommunicationTimeout,
                                        "Joint states not available within 10 seconds"));
     }
-    RCLCPP_INFO(get_logger(), "Joint states received");
+    // Process the received message to populate current_joint_positions_
+    auto joint_msg_ptr = std::make_shared<sensor_msgs::msg::JointState>(joint_msg);
+    updateJointPositions(joint_msg_ptr);
+    RCLCPP_INFO(get_logger(), "Joint states received and processed");
     
     // Wait for F/T sensor data with timeout 
     geometry_msgs::msg::WrenchStamped wrench_msg;
@@ -247,16 +250,44 @@ Status WrenchCalibrationNode::computeCalibrationParameters() {
     
     // LROM algorithm steps matching paper structure
     // Section 1: Estimate gravitational force in base frame
+    RCLCPP_INFO(get_logger(), "Step 1/4: Estimating gravity force in base frame");
+    RCLCPP_INFO(get_logger(), "  Input: %zu force/torque samples from different robot poses", calibration_samples_.size());
     auto f_gravity_B = ur_admittance_controller::estimateGravitationalForceInBaseFrame(calibration_samples_).value();
+    RCLCPP_INFO(get_logger(), "  Output: Gravity force F_b = [%.3f, %.3f, %.3f] N (magnitude: %.3f N)", 
+                f_gravity_B.x(), f_gravity_B.y(), f_gravity_B.z(), f_gravity_B.norm());
     
     // Section 2: Estimate sensor rotation and force bias using Procrustes
+    RCLCPP_INFO(get_logger(), "Step 2/4: Computing sensor-to-endeffector rotation and force bias");
+    RCLCPP_INFO(get_logger(), "  Input: Force samples + gravity force F_b");
     auto [R_SE, f_bias_S] = ur_admittance_controller::estimateSensorRotationAndForceBias(calibration_samples_, f_gravity_B).value();
+    // Convert rotation to Euler angles for display
+    Eigen::Vector3d angles = R_SE.eulerAngles(2, 1, 0); // ZYX convention
+    RCLCPP_INFO(get_logger(), "  Output: Force bias = [%.3f, %.3f, %.3f] N", 
+                f_bias_S.x(), f_bias_S.y(), f_bias_S.z());
+    RCLCPP_INFO(get_logger(), "  Output: Rotation R_SE (euler ZYX) = [%.1f°, %.1f°, %.1f°]",
+                angles.z() * 180/M_PI, angles.y() * 180/M_PI, angles.x() * 180/M_PI);
     
     // Section 3: Estimate COM and torque bias
+    RCLCPP_INFO(get_logger(), "Step 3/4: Computing tool center of mass and torque bias");
+    RCLCPP_INFO(get_logger(), "  Input: Torque samples + force bias from Step 2");
     auto [p_SCoM_S, t_bias_S] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, f_bias_S).value();
+    RCLCPP_INFO(get_logger(), "  Output: COM position = [%.3f, %.3f, %.3f] m", 
+                p_SCoM_S.x(), p_SCoM_S.y(), p_SCoM_S.z());
+    RCLCPP_INFO(get_logger(), "  Output: Torque bias = [%.3f, %.3f, %.3f] Nm",
+                t_bias_S.x(), t_bias_S.y(), t_bias_S.z());
     
     // Section 4: Robot installation bias estimation
+    RCLCPP_INFO(get_logger(), "Step 4/4: Estimating robot installation bias");
+    RCLCPP_INFO(get_logger(), "  Input: Gravity force F_b from Step 1");
     [[maybe_unused]] auto rot_b_g = ur_admittance_controller::estimateRobotInstallationBias(f_gravity_B).value();
+    // Extract installation angles
+    double fbx = f_gravity_B.x();
+    double fby = f_gravity_B.y();
+    double fbz = f_gravity_B.z();
+    double beta = std::atan2(fbx, fbz);
+    double alpha = std::atan2(-fby * std::cos(beta), fbz);
+    RCLCPP_INFO(get_logger(), "  Output: Installation angles α=%.1f°, β=%.1f° (robot base tilt)",
+                alpha * 180/M_PI, beta * 180/M_PI);
     
     // Fill calibration parameters using member variable
     calibration_params_.f_gravity_B = f_gravity_B;
@@ -269,7 +300,10 @@ Status WrenchCalibrationNode::computeCalibrationParameters() {
     Eigen::Quaterniond q(R_SE);
     calibration_params_.quaternion_sensor_to_endeffector = {{q.x(), q.y(), q.z(), q.w()}};
     
-    RCLCPP_INFO(get_logger(), "Calibration successful! COM: [%.3f,%.3f,%.3f]m",
+    // Final summary
+    RCLCPP_INFO(get_logger(), "=== Calibration Complete ===");
+    RCLCPP_INFO(get_logger(), "Tool mass: %.3f kg", f_gravity_B.norm() / 9.81);
+    RCLCPP_INFO(get_logger(), "COM offset from sensor: [%.3f, %.3f, %.3f] m",
                 calibration_params_.p_SCoM_S.x(), calibration_params_.p_SCoM_S.y(), calibration_params_.p_SCoM_S.z());
     
     // Mark calibration as computed
