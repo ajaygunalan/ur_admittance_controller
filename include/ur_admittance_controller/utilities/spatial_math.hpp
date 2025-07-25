@@ -124,3 +124,15 @@ inline Vector3d gravityTorque(const Vector3d& p_CoM, const Vector3d& F_gravity) 
 }
 
 } // namespace ur_admittance_controller::spatial
+
+namespace ur_admittance_controller::spatial_math {
+
+inline Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d& v) {
+    Eigen::Matrix3d S;
+    S << 0, -v.z(), v.y(),
+         v.z(), 0, -v.x(),
+         -v.y(), v.x(), 0;
+    return S;
+}
+
+} // namespace ur_admittance_controller::spatial_math

@@ -67,8 +67,8 @@ private:
     
     
     inline static const JointNames joint_names_ = CalibrationConstants::UR_JOINT_NAMES;
-    std::string base_frame_;
-    std::string ee_frame_;
+    std::string robot_base_frame;
+    std::string robot_tool_frame;
 };
 
 } // namespace ur_admittance_controller

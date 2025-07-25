@@ -28,8 +28,8 @@ namespace ur_admittance_controller {
 
 WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node"),
     tf_buffer_(get_clock()), tf_listener_(tf_buffer_),
-    base_frame_(declare_parameter("base_frame", "base_link")),
-    ee_frame_(declare_parameter("ee_frame", "tool0")) {
+    robot_base_frame(declare_parameter("robot_base_frame", frames::ROBOT_BASE_FRAME)),
+    robot_tool_frame(declare_parameter("robot_tool_frame", frames::ROBOT_TOOL_FRAME)) {
 
     // Creates robot controller client and subscribes to sensor data streams
     trajectory_client_ = rclcpp_action::create_client<TrajectoryAction>(
@@ -206,15 +206,18 @@ Status WrenchCalibrationNode::moveToJointPosition(const JointAngles& target_join
 
 // Collect 10 samples at 10Hz (1 second of data)
 void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationSample>& samples, size_t pose_idx) {
+    // Wait for mechanical settling after robot motion
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    
     // Get current pose transform (X_EB: Base pose in End-effector frame) 
     const auto X_EB = tf2::transformToEigen(
-        tf_buffer_.lookupTransform(ee_frame_, base_frame_, tf2::TimePointZero));
+        tf_buffer_.lookupTransform(robot_tool_frame, robot_base_frame, tf2::TimePointZero));
     
     // Log transform details
     const auto& t = X_EB.translation();
     const auto q = Eigen::Quaterniond(X_EB.rotation());
     RCLCPP_INFO(get_logger(), "Pose of %s w.r.t. %s: pos[%.3f,%.3f,%.3f] quat[%.3f,%.3f,%.3f,%.3f]",
-        base_frame_.c_str(), ee_frame_.c_str(),
+        robot_base_frame.c_str(), robot_tool_frame.c_str(),
         t.x(), t.y(), t.z(), q.x(), q.y(), q.z(), q.w());
     
     // Collect wrench data at 10Hz for statistical averaging

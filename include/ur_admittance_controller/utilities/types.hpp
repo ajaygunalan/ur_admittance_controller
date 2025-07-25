@@ -84,4 +84,15 @@ struct CalibrationResult {
     double torque_fit_rmse{0.0};
 };
 
+// =============================================================================
+// Frame Definitions
+// =============================================================================
+
+namespace frames {
+    static constexpr const char* ROBOT_BASE_FRAME = "base_link";
+    static constexpr const char* ROBOT_TOOL_FRAME = "tool0";  
+    static constexpr const char* SENSOR_FRAME = "netft_link1";
+    static constexpr const char* PROBE_FRAME = "p42v_link1";
+}
+
 } // namespace ur_admittance_controller

@@ -22,14 +22,19 @@ private:
     void wrench_callback(const WrenchMsg::ConstSharedPtr msg);
     Status loadCalibrationParams();
     void setupROSInterfaces();
+    void computeSensorToProbeAdjoint();
     
     
     // Yu pipeline state
     Wrench f_raw_s_;
     Transform X_EB_;
     Vector3d f_grav_s_;
-    Wrench ft_proc_s_;  // Compensated in payload frame
+    Wrench ft_proc_s_;  // Compensated in sensor frame
+    Wrench wrench_probe;  // Compensated wrench at probe location
     Wrench ft_proc_b_;  // Transformed to base frame
+    
+    // Adjoint transformation
+    Eigen::Matrix<double, 6, 6> adjoint_probe_sensor;
     
     // Calibration parameters loaded once from YAML
     Matrix3d R_SE_;        // Rotation sensor to end-effector

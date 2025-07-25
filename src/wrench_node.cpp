@@ -10,10 +10,6 @@
 
 namespace ur_admittance_controller {
 
-// Frame names for ur_admittance_controller kinematic tree
-static constexpr const char* BASE_FRAME = "base_link";
-static constexpr const char* EE_FRAME = "tool0";
-static constexpr const char* SENSOR_FRAME = "netft_link1";
 
 WrenchNode::WrenchNode() : Node("wrench_node"),
     tf_buffer_(std::make_unique<tf2_ros::Buffer>(get_clock())),
@@ -27,9 +23,10 @@ WrenchNode::WrenchNode() : Node("wrench_node"),
     p_CoM_s_ = Vector3d::Zero();
     
     // Initialize state variables
-    f_raw_s_ = ft_proc_s_ = ft_proc_b_ = Wrench::Zero();  // 6D wrenches (force+torque)
+    f_raw_s_ = ft_proc_s_ = wrench_probe = ft_proc_b_ = Wrench::Zero();  // 6D wrenches (force+torque)
     f_grav_s_ = Vector3d::Zero();                         // 3D gravity force only
     X_EB_ = Transform::Identity();                        // Robot pose transform
+    adjoint_probe_sensor = Eigen::Matrix<double, 6, 6>::Identity();
     
     // CRITICAL: Load calibration - throw on failure (Tier 2: setup error)
     auto status = loadCalibrationParams();
@@ -42,6 +39,10 @@ WrenchNode::WrenchNode() : Node("wrench_node"),
     
     // Setup subscribers and publishers
     setupROSInterfaces();
+    
+    // CRITICAL: Must compute adjoint after TF is ready - this transforms 
+    // forces/torques from sensor mounting point to actual tool contact point
+    computeSensorToProbeAdjoint();
     
     RCLCPP_INFO(get_logger(), "Wrench node initialized with calibration");
 }
@@ -59,10 +60,10 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
     // Tier 1: Critical invariant - tf_buffer must be initialized
     ENSURE(tf_buffer_ != nullptr, "TF buffer not initialized");
     
-    if (!tf_buffer_->canTransform(EE_FRAME, BASE_FRAME, tf2::TimePointZero)) {
+    if (!tf_buffer_->canTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero)) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
                              "Transform not available from %s to %s - skipping wrench compensation",
-                             EE_FRAME, BASE_FRAME);
+                             frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME);
         return;
     }
     
@@ -70,7 +71,7 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
     f_raw_s_ = conversions::fromMsg(*msg);
     
     // STEP 2: Get robot end-effector to base transform (X_EB)
-    X_EB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(EE_FRAME, BASE_FRAME, tf2::TimePointZero));
+    X_EB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero));
     
     // Tier 2: Validate external transform from TF2 (minimal sanity check)
     if (!X_EB_.matrix().allFinite()) {
@@ -79,24 +80,25 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
         return;  // Use last valid transform
     }
     
-    // STEP 3: Apply compensation algorithm
+    // STEP 3: Apply Yu et al. compensation at sensor location
     ft_proc_s_ = algorithms::compensateWrench(f_raw_s_, X_EB_, calibration_params_);
     
-    // STEP 4: Transform to base frame
-    Transform X_BS = X_EB_.inverse() * Transform(calibration_params_.R_SE);
-    ft_proc_b_ = algorithms::transformWrenchToBase(ft_proc_s_, X_BS);
+    // STEP 4: Transform to probe tip - accounts for lever arm between sensor and tool
+    wrench_probe = adjoint_probe_sensor * ft_proc_s_;
     
-    // STEP 5: Publish compensated wrench in all three coordinate representations
-    // 5a. Sensor frame (after bias/gravity compensation)
-    auto sensor_msg = conversions::toMsg(ft_proc_s_, SENSOR_FRAME, msg->header.stamp);
+    // STEP 5: Express probe wrench in base coordinates for control algorithms
+    Transform X_BP = tf2::transformToEigen(tf_buffer_->lookupTransform(
+        frames::ROBOT_BASE_FRAME, frames::PROBE_FRAME, tf2::TimePointZero));
+    ft_proc_b_ = algorithms::transformWrenchToBase(wrench_probe, X_BP);
+    
+    // STEP 6: Publish same physical wrench in three coordinate systems
+    auto sensor_msg = conversions::toMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp);
     wrench_proc_sensor_pub_->publish(sensor_msg);
     
-    // 5b. Probe frame (same as processed sensor data in this case since sensor==probe)
-    auto probe_msg = conversions::toMsg(ft_proc_s_, EE_FRAME, msg->header.stamp);
+    auto probe_msg = conversions::toMsg(wrench_probe, frames::PROBE_FRAME, msg->header.stamp);
     wrench_proc_probe_pub_->publish(probe_msg);
     
-    // 5c. Base frame (transformed using adjoint matrix)
-    auto base_msg = conversions::toMsg(ft_proc_b_, BASE_FRAME, msg->header.stamp);
+    auto base_msg = conversions::toMsg(ft_proc_b_, frames::ROBOT_BASE_FRAME, msg->header.stamp);
     wrench_proc_probe_base_pub_->publish(base_msg);
 }
 
@@ -163,6 +165,32 @@ Status WrenchNode::loadCalibrationParams() {
     
     RCLCPP_INFO(get_logger(), "Calibration loaded");
     return {};  // Success
+}
+
+void WrenchNode::computeSensorToProbeAdjoint() {
+    // Fatal if transform unavailable - we CANNOT publish wrong coordinate data
+    if (!tf_buffer_->canTransform(frames::SENSOR_FRAME, frames::PROBE_FRAME, 
+                                   tf2::TimePointZero, std::chrono::seconds(10))) {
+        RCLCPP_FATAL(get_logger(), "Transform not available from %s to %s. "
+                     "Check URDF - probe must be connected to sensor!",
+                     frames::SENSOR_FRAME, frames::PROBE_FRAME);
+        throw std::runtime_error("Required sensor-to-probe transform missing");
+    }
+    
+    auto transform_msg = tf_buffer_->lookupTransform(
+        frames::SENSOR_FRAME, frames::PROBE_FRAME, tf2::TimePointZero);
+    Eigen::Isometry3d sensor_to_probe = tf2::transformToEigen(transform_msg);
+    
+    // Build 6x6 adjoint matrix for wrench transformation (Murray et al.)
+    Eigen::Matrix3d R_PS = sensor_to_probe.rotation().transpose();
+    Eigen::Vector3d p_SP = sensor_to_probe.translation();
+    
+    adjoint_probe_sensor = Eigen::Matrix<double, 6, 6>::Zero();
+    adjoint_probe_sensor.block<3,3>(0,0) = R_PS;
+    adjoint_probe_sensor.block<3,3>(3,3) = R_PS;
+    adjoint_probe_sensor.block<3,3>(3,0) = -R_PS * spatial_math::skewSymmetric(p_SP);
+    
+    RCLCPP_INFO(get_logger(), "Sensor to probe transform ready");
 }
 
 }  // namespace ur_admittance_controller
