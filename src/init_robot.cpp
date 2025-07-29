@@ -233,12 +233,18 @@ void computeToolPoseAndSaveYaml(const KinematicSolver& solver,
               position[0], position[1], position[2],
               orientation[0], orientation[1], orientation[2], orientation[3]);
   
+  // Get workspace from environment or use default
+  std::string workspace = std::getenv("ROS_WORKSPACE") ? 
+                         std::getenv("ROS_WORKSPACE") : 
+                         std::string(std::getenv("HOME")) + "/ros2_ws";
+  std::string equilibrium_file = workspace + "/src/ur_admittance_controller/config/equilibrium.yaml";
+  
   // Save to YAML
-  std::ofstream fout("src/ur_admittance_controller/config/equilibrium.yaml");
+  std::ofstream fout(equilibrium_file);
   // Tier 2: Setup failure - throw on file error
   if (!fout.is_open()) {
-    auto msg = "Failed to open equilibrium.yaml for writing";
-    RCLCPP_ERROR(logger, "%s", msg);
+    auto msg = "Failed to open " + equilibrium_file + " for writing";
+    RCLCPP_ERROR(logger, "%s", msg.c_str());
     throw std::runtime_error(msg);
   }
   
@@ -247,10 +253,8 @@ void computeToolPoseAndSaveYaml(const KinematicSolver& solver,
        << "    equilibrium.position: [" << position[0] << ", " << position[1] << ", " << position[2] << "]\n"
        << "    equilibrium.orientation: [" << orientation[0] << ", " << orientation[1] << ", " << orientation[2] << ", " << orientation[3] << "]\n";
   
-  RCLCPP_INFO(logger, "Saved equilibrium pose to YAML");
-  RCLCPP_INFO(logger, "Run: ros2 run ur_admittance_controller admittance_node "
-                      "--ros-args --params-file "
-                      "src/ur_admittance_controller/config/equilibrium.yaml");
+  RCLCPP_INFO(logger, "Saved equilibrium pose to %s", equilibrium_file.c_str());
+  RCLCPP_INFO(logger, "Run: ros2 run ur_admittance_controller admittance_node");
 }
 
 void switchToVelocityController(rclcpp::Node::SharedPtr node) {

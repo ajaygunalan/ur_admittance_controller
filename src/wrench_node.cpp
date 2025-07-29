@@ -6,7 +6,6 @@
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <filesystem>
 #include <yaml-cpp/yaml.h>
-#include <ament_index_cpp/get_package_share_directory.hpp>
 
 namespace ur_admittance_controller {
 
@@ -68,7 +67,8 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
     }
     
     // STEP 1: Extract raw F/T data from sensor (ROS WrenchStamped → Eigen 6D vector)
-    f_raw_s_ = conversions::fromMsg(*msg);
+    // Apply sanitization to raw sensor data to handle floating-point noise
+    f_raw_s_ = sanitizeWrench(conversions::fromMsg(*msg));
     
     // STEP 2: Get robot end-effector to base transform (X_EB)
     X_EB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero));
@@ -104,14 +104,11 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
 
 Status WrenchNode::loadCalibrationParams() {
     // DESIGN: ROS2 parameter system allows runtime reconfiguration via launch files
-    std::string default_calib_file;
-    try {
-        std::string package_share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
-        default_calib_file = package_share_dir + "/config/wrench_calibration.yaml";
-    } catch (const std::exception& e) {
-        return tl::unexpected(make_error(ErrorCode::kFileNotFound, 
-                         "Package not found: " + std::string(e.what())));
-    }
+    // Get workspace from environment or use default
+    std::string workspace = std::getenv("ROS_WORKSPACE") ? 
+                           std::getenv("ROS_WORKSPACE") : 
+                           std::string(std::getenv("HOME")) + "/ros2_ws";
+    std::string default_calib_file = workspace + "/src/ur_admittance_controller/config/wrench_calibration.yaml";
     
     auto calib_file = declare_parameter<std::string>("calibration_file", default_calib_file);
     

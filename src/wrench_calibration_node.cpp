@@ -8,7 +8,6 @@
 #include <thread>
 
 // Third-party headers (ROS2, external libraries)
-#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp/wait_for_message.hpp>
 #include <rcpputils/scope_exit.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
@@ -324,16 +323,12 @@ Status WrenchCalibrationNode::saveCalibrationToYaml() {
                                        "No calibration data to save - run calibration first"));
     }
     
-    // Generate filename internally
-    std::string package_share_dir;
-    try {
-        package_share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
-    } catch (const std::exception& e) {
-        return tl::unexpected(make_error(ErrorCode::kFileNotFound,
-                                       fmt::format("Package not found: {}", e.what())));
-    }
+    // Get workspace from environment or use default
+    std::string workspace = std::getenv("ROS_WORKSPACE") ? 
+                           std::getenv("ROS_WORKSPACE") : 
+                           std::string(std::getenv("HOME")) + "/ros2_ws";
     
-    const auto config_file = std::filesystem::path(package_share_dir) / "config" / "wrench_calibration.yaml";
+    const auto config_file = std::filesystem::path(workspace) / "src" / "ur_admittance_controller" / "config" / "wrench_calibration.yaml";
     
     // Ensure config directory exists
     std::filesystem::create_directories(config_file.parent_path());

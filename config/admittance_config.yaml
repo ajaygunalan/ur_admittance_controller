@@ -39,7 +39,7 @@ ur_admittance_controller:
     read_only: true
   tip_link:
     type: string
-    default_value: tool0
+    default_value: p42v_link1
     description: Robot end-effector frame
     read_only: true
   ft_frame:

@@ -30,7 +30,6 @@ add_compile_definitions(FMT_HEADER_ONLY=1)
 # Core ROS2 packages
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(ament_index_cpp REQUIRED)
 
 # Parameter generation and plugin loading
 find_package(pluginlib REQUIRED)
@@ -86,6 +85,7 @@ set(NODE_DEPENDENCIES
   orocos_kdl
   urdf
   kdl_parser
+  yaml-cpp
 )
 
 # ==============================================================================
@@ -174,6 +174,7 @@ target_include_directories(wrench_calibration_node PUBLIC
 target_link_libraries(admittance_node
   ur_admittance_controller_parameters
   Eigen3::Eigen
+  yaml-cpp
 )
 
 target_link_libraries(wrench_node
@@ -203,7 +204,7 @@ target_link_libraries(wrench_calibration_node
 # Note: Removed PACKAGE_SOURCE_DIR definitions - now using ament_index_cpp for proper installation support
 
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
-ament_target_dependencies(wrench_node rclcpp geometry_msgs sensor_msgs std_srvs tf2 tf2_ros tf2_eigen ament_index_cpp)
+ament_target_dependencies(wrench_node rclcpp geometry_msgs sensor_msgs std_srvs tf2 tf2_ros tf2_eigen)
 
 # Additional dependencies for init_robot and verify_poses
 set(INIT_ROBOT_DEPENDENCIES
@@ -242,7 +243,6 @@ set(CALIBRATION_DEPENDENCIES
   tf2
   tf2_ros
   tf2_eigen
-  ament_index_cpp
 )
 
 ament_target_dependencies(wrench_calibration_node ${CALIBRATION_DEPENDENCIES})

@@ -24,7 +24,8 @@ void AdmittanceNode::map_joint_states(const sensor_msgs::msg::JointState& msg, b
   // Direct mapping
   for (size_t i = 0; i < msg.name.size() && i < msg.position.size(); ++i) {
     if (auto it = joint_map.find(msg.name[i]); it != joint_map.end()) {
-      q_current_[it->second] = msg.position[i];
+      // Apply Drake-inspired sanitization to handle floating-point noise
+      q_current_[it->second] = sanitizeJointAngle(msg.position[i]);
     }
   }
 }
@@ -48,7 +49,7 @@ void AdmittanceNode::initializeParameters() {
 
 void AdmittanceNode::setupROSInterfaces() {
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
-      "/F_P_B", rclcpp::SensorDataQoS(),
+      "/netft/proc_probe_base", rclcpp::SensorDataQoS(),
       [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) { wrench_callback(msg); });
       
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
@@ -67,7 +68,8 @@ void AdmittanceNode::setupROSInterfaces() {
 
 
 void AdmittanceNode::wrench_callback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  F_P_B = conversions::fromMsg(*msg);
+  // Apply sanitization to wrench data to handle sensor noise
+  F_P_B = sanitizeWrench(conversions::fromMsg(*msg));
   
   
   // Log wrench if non-zero

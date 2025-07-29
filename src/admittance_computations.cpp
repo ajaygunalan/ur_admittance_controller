@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <rclcpp/parameter_client.hpp>
+#include <yaml-cpp/yaml.h>
 
 namespace ur_admittance_controller {
   
@@ -37,20 +38,32 @@ void AdmittanceNode::initializeStateVectors() {
 }
 
 void AdmittanceNode::setDefaultEquilibrium() {
-  // Declare parameters with fallback defaults
-  declare_parameter("equilibrium.position", std::vector<double>{0.49, 0.13, 0.49});
-  // Using positive-w convention for quaternion (w,x,y,z)
-  declare_parameter("equilibrium.orientation", std::vector<double>{0.00, 0.71, -0.71, 0.00});
+  // Get workspace from environment or use default
+  std::string workspace = std::getenv("ROS_WORKSPACE") ? 
+                         std::getenv("ROS_WORKSPACE") : 
+                         std::string(std::getenv("HOME")) + "/ros2_ws";
+  std::string equilibrium_file = workspace + "/src/ur_admittance_controller/config/equilibrium.yaml";
   
-  // Get parameters - will use YAML values if loaded with --params-file
-  auto eq_pos = get_parameter("equilibrium.position").as_double_array();
-  auto eq_ori = get_parameter("equilibrium.orientation").as_double_array();
+  // Load equilibrium from YAML file
+  YAML::Node config;
+  try {
+    config = YAML::LoadFile(equilibrium_file);
+  } catch (const YAML::Exception& e) {
+    auto msg = "Failed to load equilibrium file: " + equilibrium_file + " - " + e.what();
+    RCLCPP_ERROR(get_logger(), "%s", msg.c_str());
+    throw std::runtime_error(msg);
+  }
+  
+  // Extract position and orientation from YAML
+  auto eq_pos = config["admittance_node"]["ros__parameters"]["equilibrium.position"].as<std::vector<double>>();
+  auto eq_ori = config["admittance_node"]["ros__parameters"]["equilibrium.orientation"].as<std::vector<double>>();
   
   X_BP_desired.translation() << eq_pos[0], eq_pos[1], eq_pos[2];
   // Convert from WXYZ (parameter format) to Eigen's WXYZ constructor format
   X_BP_desired.linear() = Eigen::Quaterniond(eq_ori[0], eq_ori[1], eq_ori[2], eq_ori[3]).toRotationMatrix();
   
-  RCLCPP_INFO(get_logger(), "Equilibrium pose set: position=[%.3f, %.3f, %.3f], orientation=[%.3f, %.3f, %.3f, %.3f]", 
+  RCLCPP_INFO(get_logger(), "Equilibrium pose loaded from %s: position=[%.3f, %.3f, %.3f], orientation=[%.3f, %.3f, %.3f, %.3f]", 
+               equilibrium_file.c_str(),
                eq_pos[0], eq_pos[1], eq_pos[2],
                eq_ori[0], eq_ori[1], eq_ori[2], eq_ori[3]);
 }
@@ -86,12 +99,13 @@ Status AdmittanceNode::get_X_BP_current() {
          fk_pos_solver_ != nullptr,
          "FK preconditions violated: joints must be 6 and solver initialized");
   
+  // Note: q_current_ is already sanitized in the joint_state_callback
   // Log initial joint configuration once for debugging
-  RCLCPP_INFO_ONCE(get_logger(), "FK solver initialized - %zu joints: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+  RCLCPP_INFO_ONCE(get_logger(), "FK solver initialized - %zu joints: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]",
       num_joints_, q_current_[0], q_current_[1], q_current_[2], 
       q_current_[3], q_current_[4], q_current_[5]);
   
-  // Use algorithm to compute forward kinematics
+  // Use algorithm to compute forward kinematics with already-sanitized values
   auto result = algorithms::computeForwardKinematics(q_current_, fk_pos_solver_.get(), X_W3P);
   if (!result) {
     auto msg = fmt::format("FK failed at q=[{}] rad", 
