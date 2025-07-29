@@ -2,6 +2,10 @@
 
 6-DOF force-compliant motion control for Universal Robots with gravity compensation.
 
+## Dependencies
+
+See [docs/dependencies.md](docs/dependencies.md) for detailed package dependencies.
+
 ## Setup
 
 Clone dependencies:
@@ -55,7 +59,7 @@ ros2 run ur_admittance_controller wrench_node
 
 Start admittance node:
 ```bash
-ros2 run ur_admittance_controller admittance_node --ros-args --params-file src/ur_admittance_controller/config/equilibrium.yaml
+ros2 run ur_admittance_controller admittance_node
 ```
 
 ## Architecture
