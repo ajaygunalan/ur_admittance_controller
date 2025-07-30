@@ -105,14 +105,20 @@ Status AdmittanceNode::get_X_BP_current() {
       num_joints_, q_current_[0], q_current_[1], q_current_[2], 
       q_current_[3], q_current_[4], q_current_[5]);
   
+  // Debug FK inputs
+  RCLCPP_INFO(get_logger(), "FK attempt: q_current_.size()=%zu, chain_joints=%d, chain_segments=%d, solver=%p",
+      q_current_.size(), kdl_chain_.getNrOfJoints(), kdl_chain_.getNrOfSegments(), fk_pos_solver_.get());
+  
+  // Debug joint values
+  RCLCPP_INFO(get_logger(), "Joint values: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]",
+      q_current_[0], q_current_[1], q_current_[2], q_current_[3], q_current_[4], q_current_[5]);
+  
   // Use algorithm to compute forward kinematics with already-sanitized values
   auto result = algorithms::computeForwardKinematics(q_current_, fk_pos_solver_.get(), X_W3P);
   if (!result) {
-    auto msg = fmt::format("FK failed at q=[{}] rad", 
-                          fmt::join(q_current_, ", "));
-    
-    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "%s", msg.c_str());
-    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed, msg));
+    // The error message from algorithms already has the KDL error code
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "%s", result.error().message.c_str());
+    return tl::unexpected(result.error());
   }
   
   X_BP_current = result.value();
@@ -281,10 +287,11 @@ Status AdmittanceNode::load_kinematics() {
   ik_vel_solver_ = std::move(components.ik_vel_solver);
   fk_pos_solver_ = std::move(components.fk_solver);
   
-  RCLCPP_INFO_ONCE(get_logger(), "Payload offset: [%.3f, %.3f, %.3f] m",
+  RCLCPP_INFO_ONCE(get_logger(), "Payload offset: [%.3f, %.3f, %.3f] m, valid frame: %s",
               X_W3P.p.x(), 
               X_W3P.p.y(), 
-              X_W3P.p.z());
+              X_W3P.p.z(),
+              (X_W3P == X_W3P) ? "yes" : "no");
 
   // Allocate working arrays
   num_joints_ = kdl_chain_.getNrOfJoints();

@@ -10,6 +10,7 @@
 #include <urdf/model.h>
 #include <memory>
 #include <string>
+#include <rclcpp/logging.hpp>
 
 namespace ur_admittance_controller::kinematics {
 
@@ -58,6 +59,13 @@ inline Result<KinematicsComponents> initializeFromUrdf(
             ErrorCode::kKinematicsInitFailed,
             "Cannot extract chain from " + base_link + " to wrist_3_link"));
     }
+    
+    // Log chain info for debugging
+    RCLCPP_INFO(rclcpp::get_logger("kinematics"), 
+        "Robot chain extracted: %d joints, %d segments from %s to wrist_3_link", 
+        components.robot_chain.getNrOfJoints(), 
+        components.robot_chain.getNrOfSegments(),
+        base_link.c_str());
     
     // Extract tool transform (wrist_3 → tip)
     KDL::Chain tool_chain;

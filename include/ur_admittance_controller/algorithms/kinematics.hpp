@@ -6,6 +6,7 @@
 #include <kdl/chainiksolvervel_wdls.hpp>
 #include <kdl/frames.hpp>
 #include <kdl/jntarray.hpp>
+#include <fmt/core.h>
 
 namespace ur_admittance_controller {
 namespace algorithms {
@@ -31,9 +32,12 @@ inline Result<Eigen::Isometry3d> computeForwardKinematics(
   
   // Compute FK to last joint
   KDL::Frame X_base_joint;
-  if (fk_solver->JntToCart(q_kdl, X_base_joint) < 0) {
+  int fk_result = fk_solver->JntToCart(q_kdl, X_base_joint);
+  if (fk_result < 0) {
+    // Debug info - fk_result: -1 = size mismatch, -2 = out of range
     return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed,
-                                   "Forward kinematics computation failed"));
+        fmt::format("FK failed: KDL error={}, input_joints={}, q_kdl_size={}",
+                    fk_result, q_joints.size(), q_kdl.data.size())));
   }
   
   // Apply tool offset
