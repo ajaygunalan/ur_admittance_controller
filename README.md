@@ -6,6 +6,8 @@
 
 See [docs/dependencies.md](docs/dependencies.md) for detailed package dependencies.
 
+See [docs/debugging.md](docs/debugging.md) for debugging with VS Code.
+
 ## Setup
 
 Clone dependencies:

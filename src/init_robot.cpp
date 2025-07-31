@@ -108,8 +108,9 @@ KinematicSolver parseUrdfToKinematicSolver(const std::string& urdf, rclcpp::Logg
     RCLCPP_INFO(logger, "Tool offset from wrist_3_link to p42v_link1 (probe tip): [%.3f, %.3f, %.3f]",
                 solver.tool_offset.p.x(), solver.tool_offset.p.y(), solver.tool_offset.p.z());
   } else {
-    RCLCPP_WARN(logger, "p42v_link1 not found, using identity transform");
-    solver.tool_offset = KDL::Frame::Identity();
+    auto msg = "CRITICAL ERROR: p42v_link1 not found in URDF. Cannot proceed without probe tip frame!";
+    RCLCPP_ERROR(logger, "%s", msg);
+    throw std::runtime_error(msg);
   }
   
   // Create FK solver

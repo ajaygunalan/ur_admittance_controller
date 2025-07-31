@@ -24,10 +24,17 @@ inline Result<Eigen::Isometry3d> computeForwardKinematics(
     KDL::ChainFkSolverPos_recursive* fk_solver,
     const KDL::Frame& tool_offset) {
   
-  // Convert to KDL format
+  // Convert to KDL format with angle normalization
   KDL::JntArray q_kdl(q_joints.size());
   for (size_t i = 0; i < q_joints.size(); ++i) {
-    q_kdl(i) = q_joints[i];
+    // Normalize to [-π, π] as KDL expects
+    double angle = std::atan2(std::sin(q_joints[i]), std::cos(q_joints[i]));
+    q_kdl(i) = angle;
+    
+    // Debug: Log if normalization changed the value
+    if (std::abs(angle - q_joints[i]) > 0.001) {
+      fmt::print("Joint {} normalized: {} -> {}\n", i, q_joints[i], angle);
+    }
   }
   
   // Compute FK to last joint

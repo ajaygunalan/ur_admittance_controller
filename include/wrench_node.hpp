@@ -27,7 +27,7 @@ private:
     
     // Yu pipeline state
     Wrench f_raw_s_;
-    Transform X_EB_;
+    Transform X_TB;
     Vector3d f_grav_s_;
     Wrench ft_proc_s_;  // Compensated in sensor frame
     Wrench wrench_probe;  // Compensated wrench at probe location

@@ -190,7 +190,7 @@ namespace CalibrationConstants {
 // Calibration data structures
 struct CalibrationSample {
     Wrench F_S_S_raw;   // Force/Torque at Sensor Frame in Sensor Frame
-    Transform X_EB;     // Transform from Base to End-effector
+    Transform X_TB;     // Matches lookupTransform(tool, base) order
     size_t pose_index;  // Which pose (0-31) this sample belongs to
 };
 

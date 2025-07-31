@@ -208,13 +208,13 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
     // Wait for mechanical settling after robot motion
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
-    // Get current pose transform (X_EB: Base pose in End-effector frame) 
-    const auto X_EB = tf2::transformToEigen(
+    // Get current pose transform (X_TB: matches lookupTransform(tool, base) order)
+    const auto X_TB = tf2::transformToEigen(
         tf_buffer_.lookupTransform(robot_tool_frame, robot_base_frame, tf2::TimePointZero));
     
     // Log transform details
-    const auto& t = X_EB.translation();
-    const auto q = Eigen::Quaterniond(X_EB.rotation());
+    const auto& t = X_TB.translation();
+    const auto q = Eigen::Quaterniond(X_TB.rotation());
     RCLCPP_INFO(get_logger(), "Pose of %s w.r.t. %s: pos[%.3f,%.3f,%.3f] quat[%.3f,%.3f,%.3f,%.3f]",
         robot_base_frame.c_str(), robot_tool_frame.c_str(),
         t.x(), t.y(), t.z(), q.x(), q.y(), q.z(), q.w());
@@ -226,7 +226,7 @@ void WrenchCalibrationNode::collectSamplesAtCurrentPose(std::vector<CalibrationS
         Wrench6d wrench;
         wrench = conversions::fromMsg(latest_wrench_);
         raw_sensor_avg += wrench;  // Accumulate for averaging
-        samples.push_back(CalibrationSample{wrench, X_EB, pose_idx});  // Store individual sample
+        samples.push_back(CalibrationSample{wrench, X_TB, pose_idx});  // Store individual sample
         
         std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 10Hz sampling rate
         rclcpp::spin_some(shared_from_this());  // Process callbacks to get fresh data

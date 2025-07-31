@@ -46,7 +46,7 @@ Result<Vector3d> estimateGravitationalForceInBaseFrame(
     
     // Tier 1: All samples must have valid data
     ENSURE(!samples.empty() && std::all_of(samples.begin(), samples.end(), 
-           [](const auto& s) { return !s.F_S_S_raw.hasNaN() && !s.X_EB.matrix().hasNaN(); }),
+           [](const auto& s) { return !s.F_S_S_raw.hasNaN() && !s.X_TB.matrix().hasNaN(); }),
            "Calibration samples contain NaN values");
 
     const size_t n = samples.size();
@@ -62,10 +62,10 @@ Result<Vector3d> estimateGravitationalForceInBaseFrame(
     for (size_t i = 0; i < n; ++i) {
         const size_t row_offset = 3 * i;
         const auto& force = samples[i].F_S_S_raw.head<3>();
-        const auto& R_EB = samples[i].X_EB.rotation();
+        const auto& R_TB = samples[i].X_TB.rotation();
 
-        // A6 left block: -R_EB (negative rotation from base to end-effector)
-        A6.block<3, 3>(row_offset, 0) = -R_EB;
+        // A6 left block: -R_TB (negative rotation matching lookupTransform order)
+        A6.block<3, 3>(row_offset, 0) = -R_TB;
         
         // A6 right block: -I (negative identity for R_SE^T * force_bias term)
         A6.block<3, 3>(row_offset, 3) = -Matrix3d::Identity();
@@ -157,12 +157,12 @@ Result<std::pair<Matrix3d, Vector3d>> estimateSensorRotationAndForceBias(
     force_readings_avg /= static_cast<double>(n);
 
     // Compute: R̄_EB = (1/n) * Σ R_EB_i
-    Matrix3d rotation_EB_avg = Matrix3d::Zero();
+    Matrix3d rotation_TB_avg = Matrix3d::Zero();
     
     for (const auto& sample : samples) {
-        rotation_EB_avg += sample.X_EB.rotation();
+        rotation_TB_avg += sample.X_TB.rotation();
     }
-    rotation_EB_avg /= static_cast<double>(n);
+    rotation_TB_avg /= static_cast<double>(n);
 
     // ===== Step 2: Build D matrix for Procrustes (Eq. 38) =====
     // Minimizing: J1 = Σ ||(s_Fi - s̄_F) - R_SE * (R_EB_i - R̄_EB) * F_b||²
@@ -171,7 +171,7 @@ Result<std::pair<Matrix3d, Vector3d>> estimateSensorRotationAndForceBias(
     
     for (const auto& sample : samples) {
         const Vector3d force_centered = sample.F_S_S_raw.head<3>() - force_readings_avg;
-        const Matrix3d rotation_centered = sample.X_EB.rotation() - rotation_EB_avg;
+        const Matrix3d rotation_centered = sample.X_TB.rotation() - rotation_TB_avg;
         
         // Accumulate outer product
         D += rotation_centered * gravity_in_base * force_centered.transpose();
@@ -193,7 +193,7 @@ Result<std::pair<Matrix3d, Vector3d>> estimateSensorRotationAndForceBias(
     // ===== Step 4: Calculate force bias (Eq. 39) =====
     // F0 = F̄ - R_SE * R̄_EB * Fb
     const Vector3d force_bias = 
-        force_readings_avg - (R_SE * rotation_EB_avg * gravity_in_base);
+        force_readings_avg - (R_SE * rotation_TB_avg * gravity_in_base);
 
     return std::make_pair(R_SE, force_bias);
 }

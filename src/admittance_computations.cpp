@@ -105,9 +105,24 @@ Status AdmittanceNode::get_X_BP_current() {
       num_joints_, q_current_[0], q_current_[1], q_current_[2], 
       q_current_[3], q_current_[4], q_current_[5]);
   
-  // Debug FK inputs
-  RCLCPP_INFO(get_logger(), "FK attempt: q_current_.size()=%zu, chain_joints=%d, chain_segments=%d, solver=%p",
-      q_current_.size(), kdl_chain_.getNrOfJoints(), kdl_chain_.getNrOfSegments(), fk_pos_solver_.get());
+  // Debug FK inputs - fix format warning by casting to void*
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 100, 
+      "FK attempt: q_current_.size()=%zu, chain_joints=%d, chain_segments=%d, solver=%p",
+      q_current_.size(), kdl_chain_.getNrOfJoints(), kdl_chain_.getNrOfSegments(), 
+      static_cast<void*>(fk_pos_solver_.get()));
+  
+  // CRITICAL: Validate chain before FK computation (error -4 means invalid chain!)
+  if (kdl_chain_.getNrOfSegments() == 0) {
+    RCLCPP_ERROR(get_logger(), "FATAL: KDL chain has NO segments! This will cause error -4");
+    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed,
+                                   "KDL chain is invalid - 0 segments"));
+  }
+  if (kdl_chain_.getNrOfJoints() != 6) {
+    RCLCPP_ERROR(get_logger(), "FATAL: KDL chain has %d joints, expected 6! This may cause error -4", 
+                 kdl_chain_.getNrOfJoints());
+    return tl::unexpected(make_error(ErrorCode::kKinematicsInitFailed,
+                                   fmt::format("KDL chain has {} joints, expected 6", kdl_chain_.getNrOfJoints())));
+  }
   
   // Debug joint values
   RCLCPP_INFO(get_logger(), "Joint values: [%.4f, %.4f, %.4f, %.4f, %.4f, %.4f]",
@@ -282,16 +297,31 @@ Status AdmittanceNode::load_kinematics() {
   
   auto& components = result.value();
   kdl_tree_ = std::move(components.tree);
-  kdl_chain_ = std::move(components.robot_chain);
+  kdl_chain_ = components.robot_chain;  // COPY the chain
   X_W3P = components.tool_offset;
-  ik_vel_solver_ = std::move(components.ik_vel_solver);
-  fk_pos_solver_ = std::move(components.fk_solver);
+  
+  // Create NEW solvers with OUR chain copy to ensure they reference the correct chain
+  fk_pos_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(kdl_chain_);
+  ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_wdls>(kdl_chain_, 1e-5, 150);
+  ik_vel_solver_->setLambda(0.1);
   
   RCLCPP_INFO_ONCE(get_logger(), "Payload offset: [%.3f, %.3f, %.3f] m, valid frame: %s",
               X_W3P.p.x(), 
               X_W3P.p.y(), 
               X_W3P.p.z(),
               (X_W3P == X_W3P) ? "yes" : "no");
+
+  // CRITICAL: Log chain state immediately after construction
+  RCLCPP_INFO(get_logger(), "Chain constructed: segments=%d, joints=%d", 
+              kdl_chain_.getNrOfSegments(), kdl_chain_.getNrOfJoints());
+  
+  // Debug each segment
+  for (unsigned int i = 0; i < kdl_chain_.getNrOfSegments(); ++i) {
+    const auto& segment = kdl_chain_.getSegment(i);
+    RCLCPP_INFO(get_logger(), "  Segment %d: name='%s', has_joint=%s", 
+                i, segment.getName().c_str(), 
+                segment.getJoint().getType() != KDL::Joint::Fixed ? "yes" : "no");
+  }
 
   // Allocate working arrays
   num_joints_ = kdl_chain_.getNrOfJoints();

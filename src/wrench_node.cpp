@@ -24,7 +24,7 @@ WrenchNode::WrenchNode() : Node("wrench_node"),
     // Initialize state variables
     f_raw_s_ = ft_proc_s_ = wrench_probe = ft_proc_b_ = Wrench::Zero();  // 6D wrenches (force+torque)
     f_grav_s_ = Vector3d::Zero();                         // 3D gravity force only
-    X_EB_ = Transform::Identity();                        // Robot pose transform
+    X_TB = Transform::Identity();                        // Matches lookupTransform(tool, base) order
     adjoint_probe_sensor = Eigen::Matrix<double, 6, 6>::Identity();
     
     // CRITICAL: Load calibration - throw on failure (Tier 2: setup error)
@@ -60,9 +60,9 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
     ENSURE(tf_buffer_ != nullptr, "TF buffer not initialized");
     
     if (!tf_buffer_->canTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero)) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                             "Transform not available from %s to %s - skipping wrench compensation",
-                             frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME);
+        RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000,
+                             "Transform not available from %s to %s - cannot compensate wrench safely!",
+                             frames::ROBOT_BASE_FRAME, frames::ROBOT_TOOL_FRAME);
         return;
     }
     
@@ -70,18 +70,18 @@ void WrenchNode::wrench_callback(const WrenchMsg::ConstSharedPtr msg) {
     // Apply sanitization to raw sensor data to handle floating-point noise
     f_raw_s_ = sanitizeWrench(conversions::fromMsg(*msg));
     
-    // STEP 2: Get robot end-effector to base transform (X_EB)
-    X_EB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero));
+    // STEP 2: Get transform matching lookupTransform(tool, base) order
+    X_TB = tf2::transformToEigen(tf_buffer_->lookupTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero));
     
     // Tier 2: Validate external transform from TF2 (minimal sanity check)
-    if (!X_EB_.matrix().allFinite()) {
+    if (!X_TB.matrix().allFinite()) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
             "Invalid transform from TF2 detected (contains NaN/Inf), skipping wrench update");
         return;  // Use last valid transform
     }
     
     // STEP 3: Apply Yu et al. compensation at sensor location
-    ft_proc_s_ = algorithms::compensateWrench(f_raw_s_, X_EB_, calibration_params_);
+    ft_proc_s_ = algorithms::compensateWrench(f_raw_s_, X_TB, calibration_params_);
     
     // STEP 4: Transform to probe tip - accounts for lever arm between sensor and tool
     wrench_probe = adjoint_probe_sensor * ft_proc_s_;
@@ -176,11 +176,11 @@ void WrenchNode::computeSensorToProbeAdjoint() {
     
     auto transform_msg = tf_buffer_->lookupTransform(
         frames::SENSOR_FRAME, frames::PROBE_FRAME, tf2::TimePointZero);
-    Eigen::Isometry3d sensor_to_probe = tf2::transformToEigen(transform_msg);
+    Eigen::Isometry3d X_SP = tf2::transformToEigen(transform_msg);  // Matches lookupTransform(sensor, probe) order
     
     // Build 6x6 adjoint matrix for wrench transformation (Murray et al.)
-    Eigen::Matrix3d R_PS = sensor_to_probe.rotation().transpose();
-    Eigen::Vector3d p_SP = sensor_to_probe.translation();
+    Eigen::Matrix3d R_PS = X_SP.rotation().transpose();
+    Eigen::Vector3d p_SP = X_SP.translation();
     
     adjoint_probe_sensor = Eigen::Matrix<double, 6, 6>::Zero();
     adjoint_probe_sensor.block<3,3>(0,0) = R_PS;

@@ -13,20 +13,20 @@ namespace algorithms {
  * F_compensated = F_raw - F_gravity - F_bias
  * 
  * @param wrench_raw Raw wrench from sensor in sensor frame
- * @param X_EB Transform from end-effector to base
+ * @param X_TB Transform matching lookupTransform(tool, base) order
  * @param params Calibration parameters
  * @return Compensated wrench in sensor frame
  */
 inline Wrench6d compensateWrench(
     const Wrench6d& wrench_raw,
-    const Transform& X_EB,
+    const Transform& X_TB,
     const GravityCompensationParams& params) {
   
-  // Extract rotation from end-effector to base
-  const Matrix3d& R_EB = X_EB.rotation();
+  // Extract rotation matching lookupTransform(tool, base) order
+  const Matrix3d& R_TB = X_TB.rotation();
   
-  // Transform gravity from base to sensor frame: R_SE * R_EB * f_gravity_B
-  Force3d f_gravity_S = params.R_SE * R_EB * params.f_gravity_B;
+  // Transform gravity from base to sensor frame: R_SE * R_TB * f_gravity_B
+  Force3d f_gravity_S = params.R_SE * R_TB * params.f_gravity_B;
   
   // Compute torque due to gravity
   Torque3d t_gravity_S = params.p_SCoM_S.cross(f_gravity_S);
@@ -66,7 +66,7 @@ inline Wrench6d transformWrenchToBase(
  * 3. Scale by admittance ratio
  * 
  * @param wrench_raw Raw sensor wrench
- * @param X_EB Transform from end-effector to base
+ * @param X_TB Transform matching lookupTransform(tool, base) order
  * @param X_BS Transform from base to sensor
  * @param params Calibration parameters
  * @param admittance_ratio Scaling factor (0-1)
@@ -74,13 +74,13 @@ inline Wrench6d transformWrenchToBase(
  */
 inline Wrench6d processWrench(
     const Wrench6d& wrench_raw,
-    const Transform& X_EB,
+    const Transform& X_TB,
     const Transform& X_BS,
     const GravityCompensationParams& params,
     double admittance_ratio) {
   
   // Apply compensation
-  Wrench6d wrench_compensated = compensateWrench(wrench_raw, X_EB, params);
+  Wrench6d wrench_compensated = compensateWrench(wrench_raw, X_TB, params);
   
   // Transform to base frame
   Wrench6d wrench_base = transformWrenchToBase(wrench_compensated, X_BS);
