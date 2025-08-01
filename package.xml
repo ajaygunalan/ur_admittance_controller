@@ -10,44 +10,31 @@
   
   <buildtool_depend>ament_cmake</buildtool_depend>
   
-  <!-- Core ROS2 dependencies -->
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
   <depend>pluginlib</depend>
   <depend>generate_parameter_library</depend>
-  
-  <!-- Message dependencies -->
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>trajectory_msgs</depend>
-  
-  <!-- Additional dependencies for init_robot and verify_poses -->
-  <depend>rclcpp_action</depend>
   <depend>control_msgs</depend>
   <depend>controller_manager_msgs</depend>
   <depend>rcl_interfaces</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_eigen</depend>
+  <depend>kdl_parser</depend>
+  <depend>urdf</depend>
+  <depend>orocos_kdl_vendor</depend>
+  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
   
-  <!-- Launch file dependencies -->
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ur_simulation_gz</exec_depend>
   
-  <!-- Transform dependencies -->
-  <depend>tf2</depend>
-  <depend>tf2_ros</depend>
-  <depend>tf2_eigen</depend>
-  
-  <!-- Kinematics dependencies -->
-  <depend>kdl_parser</depend>
-  <depend>urdf</depend>
-  <depend>orocos_kdl_vendor</depend>
-  
-  <!-- System dependencies -->
-  <depend>eigen</depend>
-  <depend>yaml-cpp</depend>
-  
-  <!-- Testing dependencies -->
   <test_depend>ament_cmake_gmock</test_depend>
   <test_depend>controller_manager</test_depend>
   <test_depend>ros2_control_test_assets</test_depend>

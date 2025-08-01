@@ -26,3 +26,16 @@ Thumbs.db
 
 # Log files in any subdirectory
 **/log/
+
+# Serena files and folders
+.serena/
+*.serena
+
+# Temporary files and directories
+temp/
+*/temp/
+*.tmp
+
+# Log files
+logs/
+*.log

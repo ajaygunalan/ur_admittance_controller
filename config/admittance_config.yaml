@@ -28,6 +28,19 @@ ur_admittance_controller:
       validation:
         fixed_size<>: [6]
         element_bounds<>: [0.0, 1000.0]
+    limits:
+      max_angular_acceleration:
+        type: double
+        default_value: 2.0
+        description: Maximum angular acceleration in rad/s²
+        validation:
+          bounds<>: [0.1, 10.0]
+      max_angular_velocity:
+        type: double
+        default_value: 3.0
+        description: Maximum angular velocity in rad/s
+        validation:
+          bounds<>: [0.1, 10.0]
   world_frame:
     type: string
     default_value: world
