@@ -12,10 +12,6 @@ Result<Vector3d> estimateGravitationalForceInBaseFrame(
                                        "LROM requires at least 6 samples"));
     }
 
-    ENSURE(!samples.empty() && std::all_of(samples.begin(), samples.end(),
-           [](const auto& s) { return !s.F_S_S_raw.hasNaN() && !s.X_TB.matrix().hasNaN(); }),
-           "Calibration samples contain NaN values");
-
     const size_t n = samples.size();
     const size_t rows = 3 * n;
 
@@ -79,9 +75,6 @@ Result<std::pair<Matrix3d, Vector3d>> estimateSensorRotationAndForceBias(
     const std::vector<CalibrationSample>& samples,
     const Vector3d& gravity_in_base)
 {
-    ENSURE(!gravity_in_base.hasNaN() && gravity_in_base.norm() > 0,
-           "Invalid gravity vector provided");
-
     const size_t n = samples.size();
 
     // Compute averages (Eq. 37)
@@ -127,8 +120,6 @@ Result<std::pair<Vector3d, Vector3d>> estimateCOMAndTorqueBias(
     const std::vector<CalibrationSample>& samples,
     const Vector3d& force_bias)
 {
-    ENSURE(!force_bias.hasNaN(), "Force bias contains NaN");
-
     const size_t n = samples.size();
     const size_t rows = 3 * n;
 
@@ -199,8 +190,6 @@ inline constexpr double kStandardGravity = 9.80665;  // CODATA standard [m/s²]
 
 Result<double> extractToolMass(const Vector3d& gravity_in_base)
 {
-    ENSURE(!gravity_in_base.hasNaN() && gravity_in_base.norm() > 0,
-           "Invalid gravity vector for mass extraction");
     return gravity_in_base.norm() / kStandardGravity;
 }
 

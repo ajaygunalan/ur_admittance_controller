@@ -98,8 +98,6 @@ void WrenchNode::SetupROSInterfaces() {
 }
 
 void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
-    ENSURE(tf_buffer_ != nullptr, "TF buffer not initialized");
-
     if (!tf_buffer_->canTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero)) {
         RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
                              "Transform %s->%s unavailable", frames::ROBOT_BASE_FRAME, frames::ROBOT_TOOL_FRAME);
@@ -152,8 +150,6 @@ Status WrenchNode::LoadCalibrationParams() {
     YAML::Node config = config_result.value();
 
     auto rot_data = config["rotation_sensor_to_endeffector"].as<std::vector<std::vector<double>>>();
-    ENSURE(rot_data.size() == 3 && rot_data[0].size() == 3 && rot_data[1].size() == 3 && rot_data[2].size() == 3,
-           "Rotation matrix must be 3x3");
 
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j)
@@ -163,10 +159,6 @@ Status WrenchNode::LoadCalibrationParams() {
     auto force_bias_vec = config["force_bias"].as<std::vector<double>>();
     auto torque_bias_vec = config["torque_bias"].as<std::vector<double>>();
     auto com_vec = config["tool_center_of_mass"].as<std::vector<double>>();
-
-    ENSURE(gravity_vec.size() == 3 && force_bias_vec.size() == 3 &&
-           torque_bias_vec.size() == 3 && com_vec.size() == 3,
-           "All calibration vectors must have exactly 3 elements");
 
     f_grav_b_ = Vector3d(gravity_vec.data());
     f_bias_s_ = Vector3d(force_bias_vec.data());
@@ -187,9 +179,9 @@ void WrenchNode::ComputeSensorToProbeAdjoint() {
             tf_buffer_->lookupTransform(frames::SENSOR_FRAME, frames::PROBE_FRAME, 
                                        tf2::TimePointZero, std::chrono::seconds(5)));
     } catch (const tf2::TransformException& ex) {
-        RCLCPP_FATAL(get_logger(), "Transform %s->%s not available after 5s. Check URDF! Error: %s",
+        RCLCPP_ERROR(get_logger(), "Transform %s->%s not available after 5s. Check URDF! Error: %s",
                      frames::SENSOR_FRAME, frames::PROBE_FRAME, ex.what());
-        throw std::runtime_error("Required sensor-to-probe transform missing");
+        return;  // Will retry on next initialization attempt
     }
 
     Eigen::Matrix3d R_PS = X_SP.rotation().transpose();

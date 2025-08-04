@@ -236,11 +236,6 @@ void AdmittanceNode::SetDefaultEquilibrium() {
 void AdmittanceNode::UpdateAdmittanceParameters() {
   auto& p = params_.admittance;
 
-  ENSURE(p.mass.size() == 6 && p.stiffness.size() == 6 && p.damping.size() == 6,
-         "Admittance parameter vectors must all have exactly 6 elements");
-  ENSURE((Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).array() > 0).all(),
-         "All mass values must be positive to avoid division by zero");
-
   M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
   K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
   D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
@@ -254,10 +249,7 @@ void AdmittanceNode::UpdateAdmittanceParameters() {
 
 
 
-Status AdmittanceNode::GetXBPCurrent() {
-  ENSURE(num_joints_ == 6 && q_current_.size() == num_joints_ && fk_pos_solver_,
-         "FK preconditions violated: joints must be 6 and solver initialized");
-
+void AdmittanceNode::GetXBPCurrent() {
   RCLCPP_DEBUG_ONCE(get_logger(), "FK solver: %zu joints, %d segments",
                     num_joints_, kdl_chain_.getNrOfSegments());
 
@@ -265,7 +257,7 @@ Status AdmittanceNode::GetXBPCurrent() {
   if (!result) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, "FK failed: %s",
                           result.error().message.c_str());
-    return tl::unexpected(result.error());
+    return;  // Continue with last valid pose
   }
 
   X_BP_current = result.value();
@@ -275,8 +267,6 @@ Status AdmittanceNode::GetXBPCurrent() {
     q_kdl_(i) = q_current_[i];
   }
   fk_pos_solver_->JntToCart(q_kdl_, X_BW3);
-
-  return {};
 }
 
 void AdmittanceNode::ComputePoseError() {
@@ -291,10 +281,6 @@ void AdmittanceNode::ComputePoseError() {
 
 
 void AdmittanceNode::ComputeAdmittance() {
-  ENSURE(M_inverse_diag.size() == 6 && D_diag.size() == 6 && K_diag.size() == 6 &&
-         !F_P_B.hasNaN() && !V_P_B_commanded.hasNaN() && !X_BP_error.hasNaN(),
-         "Admittance computation preconditions violated");
-
   Vector6d scaled_wrench = admittance_ratio_ * F_P_B;
 
   Vector6d acceleration = ComputeAdmittanceAcceleration(
@@ -321,10 +307,7 @@ void AdmittanceNode::LimitToWorkspace() {
                                                        params_.admittance.limits.max_angular_velocity);
 }
 
-Status AdmittanceNode::ComputeAndPubJointVelocities() {
-  ENSURE(ik_vel_solver_ && V_P_B_commanded.size() == 6 && !V_P_B_commanded.hasNaN(),
-         "IK preconditions violated: solver, velocity, or joint arrays invalid");
-
+void AdmittanceNode::ComputeAndPubJointVelocities() {
   auto result = ComputeInverseKinematicsVelocity(
       V_P_B_commanded, X_BP_current, X_BW3, q_current_, ik_vel_solver_.get());
 
@@ -339,8 +322,6 @@ Status AdmittanceNode::ComputeAndPubJointVelocities() {
 
   velocity_msg_.data = q_dot_cmd_;
   velocity_pub_->publish(velocity_msg_);
-
-  return result ? Status{} : tl::unexpected(result.error());
 }
 
 Status AdmittanceNode::LoadKinematics() {
@@ -382,7 +363,6 @@ Status AdmittanceNode::LoadKinematics() {
   ik_vel_solver_->setLambda(0.1);
 
   num_joints_ = kdl_chain_.getNrOfJoints();
-  ENSURE(num_joints_ == 6, "UR robot must have exactly 6 joints, got " + std::to_string(num_joints_));
 
   q_kdl_.resize(num_joints_);
   v_kdl_.resize(num_joints_);

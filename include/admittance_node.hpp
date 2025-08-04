@@ -46,7 +46,7 @@ public:
   explicit AdmittanceNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
   ~AdmittanceNode() = default;
 
-  Status ControlCycle();
+  void ControlCycle();
   void Initialize();  // Tier 2: Throws on setup failure
 
 private:
@@ -66,7 +66,7 @@ private:
   void ComputeAdmittance();
   void ComputePoseError();
   void UpdateAdmittanceParameters();
-  Status ComputeAndPubJointVelocities();
+  void ComputeAndPubJointVelocities();
   void LimitToWorkspace();
 
   // ROS2 interfaces
@@ -125,7 +125,7 @@ public:
 private:
   bool joint_states_received_ = false;
   std::unordered_map<std::string, size_t> joint_name_to_index_;
-  Status GetXBPCurrent();
+  void GetXBPCurrent();
 };
 
 }  // namespace ur_admittance_controller

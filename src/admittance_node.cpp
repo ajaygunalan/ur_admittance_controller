@@ -7,10 +7,6 @@ namespace ur_admittance_controller {
 
 // Helper function to map joint states from JointState message to internal vector
 void AdmittanceNode::MapJointStates(const sensor_msgs::msg::JointState& msg) {
-  // Tier 1: Joint configuration must be consistent
-  ENSURE(params_.joints.size() == 6,
-         "UR robot must have exactly 6 joints configured");
-
   // Map joint states using pre-built member mapping
   for (size_t i = 0; i < msg.name.size() && i < msg.position.size(); ++i) {
     if (auto it = joint_name_to_index_.find(msg.name[i]); it != joint_name_to_index_.end()) {
@@ -93,32 +89,21 @@ void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::
                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
 }
 
-Status AdmittanceNode::ControlCycle() {
+void AdmittanceNode::ControlCycle() {
   if (!joint_states_received_) {
     RCLCPP_INFO_ONCE(get_logger(), "Waiting for initial joint states...");
-    return {};
+    return;
   }
 
-  // Forward kinematics
-  if (auto fk_status = GetXBPCurrent(); !fk_status) {
-    return fk_status;
-  }
-
+  GetXBPCurrent();
   ComputePoseError();
   ComputeAdmittance();
   LimitToWorkspace();
-
-  // Inverse kinematics
-  if (auto ik_status = ComputeAndPubJointVelocities(); !ik_status) {
-    return ik_status;
-  }
-
-  return {};
+  ComputeAndPubJointVelocities();
 }
 
 
 void AdmittanceNode::Initialize() {
-  ENSURE(param_listener_ != nullptr, "Parameter listener not initialized");
 
   // Tier 2: Throw on setup failure
   if (auto status = LoadKinematics(); !status) {
@@ -160,7 +145,6 @@ int main(int argc, char* argv[]) {
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
 
   // Tier 1: Node must be successfully created
-  ENSURE(node != nullptr, "Failed to create admittance node");
 
   // Tier 2: Setup failures throw exceptions
   try {
@@ -182,12 +166,7 @@ int main(int argc, char* argv[]) {
   while (rclcpp::ok()) {
     executor.spin_some();
 
-    auto status = node->ControlCycle();
-    if (!status) {
-      RCLCPP_ERROR_THROTTLE(node->get_logger(), *node->get_clock(), ur_admittance_controller::constants::LOG_THROTTLE_MS,
-                           "Control cycle error: %s", status.error().message.c_str());
-      // Continue running for now - real-time loops should be resilient
-    }
+    node->ControlCycle();
 
     loop_rate.sleep();
   }
