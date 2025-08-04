@@ -9,10 +9,7 @@ namespace kinematics {
 Result<KinematicsComponents> InitializeFromUrdf(
     const urdf::Model& urdf_model,
     const std::string& base_link,
-    const std::string& tip_link,
-    double /*ik_precision*/,
-    int /*ik_max_iterations*/,
-    double /*ik_damping*/) {
+    const std::string& tip_link) {
 
     KinematicsComponents components;
 

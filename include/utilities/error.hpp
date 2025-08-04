@@ -30,6 +30,4 @@ inline Error MakeError(ErrorCode code, const std::string& msg) {
   return {code, msg};
 }
 
-// ENSURE macro has been deleted - no longer using exceptions in control loops
-
 }  // namespace ur_admittance_controller

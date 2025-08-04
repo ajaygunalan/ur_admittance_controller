@@ -4,17 +4,11 @@
 
 namespace ur_admittance_controller {
 
-
-// Helper function to map joint states from JointState message to internal vector
 void AdmittanceNode::MapJointStates(const sensor_msgs::msg::JointState& msg) {
-  // Map joint states using pre-built member mapping
   for (size_t i = 0; i < msg.name.size() && i < msg.position.size(); ++i) {
     if (auto it = joint_name_to_index_.find(msg.name[i]); it != joint_name_to_index_.end()) {
-      // Drake-inspired sanitization to handle floating-point noise
       q_current_[it->second] = SanitizeJointAngle(msg.position[i]);
     }
-    // Silently ignore joints not in our kinematic chain (e.g., ft_sensor_joint)
-    // These are intentionally present in the URDF for simulation purposes
   }
 }
 
@@ -54,13 +48,9 @@ void AdmittanceNode::SetupROSInterfaces() {
       "/forward_velocity_controller/commands", constants::DEFAULT_QUEUE_SIZE);
 }
 
-
-
-
 void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
   F_P_B = SanitizeWrench(conversions::FromMsg(*msg));
 
-  // Throttled logging for significant forces (>0.1N or >0.1Nm)
   auto [force_norm, torque_norm] = std::make_pair(F_P_B.head<3>().norm(), F_P_B.tail<3>().norm());
   if (force_norm > constants::FORCE_THRESHOLD || torque_norm > constants::TORQUE_THRESHOLD) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
@@ -76,14 +66,10 @@ void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::Cons
   MapJointStates(*msg);
 }
 
-// Handle desired pose updates from ROS2 topic
 void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
-  // Only update position, keep orientation fixed at equilibrium
   X_BP_desired.translation() << msg->pose.position.x,
                                 msg->pose.position.y,
                                 msg->pose.position.z;
-
-  // Orientation remains fixed at equilibrium value
 
   RCLCPP_DEBUG(get_logger(), "Desired position updated to [%.3f, %.3f, %.3f]",
                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
@@ -95,19 +81,26 @@ void AdmittanceNode::ControlCycle() {
     return;
   }
 
+  control_error_ = false;  // Reset error flag at start of cycle
   GetXBPCurrent();
+  if (control_error_) {
+    // Send zero velocities on error and return
+    std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
+    velocity_msg_.data = q_dot_cmd_;
+    velocity_pub_->publish(velocity_msg_);
+    return;
+  }
+
   ComputePoseError();
   ComputeAdmittance();
   LimitToWorkspace();
   ComputeAndPubJointVelocities();
 }
 
-
 void AdmittanceNode::Initialize() {
-
-  // Tier 2: Throw on setup failure
   if (auto status = LoadKinematics(); !status) {
-    throw std::runtime_error(status.error().message);
+    RCLCPP_FATAL(get_logger(), "Failed to load kinematics: %s", status.error().message.c_str());
+    std::exit(1);
   }
 
   kinematics_initialized_ = true;
@@ -122,8 +115,6 @@ void AdmittanceNode::Initialize() {
     X_BP_desired.translation()(0), X_BP_desired.translation()(1), X_BP_desired.translation()(2));
 }
 
-
-// Constructor: init params, state vectors, ROS I/O, and default equilibrium pose
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 : Node("admittance_node", options) {
   RCLCPP_INFO_ONCE(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
@@ -134,27 +125,14 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   SetDefaultEquilibrium();
 }
 
-
 }  // namespace ur_admittance_controller
 
-
-// Main entry: Constructor → initialize() → spin_some() + control_cycle() loop
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
 
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
 
-  // Tier 1: Node must be successfully created
-
-  // Tier 2: Setup failures throw exceptions
-  try {
-    node->Initialize();
-  } catch (const std::exception& e) {
-    RCLCPP_FATAL(rclcpp::get_logger("main"),
-                 "Failed to initialize admittance controller: %s", e.what());
-    rclcpp::shutdown();
-    return 1;
-  }
+  node->Initialize();
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);

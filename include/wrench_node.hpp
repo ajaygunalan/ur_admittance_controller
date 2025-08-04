@@ -30,22 +30,22 @@ private:
 
 
     // Yu pipeline state
-    Wrench6d f_raw_s_;
-    Transform X_TB_;
-    Vector3d f_grav_s_;
-    Wrench6d ft_proc_s_;  // Compensated in sensor frame
-    Wrench6d wrench_probe_;  // Compensated wrench at probe location
-    Wrench6d ft_proc_b_;  // Transformed to base frame
+    Wrench6d f_raw_s_ = Wrench6d::Zero();
+    Transform X_TB_ = Transform::Identity();
+    Vector3d f_grav_s_ = Vector3d::Zero();
+    Wrench6d ft_proc_s_ = Wrench6d::Zero();  // Compensated in sensor frame
+    Wrench6d wrench_probe_ = Wrench6d::Zero();  // Compensated wrench at probe location
+    Wrench6d ft_proc_b_ = Wrench6d::Zero();  // Transformed to base frame
 
     // Adjoint transformation
-    Eigen::Matrix<double, 6, 6> adjoint_probe_sensor_;
+    Eigen::Matrix<double, 6, 6> adjoint_probe_sensor_ = Eigen::Matrix<double, 6, 6>::Identity();
 
     // Calibration parameters loaded once from YAML
-    Matrix3d R_SE_;        // Rotation sensor to end-effector
-    Vector3d f_grav_b_;    // Gravity vector in base frame
-    Vector3d f_bias_s_;    // Force bias in sensor frame
-    Vector3d t_bias_s_;    // Torque bias in sensor frame
-    Vector3d p_CoM_s_;     // Center of mass in sensor frame
+    Matrix3d R_SE_ = Matrix3d::Identity();        // Rotation sensor to end-effector
+    Vector3d f_grav_b_ = Vector3d::Zero();    // Gravity vector in base frame
+    Vector3d f_bias_s_ = Vector3d::Zero();    // Force bias in sensor frame
+    Vector3d t_bias_s_ = Vector3d::Zero();    // Torque bias in sensor frame
+    Vector3d p_CoM_s_ = Vector3d::Zero();     // Center of mass in sensor frame
 
     // Consolidated calibration params for algorithm
     GravityCompensationParams calibration_params_;

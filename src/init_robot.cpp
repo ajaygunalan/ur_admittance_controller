@@ -1,5 +1,4 @@
 // Initialize robot to equilibrium position and save probe tip pose
-
 #include <chrono>
 #include <fstream>
 #include <future>
@@ -28,7 +27,6 @@ static constexpr auto ROBOT_DESC_TIMEOUT = ur_admittance_controller::constants::
 static constexpr auto JOINT_STATE_TIMEOUT = ur_admittance_controller::constants::DEFAULT_TIMEOUT;
 static constexpr auto ACTION_SERVER_TIMEOUT = ur_admittance_controller::constants::DEFAULT_TIMEOUT;
 static constexpr auto SERVICE_TIMEOUT = ur_admittance_controller::constants::SERVICE_TIMEOUT;
-static constexpr double DEFAULT_MOVEMENT_DURATION = 12.0;
 
 static constexpr std::array<double, JOINT_COUNT> DEFAULT_EQUILIBRIUM = {
   0.0, -1.571, 1.571, -1.571, -1.571, 0.0
@@ -40,7 +38,6 @@ struct KinematicSolver {
   std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver;
   KDL::Frame tool_offset;
 };
-
 
 // Get robot_description from parameter server following ROS2 best practice
 // @param node ROS2 node for getting parameter
@@ -56,20 +53,20 @@ std::string getRobotDescription(rclcpp::Node::SharedPtr node) {
   // Create parameter client to get parameter from robot_state_publisher node
   auto parameters_client = std::make_shared<rclcpp::SyncParametersClient>(
       node, "/robot_state_publisher");
-  
+
   // Wait for the service to be available
   if (!parameters_client->wait_for_service(ROBOT_DESC_TIMEOUT)) {
     throwError("robot_state_publisher service not available. "
                "Is robot_state_publisher running?");
   }
-  
+
   // Get the robot_description parameter
   auto parameters = parameters_client->get_parameters({"robot_description"});
-  
+
   if (parameters.empty() || parameters[0].as_string().empty()) {
     throwError("robot_description parameter not found or empty on robot_state_publisher node");
   }
-  
+
   auto robot_description = parameters[0].as_string();
   RCLCPP_INFO(node->get_logger(),
               "Got robot description from robot_state_publisher (%lu bytes)",
@@ -105,7 +102,7 @@ KinematicSolver parseUrdfToKinematicSolver(
   solver.fk_solver = std::make_unique<KDL::ChainFkSolverPos_recursive>(solver.kdl_chain);
 
   RCLCPP_INFO(logger, "KDL kinematics initialized with %zu joints", components.num_joints);
-  ur_admittance_controller::logging::LogVector3(logger, "Tool offset from wrist_3_link to p42v_link1 (probe tip):", 
+  ur_admittance_controller::logging::LogVector3(logger, "Tool offset from wrist_3_link to p42v_link1 (probe tip):",
                       ur_admittance_controller::Vector3d(solver.tool_offset.p.x(), solver.tool_offset.p.y(), solver.tool_offset.p.z()));
 
   return solver;
@@ -205,7 +202,8 @@ void computeToolPoseAndSaveYaml(const KinematicSolver& solver,
   tool_frame.M.GetQuaternion(x, y, z, w);
   std::vector<double> orientation = {w, x, y, z};
 
-  ur_admittance_controller::logging::LogPose(logger, "Tool pose:", ur_admittance_controller::Vector3d(position[0], position[1], position[2]),
+  ur_admittance_controller::logging::LogPose(logger, "Tool pose:", 
+                   ur_admittance_controller::Vector3d(position[0], position[1], position[2]),
                    Eigen::Quaterniond(orientation[0], orientation[1], orientation[2], orientation[3]));
 
   const char* ros_workspace = std::getenv("ROS_WORKSPACE");
@@ -259,7 +257,7 @@ int main(int argc, char** argv) {
 
   try {
     auto node = std::make_shared<rclcpp::Node>("equilibrium_initializer");
-    
+
     std::vector<std::string> joint_names = {
       "shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
       "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"
@@ -267,14 +265,14 @@ int main(int argc, char** argv) {
 
     // Get robot description before creating executor
     std::string robot_description = getRobotDescription(node);
-    
+
     // Now create executor and add node for later use
     auto executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
     executor->add_node(node);
 
     node->declare_parameter("equilibrium.joints",
       std::vector<double>(DEFAULT_EQUILIBRIUM.begin(), DEFAULT_EQUILIBRIUM.end()));
-    node->declare_parameter("movement_duration", DEFAULT_MOVEMENT_DURATION);
+    node->declare_parameter("movement_duration", ur_admittance_controller::constants::DEFAULT_MOVEMENT_DURATION);
 
     auto equilibrium_positions = node->get_parameter("equilibrium.joints").as_double_array();
     auto movement_duration = node->get_parameter("movement_duration").as_double();

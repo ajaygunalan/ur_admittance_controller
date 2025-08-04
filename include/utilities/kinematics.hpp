@@ -24,10 +24,7 @@ struct KinematicsComponents {
 Result<KinematicsComponents> InitializeFromUrdf(
     const urdf::Model& urdf_model,
     const std::string& base_link,
-    const std::string& tip_link,
-    double ik_precision = 1e-5,
-    int ik_max_iterations = 150,
-    double ik_damping = 0.15);
+    const std::string& tip_link);
 
 // Initialize KDL kinematics from URDF string
 Result<KinematicsComponents> InitializeFromUrdfString(

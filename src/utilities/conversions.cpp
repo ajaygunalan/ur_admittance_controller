@@ -3,7 +3,6 @@
 namespace ur_admittance_controller {
 namespace conversions {
 
-// Convert Eigen 6D wrench to ROS WrenchStamped
 geometry_msgs::msg::WrenchStamped ToMsg(
     const Wrench6d& wrench,
     const std::string& frame_id,
@@ -15,5 +14,5 @@ geometry_msgs::msg::WrenchStamped ToMsg(
     return msg;
 }
 
-} // namespace conversions
-} // namespace ur_admittance_controller
+}
+}

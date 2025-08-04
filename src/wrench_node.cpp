@@ -1,11 +1,8 @@
-// F/T sensor bias and gravity compensation node
 #include "wrench_node.hpp"
-#include <chrono>
 #include <utilities/constants.hpp>
 
 namespace ur_admittance_controller {
 
-// Compute cross product matrix: [v]× * u = v × u
 Matrix3d CrossMatrix(const Vector3d& v) {
     Matrix3d result;
     result <<     0, -v.z(),  v.y(),
@@ -14,19 +11,17 @@ Matrix3d CrossMatrix(const Vector3d& v) {
     return result;
 }
 
-// Transform wrench: w_B = Ad(X_BA) * w_A
 Wrench6d TransformWrench(const Wrench6d& wrench_A, const Transform& X_BA) {
     Matrix3d R = X_BA.rotation();
     Vector3d p = X_BA.translation();
 
     Wrench6d wrench_B;
-    wrench_B.head<3>() = R * wrench_A.head<3>();  // Transform forces
-    wrench_B.tail<3>() = R * wrench_A.tail<3>() + p.cross(wrench_B.head<3>());  // Transform torques
+    wrench_B.head<3>() = R * wrench_A.head<3>();
+    wrench_B.tail<3>() = R * wrench_A.tail<3>() + p.cross(wrench_B.head<3>());
 
     return wrench_B;
 }
 
-// Apply gravity compensation: F_compensated = F_raw - F_gravity - F_bias
 Wrench6d CompensateWrench(
     const Wrench6d& wrench_raw,
     const Transform& X_TB,
@@ -45,7 +40,6 @@ Wrench6d CompensateWrench(
   return wrench_raw - wrench_gravity - wrench_bias;
 }
 
-// Transform wrench: sensor frame → base frame
 Wrench6d TransformWrenchToBase(
     const Wrench6d& wrench_sensor,
     const Transform& X_BS) {
@@ -56,34 +50,16 @@ WrenchNode::WrenchNode()
     : Node("wrench_node"),
       tf_buffer_(std::make_unique<tf2_ros::Buffer>(get_clock())),
       tf_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this, true)) {
-    // Initialize all calibration parameters to safe defaults FIRST
-    R_SE_ = Matrix3d::Identity();
-    f_grav_b_ = Vector3d::Zero();
-    f_bias_s_ = Vector3d::Zero();
-    t_bias_s_ = Vector3d::Zero();
-    p_CoM_s_ = Vector3d::Zero();
 
-    // Initialize state variables
-    // 6D wrenches (force+torque)
-    f_raw_s_ = ft_proc_s_ = wrench_probe_ = ft_proc_b_ = Wrench6d::Zero();
-    f_grav_s_ = Vector3d::Zero();  // 3D gravity force only
-    X_TB_ = Transform::Identity();  // Matches lookupTransform(tool, base) order
-    adjoint_probe_sensor_ = Eigen::Matrix<double, 6, 6>::Identity();
-
-    // CRITICAL: Load calibration - throw on failure (Tier 2: setup error)
     auto status = LoadCalibrationParams();
     if (!status) {
-        RCLCPP_FATAL(get_logger(), "Failed to load calibration: %s",
+        RCLCPP_FATAL(get_logger(), "Failed to load calibration: %s - Calibration is required for safety",
                      status.error().message.c_str());
-        throw std::runtime_error("Calibration is required for safety - " +
-                                 status.error().message);
+        std::exit(1);
     }
 
-    // Setup subscribers and publishers
     SetupROSInterfaces();
 
-    // CRITICAL: Must compute adjoint after TF is ready - this transforms
-    // forces/torques from sensor mounting point to actual tool contact point
     ComputeSensorToProbeAdjoint();
 
     RCLCPP_INFO(get_logger(), "Wrench node initialized with calibration");
@@ -92,13 +68,17 @@ WrenchNode::WrenchNode()
 void WrenchNode::SetupROSInterfaces() {
     wrench_sub_ = create_subscription<WrenchMsg>("/netft/raw_sensor", rclcpp::SensorDataQoS(),
         std::bind(&WrenchNode::WrenchCallback, this, std::placeholders::_1));
-    wrench_proc_sensor_pub_ = create_publisher<WrenchMsg>("/netft/proc_sensor", rclcpp::SensorDataQoS());
-    wrench_proc_probe_pub_ = create_publisher<WrenchMsg>("/netft/proc_probe", rclcpp::SensorDataQoS());
-    wrench_proc_probe_base_pub_ = create_publisher<WrenchMsg>("/netft/proc_probe_base", rclcpp::SensorDataQoS());
+    wrench_proc_sensor_pub_ = create_publisher<WrenchMsg>(
+        "/netft/proc_sensor", rclcpp::SensorDataQoS());
+    wrench_proc_probe_pub_ = create_publisher<WrenchMsg>(
+        "/netft/proc_probe", rclcpp::SensorDataQoS());
+    wrench_proc_probe_base_pub_ = create_publisher<WrenchMsg>(
+        "/netft/proc_probe_base", rclcpp::SensorDataQoS());
 }
 
 void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
-    if (!tf_buffer_->canTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero)) {
+    if (!tf_buffer_->canTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME,
+                                   tf2::TimePointZero)) {
         RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
                              "Transform %s->%s unavailable", frames::ROBOT_BASE_FRAME, frames::ROBOT_TOOL_FRAME);
         return;
@@ -106,19 +86,19 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
 
     f_raw_s_ = SanitizeWrench(conversions::FromMsg(*msg));
 
-    // Get transforms with timeout for robustness
     try {
         X_TB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(
-            frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, 
+            frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME,
             tf2::TimePointZero, std::chrono::milliseconds(50)));
     } catch (const tf2::TransformException& ex) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, 
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
                              "Transform lookup failed: %s", ex.what());
         return;
     }
 
     if (!X_TB_.matrix().allFinite()) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, "Invalid transform (NaN/Inf)");
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
+                             "Invalid transform (NaN/Inf)");
         return;
     }
 
@@ -128,18 +108,21 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
     Transform X_BP;
     try {
         X_BP = tf2::transformToEigen(tf_buffer_->lookupTransform(
-            frames::ROBOT_BASE_FRAME, frames::PROBE_FRAME, 
+            frames::ROBOT_BASE_FRAME, frames::PROBE_FRAME,
             tf2::TimePointZero, std::chrono::milliseconds(50)));
     } catch (const tf2::TransformException& ex) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, 
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
                              "Transform lookup failed: %s", ex.what());
         return;
     }
     ft_proc_b_ = TransformWrenchToBase(wrench_probe_, X_BP);
 
-    wrench_proc_sensor_pub_->publish(conversions::ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
-    wrench_proc_probe_pub_->publish(conversions::ToMsg(wrench_probe_, frames::PROBE_FRAME, msg->header.stamp));
-    wrench_proc_probe_base_pub_->publish(conversions::ToMsg(ft_proc_b_, frames::ROBOT_BASE_FRAME, msg->header.stamp));
+    wrench_proc_sensor_pub_->publish(
+        conversions::ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
+    wrench_proc_probe_pub_->publish(
+        conversions::ToMsg(wrench_probe_, frames::PROBE_FRAME, msg->header.stamp));
+    wrench_proc_probe_base_pub_->publish(
+        conversions::ToMsg(ft_proc_b_, frames::ROBOT_BASE_FRAME, msg->header.stamp));
 }
 
 Status WrenchNode::LoadCalibrationParams() {
@@ -172,16 +155,15 @@ Status WrenchNode::LoadCalibrationParams() {
 }
 
 void WrenchNode::ComputeSensorToProbeAdjoint() {
-    // Wait for transform to become available (up to 5 seconds at startup)
     Eigen::Isometry3d X_SP;
     try {
         X_SP = tf2::transformToEigen(
-            tf_buffer_->lookupTransform(frames::SENSOR_FRAME, frames::PROBE_FRAME, 
+            tf_buffer_->lookupTransform(frames::SENSOR_FRAME, frames::PROBE_FRAME,
                                        tf2::TimePointZero, std::chrono::seconds(5)));
     } catch (const tf2::TransformException& ex) {
         RCLCPP_ERROR(get_logger(), "Transform %s->%s not available after 5s. Check URDF! Error: %s",
                      frames::SENSOR_FRAME, frames::PROBE_FRAME, ex.what());
-        return;  // Will retry on next initialization attempt
+        return;
     }
 
     Eigen::Matrix3d R_PS = X_SP.rotation().transpose();

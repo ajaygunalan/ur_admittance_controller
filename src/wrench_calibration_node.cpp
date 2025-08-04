@@ -56,9 +56,12 @@ Status WrenchCalibrationNode::Initialize() {
 void WrenchCalibrationNode::GenerateCalibrationPoses() {
     calibration_poses_.assign(CalibrationConstants::NUM_POSES, current_joint_positions_);
     for (int i = 1; i < CalibrationConstants::NUM_POSES; ++i) {
-        const double idx = i - 1.0;
-        calibration_poses_[i][3] = current_joint_positions_[3] + (idx/CalibrationConstants::NUM_POSES) * M_PI/3.0 - M_PI/6.0;
-        calibration_poses_[i][4] = current_joint_positions_[4] + (std::fmod(idx, 8.0)/8.0) * M_PI/3.0 - M_PI/6.0;
+        const double idx = i - constants::CALIBRATION_INDEX_OFFSET;
+        calibration_poses_[i][3] = current_joint_positions_[3] +
+            (idx/CalibrationConstants::NUM_POSES) * constants::CALIBRATION_ANGLE_LARGE - constants::CALIBRATION_ANGLE_SMALL;
+        calibration_poses_[i][4] = current_joint_positions_[4] +
+            (std::fmod(idx, constants::CALIBRATION_MODULO_DIVISOR)/constants::CALIBRATION_MODULO_DIVISOR) * 
+            constants::CALIBRATION_ANGLE_LARGE - constants::CALIBRATION_ANGLE_SMALL;
         calibration_poses_[i][5] = current_joint_positions_[5] + idx * M_PI/CalibrationConstants::NUM_POSES - M_PI/2.0;
     }
 }
@@ -107,7 +110,7 @@ Status WrenchCalibrationNode::MoveToJointPosition(const JointAngles& target_join
     goal.trajectory.joint_names = joint_names_;
     goal.trajectory.points.resize(1);
     goal.trajectory.points[0].positions = target_joints;
-    goal.trajectory.points[0].time_from_start = rclcpp::Duration::from_seconds(3.0);
+    goal.trajectory.points[0].time_from_start = rclcpp::Duration::from_seconds(constants::CALIBRATION_TRAJECTORY_DURATION);
 
     auto goal_future = trajectory_client_->async_send_goal(goal);
 
@@ -172,7 +175,6 @@ Status WrenchCalibrationNode::ComputeCalibrationParameters() {
     auto f_gravity_B = ur_admittance_controller::estimateGravitationalForceInBaseFrame(calibration_samples_).value();
     auto [R_SE, f_bias_S] = ur_admittance_controller::estimateSensorRotationAndForceBias(calibration_samples_, f_gravity_B).value();
     auto [p_SCoM_S, t_bias_S] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, f_bias_S).value();
-    [[maybe_unused]] auto rot_b_g = ur_admittance_controller::estimateRobotInstallationBias(f_gravity_B).value();
 
     double beta = std::atan2(f_gravity_B.x(), f_gravity_B.z());
     double alpha = std::atan2(-f_gravity_B.y() * std::cos(beta), f_gravity_B.z());

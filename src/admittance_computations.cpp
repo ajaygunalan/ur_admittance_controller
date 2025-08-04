@@ -4,7 +4,6 @@
 
 namespace ur_admittance_controller {
 
-// Core admittance control: a = M^(-1) * (F_ext - D*v - K*x)
 inline Vector6d ComputeAdmittanceAcceleration(
     const Vector6d& external_wrench,
     const Vector6d& velocity_commanded,
@@ -17,7 +16,6 @@ inline Vector6d ComputeAdmittanceAcceleration(
        stiffness.array() * pose_error.array());
 }
 
-// Apply safety limits to acceleration
 inline Vector6d LimitAcceleration(
     const Vector6d& acceleration,
     double max_linear_acc,
@@ -34,7 +32,6 @@ inline Vector6d LimitAcceleration(
   return limited;
 }
 
-// Integrate acceleration to velocity (Euler method)
 inline Vector6d IntegrateVelocity(
     const Vector6d& current_velocity,
     const Vector6d& acceleration,
@@ -42,32 +39,26 @@ inline Vector6d IntegrateVelocity(
   return current_velocity + acceleration * dt;
 }
 
-// Compute forward kinematics: joints → Cartesian pose
 inline Result<Eigen::Isometry3d> ComputeForwardKinematics(
     const std::vector<double>& q_joints,
     KDL::ChainFkSolverPos_recursive* fk_solver,
     const KDL::Frame& tool_offset) {
 
-  // Convert to KDL format
   KDL::JntArray q_kdl(q_joints.size());
   for (size_t i = 0; i < q_joints.size(); ++i) {
-    q_kdl(i) = std::atan2(std::sin(q_joints[i]), std::cos(q_joints[i])); // Normalize to [-π, π]
+    q_kdl(i) = std::atan2(std::sin(q_joints[i]), std::cos(q_joints[i]));
   }
 
-  // Compute FK to last joint
   KDL::Frame X_base_joint;
   int fk_result = fk_solver->JntToCart(q_kdl, X_base_joint);
   if (fk_result < 0) {
-    // Debug info - fk_result: -1 = size mismatch, -2 = out of range
     return tl::unexpected(MakeError(ErrorCode::kKinematicsInitFailed,
         fmt::format("FK failed: KDL error={}, input_joints={}, q_kdl_size={}",
                     fk_result, q_joints.size(), q_kdl.data.size())));
   }
 
-  // Apply tool offset
   KDL::Frame X_base_tool = X_base_joint * tool_offset;
 
-  // Convert to Eigen
   Eigen::Isometry3d result;
   result.translation() = Eigen::Vector3d(X_base_tool.p.x(),
                                         X_base_tool.p.y(),
@@ -80,7 +71,6 @@ inline Result<Eigen::Isometry3d> ComputeForwardKinematics(
   return result;
 }
 
-// Compute inverse kinematics: Cartesian velocity → joint velocities
 inline Result<std::vector<double>> ComputeInverseKinematicsVelocity(
     const Vector6d& V_tool,
     const Eigen::Isometry3d& X_tool,
@@ -88,37 +78,31 @@ inline Result<std::vector<double>> ComputeInverseKinematicsVelocity(
     const std::vector<double>& q_current,
     KDL::ChainIkSolverVel_wdls* ik_solver) {
 
-  // Convert current joints to KDL
   KDL::JntArray q_kdl(q_current.size());
   for (size_t i = 0; i < q_current.size(); ++i) {
     q_kdl(i) = q_current[i];
   }
 
-  // Pack tool velocity
   KDL::Twist V_tool_kdl;
   V_tool_kdl.vel = KDL::Vector(V_tool(0), V_tool(1), V_tool(2));
   V_tool_kdl.rot = KDL::Vector(V_tool(3), V_tool(4), V_tool(5));
 
-  // Compute position offset from wrist to tool
   KDL::Vector p_tool_wrist = KDL::Vector(
     X_tool.translation()(0) - X_wrist.p.x(),
     X_tool.translation()(1) - X_wrist.p.y(),
     X_tool.translation()(2) - X_wrist.p.z()
   );
 
-  // Transform to wrist velocity
   KDL::Twist V_wrist_kdl;
   V_wrist_kdl.vel = V_tool_kdl.vel - V_tool_kdl.rot * p_tool_wrist;
   V_wrist_kdl.rot = V_tool_kdl.rot;
 
-  // Solve IK
   KDL::JntArray v_kdl(q_current.size());
   if (ik_solver->CartToJnt(q_kdl, V_wrist_kdl, v_kdl) < 0) {
     return tl::unexpected(MakeError(ErrorCode::kIKSolverFailed,
                                    "Inverse kinematics velocity computation failed"));
   }
 
-  // Convert back to std::vector
   std::vector<double> joint_velocities(q_current.size());
   for (size_t i = 0; i < q_current.size(); ++i) {
     if (std::isnan(v_kdl(i))) {
@@ -131,7 +115,6 @@ inline Result<std::vector<double>> ComputeInverseKinematicsVelocity(
   return joint_velocities;
 }
 
-// Compute pose error: error = current - desired
 inline Vector6d ComputePoseError(
     const Eigen::Isometry3d& X_current,
     const Eigen::Isometry3d& X_desired) {
@@ -141,9 +124,8 @@ inline Vector6d ComputePoseError(
   Eigen::Quaterniond q_current(X_current.rotation());
   Eigen::Quaterniond q_desired(X_desired.rotation());
 
-  // Ensure shortest path
   if (q_current.dot(q_desired) < 0.0) {
-    q_desired.coeffs() *= -1.0;
+    q_desired.coeffs() *= -1.0;  // Ensure shortest rotation path
   }
 
   Eigen::Quaterniond q_error = (q_current * q_desired.inverse()).normalized();
@@ -153,12 +135,10 @@ inline Vector6d ComputePoseError(
   return error;
 }
 
-// Get position and orientation error norms
 inline std::pair<double, double> GetPoseErrorNorms(const Vector6d& pose_error) {
   return {pose_error.head<3>().norm(), pose_error.tail<3>().norm()};
 }
 
-// Apply workspace limits - prevent motion beyond boundaries
 inline Vector6d ApplyWorkspaceLimits(
     const Vector6d& velocity,
     const Eigen::Vector3d& current_position,
@@ -177,7 +157,6 @@ inline Vector6d ApplyWorkspaceLimits(
   return limited_velocity;
 }
 
-// Apply velocity magnitude limits
 inline Vector6d LimitVelocityMagnitude(
     const Vector6d& velocity,
     double max_linear_vel,
@@ -201,25 +180,20 @@ void AdmittanceNode::InitializeStateVectors() {
   q_dot_cmd_.resize(joint_count, 0.0);
   velocity_msg_.data.resize(joint_count);
 
-  F_P_B = Vector6d::Zero();
-  V_P_B_commanded = Vector6d::Zero();
-  X_BP_error = Vector6d::Zero();
-
-  X_BP_current = Eigen::Isometry3d::Identity();
-  X_BP_desired = Eigen::Isometry3d::Identity();
-
-  workspace_limits_ << -1.0, 1.0, -1.0, 1.0, 0.0, 1.0;
+  workspace_limits_ << constants::WORKSPACE_X_MIN, constants::WORKSPACE_X_MAX,
+                       constants::WORKSPACE_Y_MIN, constants::WORKSPACE_Y_MAX,
+                       constants::WORKSPACE_Z_MIN, constants::WORKSPACE_Z_MAX;
   arm_max_vel_ = 1.5;
-  arm_max_acc_ = 1.0;
+  arm_max_acc_ = constants::ARM_MAX_ACCELERATION;
   admittance_ratio_ = 1.0;
 }
 
 void AdmittanceNode::SetDefaultEquilibrium() {
   auto config_result = file_io::LoadConfigFile("equilibrium.yaml");
   if (!config_result) {
-    auto msg = fmt::format("Failed to load equilibrium file: {}", config_result.error().message);
-    RCLCPP_ERROR(get_logger(), "%s", msg.c_str());
-    throw std::runtime_error(msg);
+    RCLCPP_FATAL(get_logger(), "Failed to load equilibrium file: %s",
+                 config_result.error().message.c_str());
+    std::exit(1);
   }
 
   auto params = config_result.value()["admittance_node"]["ros__parameters"];
@@ -229,7 +203,7 @@ void AdmittanceNode::SetDefaultEquilibrium() {
   X_BP_desired.translation() << pos[0], pos[1], pos[2];
   X_BP_desired.linear() = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]).toRotationMatrix();
 
-  logging::LogPose(get_logger(), "Equilibrium:", Vector3d(pos.data()), 
+  logging::LogPose(get_logger(), "Equilibrium:", Vector3d(pos.data()),
                    Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]));
 }
 
@@ -257,12 +231,12 @@ void AdmittanceNode::GetXBPCurrent() {
   if (!result) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, "FK failed: %s",
                           result.error().message.c_str());
+    control_error_ = true;
     return;  // Continue with last valid pose
   }
 
   X_BP_current = result.value();
 
-  // Cache wrist transform for IK
   for (size_t i = 0; i < num_joints_; ++i) {
     q_kdl_(i) = q_current_[i];
   }
@@ -315,6 +289,7 @@ void AdmittanceNode::ComputeAndPubJointVelocities() {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
         "IK failed: vel=[%.3f,%.3f,%.3f]m/s - safety stop",
         V_P_B_commanded(0), V_P_B_commanded(1), V_P_B_commanded(2));
+    control_error_ = true;
     std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
   } else {
     q_dot_cmd_ = result.value();
@@ -367,7 +342,7 @@ Status AdmittanceNode::LoadKinematics() {
   q_kdl_.resize(num_joints_);
   v_kdl_.resize(num_joints_);
 
-  RCLCPP_INFO(get_logger(), "Kinematics ready: %zu joints, %s->%s", 
+  RCLCPP_INFO(get_logger(), "Kinematics ready: %zu joints, %s->%s",
               num_joints_, params_.base_link.c_str(), params_.tip_link.c_str());
   logging::LogVector3(get_logger(), "  Tool offset:", Vector3d(X_W3P.p.x(), X_W3P.p.y(), X_W3P.p.z()));
   return {};

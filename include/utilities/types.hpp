@@ -48,7 +48,7 @@ inline Vector3d SanitizeForce(const Vector3d& force) {
     });
 }
 
-// Torque vector sanitization (1e-7 Nm threshold) 
+// Torque vector sanitization (1e-7 Nm threshold)
 inline Vector3d SanitizeTorque(const Vector3d& torque) {
     return torque.unaryExpr([](double v) {
         return std::abs(v) < 1e-7 ? 0.0 : v;
