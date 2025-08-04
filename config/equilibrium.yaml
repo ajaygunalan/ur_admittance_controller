@@ -1,4 +1,4 @@
 admittance_node:
   ros__parameters:
-    equilibrium.position: [0.491834, 0.13328, 0.48792]
-    equilibrium.orientation: [7.2002e-05, 0.707179, -7.20168e-05, -0.707035]
+    equilibrium.position: [0.491891, 0.133222, 0.205192]
+    equilibrium.orientation: [-1.4503e-10, -0.707107, 0.707107, -0.000144019]

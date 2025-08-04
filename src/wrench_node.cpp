@@ -108,8 +108,16 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
 
     f_raw_s_ = SanitizeWrench(conversions::FromMsg(*msg));
 
-    X_TB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(
-        frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero));
+    // Get transforms with timeout for robustness
+    try {
+        X_TB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(
+            frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, 
+            tf2::TimePointZero, std::chrono::milliseconds(50)));
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, 
+                             "Transform lookup failed: %s", ex.what());
+        return;
+    }
 
     if (!X_TB_.matrix().allFinite()) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, "Invalid transform (NaN/Inf)");
@@ -119,8 +127,16 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
     ft_proc_s_ = CompensateWrench(f_raw_s_, X_TB_, calibration_params_);
     wrench_probe_ = adjoint_probe_sensor_ * ft_proc_s_;
 
-    Transform X_BP = tf2::transformToEigen(tf_buffer_->lookupTransform(
-        frames::ROBOT_BASE_FRAME, frames::PROBE_FRAME, tf2::TimePointZero));
+    Transform X_BP;
+    try {
+        X_BP = tf2::transformToEigen(tf_buffer_->lookupTransform(
+            frames::ROBOT_BASE_FRAME, frames::PROBE_FRAME, 
+            tf2::TimePointZero, std::chrono::milliseconds(50)));
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, 
+                             "Transform lookup failed: %s", ex.what());
+        return;
+    }
     ft_proc_b_ = TransformWrenchToBase(wrench_probe_, X_BP);
 
     wrench_proc_sensor_pub_->publish(conversions::ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
@@ -164,15 +180,17 @@ Status WrenchNode::LoadCalibrationParams() {
 }
 
 void WrenchNode::ComputeSensorToProbeAdjoint() {
-    if (!tf_buffer_->canTransform(frames::SENSOR_FRAME, frames::PROBE_FRAME,
-                                   tf2::TimePointZero, constants::DEFAULT_TIMEOUT)) {
-        RCLCPP_FATAL(get_logger(), "Transform %s->%s not available. Check URDF!",
-                     frames::SENSOR_FRAME, frames::PROBE_FRAME);
+    // Wait for transform to become available (up to 5 seconds at startup)
+    Eigen::Isometry3d X_SP;
+    try {
+        X_SP = tf2::transformToEigen(
+            tf_buffer_->lookupTransform(frames::SENSOR_FRAME, frames::PROBE_FRAME, 
+                                       tf2::TimePointZero, std::chrono::seconds(5)));
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_FATAL(get_logger(), "Transform %s->%s not available after 5s. Check URDF! Error: %s",
+                     frames::SENSOR_FRAME, frames::PROBE_FRAME, ex.what());
         throw std::runtime_error("Required sensor-to-probe transform missing");
     }
-
-    Eigen::Isometry3d X_SP = tf2::transformToEigen(
-        tf_buffer_->lookupTransform(frames::SENSOR_FRAME, frames::PROBE_FRAME, tf2::TimePointZero));
 
     Eigen::Matrix3d R_PS = X_SP.rotation().transpose();
     Eigen::Vector3d p_SP = X_SP.translation();

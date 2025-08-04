@@ -16,10 +16,9 @@ void AdmittanceNode::MapJointStates(const sensor_msgs::msg::JointState& msg) {
     if (auto it = joint_name_to_index_.find(msg.name[i]); it != joint_name_to_index_.end()) {
       // Drake-inspired sanitization to handle floating-point noise
       q_current_[it->second] = SanitizeJointAngle(msg.position[i]);
-    } else {
-      // ROS2 best practice: Warn about unexpected joints
-      RCLCPP_WARN_ONCE(get_logger(), "Unexpected joint '%s' in JointState", msg.name[i].c_str());
     }
+    // Silently ignore joints not in our kinematic chain (e.g., ft_sensor_joint)
+    // These are intentionally present in the URDF for simulation purposes
   }
 }
 
@@ -96,7 +95,7 @@ void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::
 
 Status AdmittanceNode::ControlCycle() {
   if (!joint_states_received_) {
-    RCLCPP_WARN_ONCE(get_logger(), "Waiting for initial joint states...");
+    RCLCPP_INFO_ONCE(get_logger(), "Waiting for initial joint states...");
     return {};
   }
 

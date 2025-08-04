@@ -1,3 +1,11 @@
+## System Instrcution 
+Neve run a a node or lauch a files
+we are  in muitle nodes steup
+your are only allowed to build and running the noees is user not your job
+It will move the robot
+
+
+
 ## Plan & Review
 
 ### Before starting work
