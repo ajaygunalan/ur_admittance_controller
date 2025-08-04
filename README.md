@@ -7,7 +7,7 @@
 
 Clone dependencies:
 ```bash
-mkdir -p ~/ur_ws/src && cd ~/ur_ws/src
+mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
 git clone https://github.com/ajaygunalan/ur_simulation_gz.git
 git clone https://github.com/ajaygunalan/ur_admittance_controller.git
 ```

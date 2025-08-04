@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/parameter_client.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <control_msgs/action/follow_joint_trajectory.hpp>
 #include <controller_manager_msgs/srv/switch_controller.hpp>
@@ -46,22 +47,32 @@ struct KinematicSolver {
 // @return URDF string from robot_description parameter
 // @throws std::runtime_error if parameter not set
 std::string getRobotDescription(rclcpp::Node::SharedPtr node) {
-  // Declare parameter if not already declared
-  if (!node->has_parameter("robot_description")) {
-    node->declare_parameter("robot_description", std::string(""));
-  }
-
-  std::string robot_description;
-  if (!node->get_parameter("robot_description", robot_description) ||
-      robot_description.empty()) {
-    auto msg = "robot_description parameter not set or empty. "
-               "Is robot_state_publisher running?";
-    RCLCPP_ERROR(node->get_logger(), "%s", msg);
+  // Helper for consistent error handling (follows ROS2 patterns)
+  auto throwError = [&node](const std::string& msg) {
+    RCLCPP_ERROR(node->get_logger(), "%s", msg.c_str());
     throw std::runtime_error(msg);
-  }
+  };
 
+  // Create parameter client to get parameter from robot_state_publisher node
+  auto parameters_client = std::make_shared<rclcpp::SyncParametersClient>(
+      node, "/robot_state_publisher");
+  
+  // Wait for the service to be available
+  if (!parameters_client->wait_for_service(ROBOT_DESC_TIMEOUT)) {
+    throwError("robot_state_publisher service not available. "
+               "Is robot_state_publisher running?");
+  }
+  
+  // Get the robot_description parameter
+  auto parameters = parameters_client->get_parameters({"robot_description"});
+  
+  if (parameters.empty() || parameters[0].as_string().empty()) {
+    throwError("robot_description parameter not found or empty on robot_state_publisher node");
+  }
+  
+  auto robot_description = parameters[0].as_string();
   RCLCPP_INFO(node->get_logger(),
-              "Got robot description from parameter (%lu bytes)",
+              "Got robot description from robot_state_publisher (%lu bytes)",
               robot_description.size());
 
   return robot_description;
@@ -248,15 +259,18 @@ int main(int argc, char** argv) {
 
   try {
     auto node = std::make_shared<rclcpp::Node>("equilibrium_initializer");
-    auto executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
-    executor->add_node(node);
-
+    
     std::vector<std::string> joint_names = {
       "shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
       "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"
     };
 
+    // Get robot description before creating executor
     std::string robot_description = getRobotDescription(node);
+    
+    // Now create executor and add node for later use
+    auto executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+    executor->add_node(node);
 
     node->declare_parameter("equilibrium.joints",
       std::vector<double>(DEFAULT_EQUILIBRIUM.begin(), DEFAULT_EQUILIBRIUM.end()));

@@ -29,18 +29,15 @@ Result<KinematicsComponents> InitializeFromUrdf(
     }
 
     // Get transform from wrist to actual tip
-    if (!components.tree.getChain("wrist_3_link", tip_link, components.robot_chain)) {
+    KDL::Chain tool_chain;
+    if (!components.tree.getChain("wrist_3_link", tip_link, tool_chain)) {
         // If direct chain fails, just use identity (wrist_3 = tool0)
         components.tool_offset = KDL::Frame::Identity();
     } else {
         // For UR robots with custom tools, this captures tool transform
-        KDL::Chain tool_chain;
-        components.tree.getChain("wrist_3_link", tip_link, tool_chain);
-        if (tool_chain.getNrOfSegments() > 0) {
-            components.tool_offset = tool_chain.getSegment(0).getFrameToTip();
-        } else {
-            components.tool_offset = KDL::Frame::Identity();
-        }
+        components.tool_offset = (tool_chain.getNrOfSegments() > 0)
+            ? tool_chain.getSegment(0).getFrameToTip()
+            : KDL::Frame::Identity();
     }
 
     components.num_joints = components.robot_chain.getNrOfJoints();
