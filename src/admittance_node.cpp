@@ -1,18 +1,16 @@
 #include "admittance_node.hpp"
-#include <utilities/logging.hpp>
 #include <utilities/constants.hpp>
+#include <utilities/file_io.hpp>
+#include <utilities/logging.hpp>
+#include <fmt/core.h>
+#include <fmt/format.h>
 
 namespace ur_admittance_controller {
 
-void AdmittanceNode::MapJointStates(const sensor_msgs::msg::JointState& msg) {
-  for (size_t i = 0; i < msg.name.size() && i < msg.position.size(); ++i) {
-    if (auto it = joint_name_to_index_.find(msg.name[i]); it != joint_name_to_index_.end()) {
-      q_current_[it->second] = SanitizeJointAngle(msg.position[i]);
-    }
-  }
-}
+AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
+: Node("admittance_node", options) {
+  RCLCPP_INFO_ONCE(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
 
-void AdmittanceNode::InitializeParameters() {
   param_listener_ = std::make_shared<ur_admittance_controller::ParamListener>(
       get_node_parameters_interface());
   params_ = param_listener_->get_params();
@@ -21,31 +19,103 @@ void AdmittanceNode::InitializeParameters() {
     auto result = param_listener_->update(params);
     if (result.successful) {
       params_ = param_listener_->get_params();
-      UpdateAdmittanceParameters();
+      auto& p = params_.admittance;
+      M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
+      K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
+      D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+        "Admittance: M=[%s], K=[%s], D=[%s]",
+        fmt::format("{:.1f}", fmt::join(p.mass, ", ")).c_str(),
+        fmt::format("{:.1f}", fmt::join(p.stiffness, ", ")).c_str(),
+        fmt::format("{:.1f}", fmt::join(p.damping, ", ")).c_str());
     } else {
       RCLCPP_WARN(get_logger(), "Parameter update rejected: %s", result.reason.c_str());
     }
     return result;
   });
 
-  UpdateAdmittanceParameters();
+  auto& p = params_.admittance;
+  M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
+  K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
+  D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+    "Admittance: M=[%s], K=[%s], D=[%s]",
+    fmt::format("{:.1f}", fmt::join(p.mass, ", ")).c_str(),
+    fmt::format("{:.1f}", fmt::join(p.stiffness, ", ")).c_str(),
+    fmt::format("{:.1f}", fmt::join(p.damping, ", ")).c_str());
+
+  const auto joint_count = params_.joints.size();
+  q_current_.resize(joint_count, 0.0);
+  q_dot_cmd_.resize(joint_count, 0.0);
+  velocity_msg_.data.resize(joint_count);
+
+  workspace_limits_ << constants::WORKSPACE_X_MIN, constants::WORKSPACE_X_MAX,
+                       constants::WORKSPACE_Y_MIN, constants::WORKSPACE_Y_MAX,
+                       constants::WORKSPACE_Z_MIN, constants::WORKSPACE_Z_MAX;
+  arm_max_vel_ = 1.5;
+  arm_max_acc_ = constants::ARM_MAX_ACCELERATION;
+  admittance_ratio_ = 1.0;
+
+  auto config_result = file_io::LoadConfigFile("equilibrium.yaml");
+  if (!config_result) {
+    RCLCPP_FATAL(get_logger(), "Failed to load equilibrium file: %s",
+                 config_result.error().message.c_str());
+    std::exit(1);
+  }
+  auto eq_params = config_result.value()["admittance_node"]["ros__parameters"];
+  auto pos = eq_params["equilibrium.position"].as<std::vector<double>>();
+  auto ori = eq_params["equilibrium.orientation"].as<std::vector<double>>();
+  X_BP_desired.translation() << pos[0], pos[1], pos[2];
+  X_BP_desired.linear() = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]).toRotationMatrix();
+  logging::LogPose(get_logger(), "Equilibrium:", Vector3d(pos.data()),
+                   Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]));
 }
 
-void AdmittanceNode::SetupROSInterfaces() {
+void AdmittanceNode::configure() {
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
       "/netft/proc_probe_base", rclcpp::SensorDataQoS(),
-      std::bind(&AdmittanceNode::WrenchCallback, this, std::placeholders::_1));
+      [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) {
+        WrenchCallback(msg);
+      });
 
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "/joint_states", 1,
-      std::bind(&AdmittanceNode::JointStateCallback, this, std::placeholders::_1));
+      [this](const sensor_msgs::msg::JointState::ConstSharedPtr& msg) {
+        JointStateCallback(msg);
+      });
 
   desired_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       "/admittance_node/desired_pose", constants::DEFAULT_QUEUE_SIZE,
-      std::bind(&AdmittanceNode::DesiredPoseCallback, this, std::placeholders::_1));
+      [this](const geometry_msgs::msg::PoseStamped::ConstSharedPtr& msg) {
+        DesiredPoseCallback(msg);
+      });
 
   velocity_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
       "/forward_velocity_controller/commands", constants::DEFAULT_QUEUE_SIZE);
+
+  if (auto status = LoadKinematics(); !status) {
+    RCLCPP_FATAL(get_logger(), "Failed to load kinematics: %s", status.error().message.c_str());
+    std::exit(1);
+  }
+
+  kinematics_initialized_ = true;
+
+  joint_name_to_index_.clear();
+  for (size_t i = 0; i < params_.joints.size(); ++i) {
+    joint_name_to_index_[params_.joints[i]] = i;
+  }
+
+  RCLCPP_INFO(get_logger(),
+    "Configured: equilibrium=[%.3f, %.3f, %.3f], control=100Hz",
+    X_BP_desired.translation()(0), X_BP_desired.translation()(1), X_BP_desired.translation()(2));
+}
+
+void AdmittanceNode::ControlCycle() {
+  GetXBPCurrent();
+  ComputePoseError();
+  ComputeAdmittance();
+  LimitToWorkspace();
+  ComputeAndPubJointVelocities();
 }
 
 void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
@@ -63,7 +133,12 @@ void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::Con
 void AdmittanceNode::JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg) {
   RCLCPP_INFO_ONCE(get_logger(), "Joint states received - robot is online");
   joint_states_received_ = true;
-  MapJointStates(*msg);
+  
+  for (size_t i = 0; i < msg->name.size() && i < msg->position.size(); ++i) {
+    if (auto it = joint_name_to_index_.find(msg->name[i]); it != joint_name_to_index_.end()) {
+      q_current_[it->second] = SanitizeJointAngle(msg->position[i]);
+    }
+  }
 }
 
 void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
@@ -75,77 +150,27 @@ void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::
                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
 }
 
-void AdmittanceNode::ControlCycle() {
-  if (!joint_states_received_) {
-    RCLCPP_INFO_ONCE(get_logger(), "Waiting for initial joint states...");
-    return;
-  }
-
-  control_error_ = false;  // Reset error flag at start of cycle
-  GetXBPCurrent();
-  if (control_error_) {
-    // Send zero velocities on error and return
-    std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
-    velocity_msg_.data = q_dot_cmd_;
-    velocity_pub_->publish(velocity_msg_);
-    return;
-  }
-
-  ComputePoseError();
-  ComputeAdmittance();
-  LimitToWorkspace();
-  ComputeAndPubJointVelocities();
-}
-
-void AdmittanceNode::Initialize() {
-  if (auto status = LoadKinematics(); !status) {
-    RCLCPP_FATAL(get_logger(), "Failed to load kinematics: %s", status.error().message.c_str());
-    std::exit(1);
-  }
-
-  kinematics_initialized_ = true;
-
-  joint_name_to_index_.clear();
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    joint_name_to_index_[params_.joints[i]] = i;
-  }
-
-  RCLCPP_INFO(get_logger(),
-    "Initialized: equilibrium=[%.3f, %.3f, %.3f], control=100Hz",
-    X_BP_desired.translation()(0), X_BP_desired.translation()(1), X_BP_desired.translation()(2));
-}
-
-AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
-: Node("admittance_node", options) {
-  RCLCPP_INFO_ONCE(get_logger(), "Initializing UR Admittance Controller - 6-DOF Force-Compliant Motion Control");
-
-  InitializeParameters();
-  InitializeStateVectors();
-  SetupROSInterfaces();
-  SetDefaultEquilibrium();
-}
-
-}  // namespace ur_admittance_controller
+}  
 
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
 
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
-
-  node->Initialize();
+  node->configure();
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
   rclcpp::Rate loop_rate(ur_admittance_controller::constants::CONTROL_LOOP_HZ);
-
-  RCLCPP_INFO_ONCE(node->get_logger(), "Starting synchronized admittance control loop at 100Hz...");
-
+  RCLCPP_INFO(node->get_logger(), "Waiting for initial joint states...");
+  
   while (rclcpp::ok()) {
     executor.spin_some();
-
-    node->ControlCycle();
-
+    if (node->joint_states_received_) {
+      RCLCPP_INFO_ONCE(node->get_logger(), "Joint states received. Running control at 100Hz...");
+      node->ControlCycle();
+    }
+    
     loop_rate.sleep();
   }
 

@@ -1,6 +1,9 @@
 #include "admittance_node.hpp"
 #include <utilities/logging.hpp>
 #include <utilities/constants.hpp>
+#include <utilities/file_io.hpp>
+#include <fmt/core.h>
+#include <fmt/format.h>
 
 namespace ur_admittance_controller {
 
@@ -173,53 +176,6 @@ inline Vector6d LimitVelocityMagnitude(
   return limited;
 }
 
-void AdmittanceNode::InitializeStateVectors() {
-  const auto joint_count = params_.joints.size();
-
-  q_current_.resize(joint_count, 0.0);
-  q_dot_cmd_.resize(joint_count, 0.0);
-  velocity_msg_.data.resize(joint_count);
-
-  workspace_limits_ << constants::WORKSPACE_X_MIN, constants::WORKSPACE_X_MAX,
-                       constants::WORKSPACE_Y_MIN, constants::WORKSPACE_Y_MAX,
-                       constants::WORKSPACE_Z_MIN, constants::WORKSPACE_Z_MAX;
-  arm_max_vel_ = 1.5;
-  arm_max_acc_ = constants::ARM_MAX_ACCELERATION;
-  admittance_ratio_ = 1.0;
-}
-
-void AdmittanceNode::SetDefaultEquilibrium() {
-  auto config_result = file_io::LoadConfigFile("equilibrium.yaml");
-  if (!config_result) {
-    RCLCPP_FATAL(get_logger(), "Failed to load equilibrium file: %s",
-                 config_result.error().message.c_str());
-    std::exit(1);
-  }
-
-  auto params = config_result.value()["admittance_node"]["ros__parameters"];
-  auto pos = params["equilibrium.position"].as<std::vector<double>>();
-  auto ori = params["equilibrium.orientation"].as<std::vector<double>>();
-
-  X_BP_desired.translation() << pos[0], pos[1], pos[2];
-  X_BP_desired.linear() = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]).toRotationMatrix();
-
-  logging::LogPose(get_logger(), "Equilibrium:", Vector3d(pos.data()),
-                   Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]));
-}
-
-void AdmittanceNode::UpdateAdmittanceParameters() {
-  auto& p = params_.admittance;
-
-  M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
-  K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
-  D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
-
-  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
-    "Admittance: M=[%s], K=[%s], D=[%s]",
-    fmt::format("{:.1f}", fmt::join(p.mass, ", ")).c_str(),
-    fmt::format("{:.1f}", fmt::join(p.stiffness, ", ")).c_str(),
-    fmt::format("{:.1f}", fmt::join(p.damping, ", ")).c_str());
-}
 
 
 
@@ -231,8 +187,7 @@ void AdmittanceNode::GetXBPCurrent() {
   if (!result) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS, "FK failed: %s",
                           result.error().message.c_str());
-    control_error_ = true;
-    return;  // Continue with last valid pose
+    return;  // Keep using last valid pose
   }
 
   X_BP_current = result.value();
@@ -289,7 +244,6 @@ void AdmittanceNode::ComputeAndPubJointVelocities() {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
         "IK failed: vel=[%.3f,%.3f,%.3f]m/s - safety stop",
         V_P_B_commanded(0), V_P_B_commanded(1), V_P_B_commanded(2));
-    control_error_ = true;
     std::fill(q_dot_cmd_.begin(), q_dot_cmd_.end(), 0.0);
   } else {
     q_dot_cmd_ = result.value();

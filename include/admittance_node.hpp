@@ -35,7 +35,7 @@ class AdmittanceNode : public rclcpp::Node {
 public:
   explicit AdmittanceNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
   void ControlCycle();
-  void Initialize();
+  void configure();
 
 private:
   void WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
@@ -43,16 +43,11 @@ private:
   void DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
 
   Status LoadKinematics();
-  void InitializeParameters();
-  void InitializeStateVectors();
-  void SetupROSInterfaces();
-  void SetDefaultEquilibrium();
-
   void ComputeAdmittance();
   void ComputePoseError();
-  void UpdateAdmittanceParameters();
   void ComputeAndPubJointVelocities();
   void LimitToWorkspace();
+  void GetXBPCurrent();
 
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
@@ -93,16 +88,12 @@ private:
   KDL::JntArray v_kdl_;
   KDL::Frame X_BW3;
 
-  void MapJointStates(const sensor_msgs::msg::JointState& msg);
-
 public:
   rclcpp::Duration control_period_{std::chrono::milliseconds(10)};
+  bool joint_states_received_ = false;
 
 private:
-  bool joint_states_received_ = false;
-  bool control_error_ = false;
   std::unordered_map<std::string, size_t> joint_name_to_index_;
-  void GetXBPCurrent();
 };
 
 }  // namespace ur_admittance_controller
