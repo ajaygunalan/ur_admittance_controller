@@ -57,15 +57,10 @@ set(NODE_DEPENDENCIES
 add_executable(admittance_node
   src/admittance_node.cpp
   src/admittance_computations.cpp
-  src/utilities/conversions.cpp
-  src/utilities/file_io.cpp
-  src/utilities/kinematics.cpp
 )
 
 add_executable(wrench_node
   src/wrench_node.cpp
-  src/utilities/conversions.cpp
-  src/utilities/file_io.cpp
 )
 
 add_executable(wrench_calibration_node
@@ -75,8 +70,6 @@ add_executable(wrench_calibration_node
 
 add_executable(init_robot
   src/init_robot.cpp
-  src/utilities/file_io.cpp
-  src/utilities/kinematics.cpp
 )
 
 # Include directories

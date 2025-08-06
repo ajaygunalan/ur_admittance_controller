@@ -3,6 +3,30 @@
 
 namespace ur_admittance_controller {
 
+// Conversion helpers
+namespace {
+    Wrench6d FromMsg(const geometry_msgs::msg::WrenchStamped& msg) {
+        return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
+                              msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
+    }
+
+    geometry_msgs::msg::WrenchStamped ToMsg(
+        const Wrench6d& wrench,
+        const std::string& frame_id,
+        const rclcpp::Time& stamp) {
+        geometry_msgs::msg::WrenchStamped msg;
+        msg.header.stamp = stamp;
+        msg.header.frame_id = frame_id;
+        msg.wrench.force.x = wrench[0];
+        msg.wrench.force.y = wrench[1];
+        msg.wrench.force.z = wrench[2];
+        msg.wrench.torque.x = wrench[3];
+        msg.wrench.torque.y = wrench[4];
+        msg.wrench.torque.z = wrench[5];
+        return msg;
+    }
+}
+
 Matrix3d CrossMatrix(const Vector3d& v) {
     Matrix3d result;
     result <<     0, -v.z(),  v.y(),
@@ -84,7 +108,7 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
         return;
     }
 
-    f_raw_s_ = SanitizeWrench(conversions::FromMsg(*msg));
+    f_raw_s_ = SanitizeWrench(FromMsg(*msg));
 
     try {
         X_TB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(
@@ -118,19 +142,31 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
     ft_proc_b_ = TransformWrenchToBase(wrench_probe_, X_BP);
 
     wrench_proc_sensor_pub_->publish(
-        conversions::ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
+        ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
     wrench_proc_probe_pub_->publish(
-        conversions::ToMsg(wrench_probe_, frames::PROBE_FRAME, msg->header.stamp));
+        ToMsg(wrench_probe_, frames::PROBE_FRAME, msg->header.stamp));
     wrench_proc_probe_base_pub_->publish(
-        conversions::ToMsg(ft_proc_b_, frames::ROBOT_BASE_FRAME, msg->header.stamp));
+        ToMsg(ft_proc_b_, frames::ROBOT_BASE_FRAME, msg->header.stamp));
 }
 
 Status WrenchNode::LoadCalibrationParams() {
-    auto config_result = file_io::LoadConfigFile("wrench_calibration.yaml");
-    if (!config_result) {
-        return tl::unexpected(config_result.error());
+    const char* workspace_env = std::getenv("ROS_WORKSPACE");
+    std::string workspace = workspace_env ? workspace_env : 
+                           std::string(std::getenv("HOME")) + "/ros2_ws";
+    auto config_path = std::filesystem::path(workspace) / "src" / "ur_admittance_controller" / "config" / "wrench_calibration.yaml";
+    
+    if (!std::filesystem::exists(config_path)) {
+        return tl::unexpected(MakeError(ErrorCode::kFileNotFound, 
+            fmt::format("Config file not found: {}", config_path.string())));
     }
-    YAML::Node config = config_result.value();
+    
+    YAML::Node config;
+    try {
+        config = YAML::LoadFile(config_path.string());
+    } catch (const YAML::Exception& e) {
+        return tl::unexpected(MakeError(ErrorCode::kInvalidConfiguration,
+            fmt::format("Failed to parse YAML: {}", e.what())));
+    }
 
     auto rot_data = config["rotation_sensor_to_endeffector"].as<std::vector<std::vector<double>>>();
 

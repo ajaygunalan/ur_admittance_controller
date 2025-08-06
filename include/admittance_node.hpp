@@ -24,7 +24,6 @@
 #include <utilities/error.hpp>
 #include <utilities/types.hpp>
 #include <utilities/conversions.hpp>
-#include <utilities/file_io.hpp>
 #include <utilities/kinematics.hpp>
 #include <fmt/core.h>
 #include <fmt/ranges.h>

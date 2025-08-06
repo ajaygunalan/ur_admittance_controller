@@ -8,14 +8,77 @@
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <utilities/kinematics.hpp>
 #include <utilities/logging.hpp>
-#include <utilities/file_io.hpp>
 #include <utilities/constants.hpp>
 #include <utilities/types.hpp>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <yaml-cpp/yaml.h>
+#include <filesystem>
+#include <kdl_parser/kdl_parser.hpp>
+#include <urdf/model.h>
 
 namespace ur_admittance_controller {
+
+// Kinematics helpers
+namespace kinematics {
+    Result<KinematicsComponents> InitializeFromUrdfString(
+        const std::string& urdf_string,
+        const std::string& base_link,
+        const std::string& tip_link) {
+        
+        urdf::Model urdf_model;
+        if (!urdf_model.initString(urdf_string)) {
+            return tl::unexpected(MakeError(ErrorCode::kKinematicsInitFailed,
+                                           "Failed to parse URDF string"));
+        }
+        
+        KinematicsComponents components;
+        
+        // Convert URDF to KDL tree
+        if (!kdl_parser::treeFromUrdfModel(urdf_model, components.tree)) {
+            return tl::unexpected(MakeError(ErrorCode::kKinematicsInitFailed,
+                                           "Failed to convert URDF to KDL tree"));
+        }
+        
+        // Extract chain from base to wrist (tool0 = wrist_3_link for UR robots)
+        if (!components.tree.getChain(base_link, "wrist_3_link", components.robot_chain)) {
+            return tl::unexpected(MakeError(ErrorCode::kKinematicsInitFailed,
+                fmt::format("Failed to extract chain from {} to wrist_3_link", base_link)));
+        }
+        
+        // Get transform from wrist to actual tip (through all fixed joints and sensor frames)
+        KDL::Chain tool_chain;
+        if (!components.tree.getChain("wrist_3_link", tip_link, tool_chain)) {
+            // If direct chain fails, just use identity (wrist_3 = tool0)
+            components.tool_offset = KDL::Frame::Identity();
+        } else {
+            // Compute full transform through all segments (including sensor frames)
+            components.tool_offset = KDL::Frame::Identity();
+            for (unsigned int i = 0; i < tool_chain.getNrOfSegments(); ++i) {
+                components.tool_offset = components.tool_offset * tool_chain.getSegment(i).getFrameToTip();
+            }
+        }
+        
+        components.num_joints = components.robot_chain.getNrOfJoints();
+        
+        RCLCPP_DEBUG(rclcpp::get_logger("kinematics"),
+                     "Initialized KDL: %zu joints, %d segments",
+                     components.num_joints, components.robot_chain.getNrOfSegments());
+        
+        return components;
+    }
+
+    Transform KdlToEigen(const KDL::Frame& frame) {
+        Transform result;
+        result.translation() << frame.p.x(), frame.p.y(), frame.p.z();
+        
+        double x, y, z, w;
+        frame.M.GetQuaternion(x, y, z, w);
+        result.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
+        
+        return result;
+    }
+}
 
 using FollowJointTrajectory = control_msgs::action::FollowJointTrajectory;
 using namespace constants;
@@ -102,7 +165,10 @@ void SaveEquilibriumPose(rclcpp::Node::SharedPtr node,
   config["admittance_node"]["ros__parameters"]["equilibrium.orientation"] = 
     std::vector<double>{w, x, y, z};
 
-  auto path = file_io::GetConfigPath("equilibrium.yaml");
+  const char* workspace_env = std::getenv("ROS_WORKSPACE");
+  std::string workspace = workspace_env ? workspace_env : 
+                         std::string(std::getenv("HOME")) + "/ros2_ws";
+  auto path = std::filesystem::path(workspace) / "src" / "ur_admittance_controller" / "config" / "equilibrium.yaml";
   std::ofstream file(path.string());
   if (!file) {
     RCLCPP_FATAL(node->get_logger(), "Failed to save equilibrium: %s", path.string().c_str());

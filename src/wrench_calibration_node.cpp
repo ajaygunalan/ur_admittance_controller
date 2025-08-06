@@ -7,6 +7,13 @@
 
 namespace ur_admittance_controller {
 
+// Conversion helper
+namespace {
+    Wrench6d FromMsg(const geometry_msgs::msg::WrenchStamped& msg) {
+        return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
+                              msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
+    }
+}
 
 WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node"),
     tf_buffer_(get_clock()), tf_listener_(tf_buffer_),
@@ -156,7 +163,7 @@ void WrenchCalibrationNode::CollectSamplesAtCurrentPose(std::vector<CalibrationS
 
     Wrench6d raw_sensor_avg = Wrench6d::Zero();
     for (size_t i = 0; i < CalibrationConstants::SAMPLES_PER_POSE; ++i) {
-        Wrench6d wrench = conversions::FromMsg(latest_wrench_);
+        Wrench6d wrench = FromMsg(latest_wrench_);
         raw_sensor_avg += wrench;
         samples.push_back(CalibrationSample{wrench, X_TB, pose_idx});
 

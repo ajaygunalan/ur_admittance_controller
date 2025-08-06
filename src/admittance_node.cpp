@@ -1,11 +1,20 @@
 #include "admittance_node.hpp"
 #include <utilities/constants.hpp>
-#include <utilities/file_io.hpp>
+#include <filesystem>
+#include <yaml-cpp/yaml.h>
 #include <utilities/logging.hpp>
 #include <fmt/core.h>
 #include <fmt/format.h>
 
 namespace ur_admittance_controller {
+
+// Conversion helper
+namespace {
+    Wrench6d FromMsg(const geometry_msgs::msg::WrenchStamped& msg) {
+        return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
+                              msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
+    }
+}
 
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 : Node("admittance_node", options) {
@@ -61,13 +70,24 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   arm_max_acc_ = constants::ARM_MAX_ACCELERATION;
   admittance_ratio_ = 1.0;
 
-  auto config_result = file_io::LoadConfigFile("equilibrium.yaml");
-  if (!config_result) {
-    RCLCPP_FATAL(get_logger(), "Failed to load equilibrium file: %s",
-                 config_result.error().message.c_str());
+  const char* workspace_env = std::getenv("ROS_WORKSPACE");
+  std::string workspace = workspace_env ? workspace_env : 
+                         std::string(std::getenv("HOME")) + "/ros2_ws";
+  auto config_path = std::filesystem::path(workspace) / "src" / "ur_admittance_controller" / "config" / "equilibrium.yaml";
+  
+  if (!std::filesystem::exists(config_path)) {
+    RCLCPP_FATAL(get_logger(), "Failed to load equilibrium file: %s", config_path.string().c_str());
     std::exit(1);
   }
-  auto eq_params = config_result.value()["admittance_node"]["ros__parameters"];
+  
+  YAML::Node config;
+  try {
+    config = YAML::LoadFile(config_path.string());
+  } catch (const YAML::Exception& e) {
+    RCLCPP_FATAL(get_logger(), "Failed to parse equilibrium file: %s", e.what());
+    std::exit(1);
+  }
+  auto eq_params = config["admittance_node"]["ros__parameters"];
   auto pos = eq_params["equilibrium.position"].as<std::vector<double>>();
   auto ori = eq_params["equilibrium.orientation"].as<std::vector<double>>();
   X_BP_desired.translation() << pos[0], pos[1], pos[2];
@@ -117,7 +137,7 @@ void AdmittanceNode::ControlCycle() {
 }
 
 void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  F_P_B = SanitizeWrench(conversions::FromMsg(*msg));
+  F_P_B = SanitizeWrench(FromMsg(*msg));
 
   auto [force_norm, torque_norm] = std::make_pair(F_P_B.head<3>().norm(), F_P_B.tail<3>().norm());
   if (force_norm > constants::FORCE_THRESHOLD || torque_norm > constants::TORQUE_THRESHOLD) {
