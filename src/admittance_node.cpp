@@ -48,6 +48,11 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   q_current_.resize(joint_count, 0.0);
   q_dot_cmd_.resize(joint_count, 0.0);
   velocity_msg_.data.resize(joint_count);
+  
+  joint_name_to_index_.clear();
+  for (size_t i = 0; i < params_.joints.size(); ++i) {
+    joint_name_to_index_[params_.joints[i]] = i;
+  }
 
   workspace_limits_ << constants::WORKSPACE_X_MIN, constants::WORKSPACE_X_MAX,
                        constants::WORKSPACE_Y_MIN, constants::WORKSPACE_Y_MAX,
@@ -96,13 +101,6 @@ void AdmittanceNode::configure() {
   if (auto status = LoadKinematics(); !status) {
     RCLCPP_FATAL(get_logger(), "Failed to load kinematics: %s", status.error().message.c_str());
     std::exit(1);
-  }
-
-  kinematics_initialized_ = true;
-
-  joint_name_to_index_.clear();
-  for (size_t i = 0; i < params_.joints.size(); ++i) {
-    joint_name_to_index_[params_.joints[i]] = i;
   }
 
   RCLCPP_INFO(get_logger(),

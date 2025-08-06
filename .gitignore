@@ -39,3 +39,6 @@ temp/
 # Log files
 logs/
 *.log
+
+# YoYo AI version control directory
+.yoyo/

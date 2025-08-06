@@ -30,5 +30,13 @@ Result<YAML::Node> LoadConfigFile(const std::string& filename) {
     }
 }
 
+std::filesystem::path GetConfigPath(const std::string& filename) {
+    const char* workspace_env = std::getenv("ROS_WORKSPACE");
+    std::string workspace = workspace_env ? workspace_env :
+                           std::string(std::getenv("HOME")) + "/ros2_ws";
+    
+    return std::filesystem::path(workspace) / "src" / "ur_admittance_controller" / "config" / filename;
+}
+
 } // namespace file_io
 } // namespace ur_admittance_controller

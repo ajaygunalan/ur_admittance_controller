@@ -58,7 +58,6 @@ private:
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_cb_handle_;
   std::vector<double> q_current_;
   std::vector<double> q_dot_cmd_;
-  bool kinematics_initialized_ = false;
 
   Vector6d F_P_B = Vector6d::Zero();
   Vector6d V_P_B_commanded = Vector6d::Zero();

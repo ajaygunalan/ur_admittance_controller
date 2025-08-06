@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <filesystem>
 #include <yaml-cpp/yaml.h>
 
 #include <utilities/error.hpp>
@@ -12,6 +13,10 @@ namespace file_io {
 // Looks for files in: $ROS_WORKSPACE/src/ur_admittance_controller/config/
 // or defaults to: $HOME/ros2_ws/src/ur_admittance_controller/config/
 Result<YAML::Node> LoadConfigFile(const std::string& filename);
+
+// Get path to config file without loading it
+// Uses same path resolution as LoadConfigFile
+std::filesystem::path GetConfigPath(const std::string& filename);
 
 } // namespace file_io
 } // namespace ur_admittance_controller
