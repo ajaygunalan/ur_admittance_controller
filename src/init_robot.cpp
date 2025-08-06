@@ -1,21 +1,4 @@
-#include <fstream>
-#include <chrono>
-#include <rclcpp/rclcpp.hpp>
-#include <rclcpp/parameter_client.hpp>
-#include <rclcpp_action/rclcpp_action.hpp>
-#include <control_msgs/action/follow_joint_trajectory.hpp>
-#include <sensor_msgs/msg/joint_state.hpp>
-#include <kdl/chainfksolverpos_recursive.hpp>
-#include <utilities/kinematics.hpp>
-#include <utilities/logging.hpp>
-#include <utilities/constants.hpp>
-#include <utilities/types.hpp>
-#include <fmt/format.h>
-#include <fmt/ranges.h>
-#include <yaml-cpp/yaml.h>
-#include <filesystem>
-#include <kdl_parser/kdl_parser.hpp>
-#include <urdf/model.h>
+#include "init_robot.hpp"
 
 namespace ur_admittance_controller {
 

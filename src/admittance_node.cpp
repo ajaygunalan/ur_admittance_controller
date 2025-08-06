@@ -1,20 +1,6 @@
 #include "admittance_node.hpp"
-#include <utilities/constants.hpp>
-#include <filesystem>
-#include <yaml-cpp/yaml.h>
-#include <utilities/logging.hpp>
-#include <fmt/core.h>
-#include <fmt/format.h>
 
 namespace ur_admittance_controller {
-
-// Conversion helper
-namespace {
-    Wrench6d FromMsg(const geometry_msgs::msg::WrenchStamped& msg) {
-        return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
-                              msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
-    }
-}
 
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 : Node("admittance_node", options) {
@@ -137,7 +123,7 @@ void AdmittanceNode::ControlCycle() {
 }
 
 void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  F_P_B = SanitizeWrench(FromMsg(*msg));
+  F_P_B = SanitizeWrench(conversions::FromMsg(*msg));
 
   auto [force_norm, torque_norm] = std::make_pair(F_P_B.head<3>().norm(), F_P_B.tail<3>().norm());
   if (force_norm > constants::FORCE_THRESHOLD || torque_norm > constants::TORQUE_THRESHOLD) {

@@ -1,15 +1,9 @@
 #include "wrench_node.hpp"
-#include <utilities/constants.hpp>
 
 namespace ur_admittance_controller {
 
-// Conversion helpers
-namespace {
-    Wrench6d FromMsg(const geometry_msgs::msg::WrenchStamped& msg) {
-        return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
-                              msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
-    }
-
+// Implementation of ToMsg function declared in header
+namespace conversions {
     geometry_msgs::msg::WrenchStamped ToMsg(
         const Wrench6d& wrench,
         const std::string& frame_id,
@@ -51,15 +45,15 @@ Wrench6d CompensateWrench(
     const Transform& X_TB,
     const GravityCompensationParams& params) {
 
-  Force3d f_gravity_S = params.R_SE * X_TB.rotation() * params.f_gravity_B;
+  Force3d f_gravity_S = params.R_SE * X_TB.rotation() * params.f_grav_b;
 
   Wrench6d wrench_gravity;
   wrench_gravity.head<3>() = f_gravity_S;
-  wrench_gravity.tail<3>() = params.p_SCoM_S.cross(f_gravity_S);
+  wrench_gravity.tail<3>() = params.p_CoM_s.cross(f_gravity_S);
 
   Wrench6d wrench_bias;
-  wrench_bias.head<3>() = params.f_bias_S;
-  wrench_bias.tail<3>() = params.t_bias_S;
+  wrench_bias.head<3>() = params.f_bias_s;
+  wrench_bias.tail<3>() = params.t_bias_s;
 
   return wrench_raw - wrench_gravity - wrench_bias;
 }
@@ -108,7 +102,7 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
         return;
     }
 
-    f_raw_s_ = SanitizeWrench(FromMsg(*msg));
+    f_raw_s_ = SanitizeWrench(conversions::FromMsg(*msg));
 
     try {
         X_TB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(
@@ -142,11 +136,11 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
     ft_proc_b_ = TransformWrenchToBase(wrench_probe_, X_BP);
 
     wrench_proc_sensor_pub_->publish(
-        ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
+        conversions::ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
     wrench_proc_probe_pub_->publish(
-        ToMsg(wrench_probe_, frames::PROBE_FRAME, msg->header.stamp));
+        conversions::ToMsg(wrench_probe_, frames::PROBE_FRAME, msg->header.stamp));
     wrench_proc_probe_base_pub_->publish(
-        ToMsg(ft_proc_b_, frames::ROBOT_BASE_FRAME, msg->header.stamp));
+        conversions::ToMsg(ft_proc_b_, frames::ROBOT_BASE_FRAME, msg->header.stamp));
 }
 
 Status WrenchNode::LoadCalibrationParams() {
@@ -184,7 +178,7 @@ Status WrenchNode::LoadCalibrationParams() {
     t_bias_s_ = Vector3d(torque_bias_vec.data());
     p_CoM_s_ = Vector3d(com_vec.data());
 
-    calibration_params_ = {p_CoM_s_, f_grav_b_, f_bias_s_, t_bias_s_, R_SE_};
+    calibration_params_ = {R_SE_, f_grav_b_, f_bias_s_, t_bias_s_, p_CoM_s_};
 
     RCLCPP_INFO(get_logger(), "Calibration loaded");
     return {};

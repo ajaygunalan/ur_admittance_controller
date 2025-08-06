@@ -1,19 +1,9 @@
 // F/T sensor calibration node - collects data from 32 robot poses for LROM calibration
 #include "wrench_calibration_node.hpp"
-#include "wrench_calibration_algorithm.hpp"
-#include <chrono>
-#include <utilities/logging.hpp>
-#include <utilities/constants.hpp>
 
 namespace ur_admittance_controller {
 
-// Conversion helper
-namespace {
-    Wrench6d FromMsg(const geometry_msgs::msg::WrenchStamped& msg) {
-        return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
-                              msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
-    }
-}
+// No local conversion helpers needed - using from header
 
 WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node"),
     tf_buffer_(get_clock()), tf_listener_(tf_buffer_),
@@ -163,7 +153,7 @@ void WrenchCalibrationNode::CollectSamplesAtCurrentPose(std::vector<CalibrationS
 
     Wrench6d raw_sensor_avg = Wrench6d::Zero();
     for (size_t i = 0; i < CalibrationConstants::SAMPLES_PER_POSE; ++i) {
-        Wrench6d wrench = FromMsg(latest_wrench_);
+        Wrench6d wrench = conversions::FromMsg(latest_wrench_);
         raw_sensor_avg += wrench;
         samples.push_back(CalibrationSample{wrench, X_TB, pose_idx});
 
@@ -187,7 +177,7 @@ Status WrenchCalibrationNode::ComputeCalibrationParameters() {
     double alpha = std::atan2(-f_gravity_B.y() * std::cos(beta), f_gravity_B.z());
 
     calibration_params_ = {
-        p_SCoM_S, f_gravity_B, f_bias_S, t_bias_S, R_SE
+        R_SE, f_gravity_B, f_bias_S, t_bias_S, p_SCoM_S
     };
 
     RCLCPP_INFO(get_logger(), "Calibration complete:");
@@ -217,13 +207,13 @@ Status WrenchCalibrationNode::SaveCalibrationToYaml() {
     out << YAML::BeginMap;
 
     out << YAML::Key << "tool_center_of_mass" << YAML::Value << YAML::Flow
-        << std::vector<double>{calibration_params_.p_SCoM_S.x(), calibration_params_.p_SCoM_S.y(), calibration_params_.p_SCoM_S.z()};
+        << std::vector<double>{calibration_params_.p_CoM_s.x(), calibration_params_.p_CoM_s.y(), calibration_params_.p_CoM_s.z()};
     out << YAML::Key << "gravity_in_base_frame" << YAML::Value << YAML::Flow
-        << std::vector<double>{calibration_params_.f_gravity_B.x(), calibration_params_.f_gravity_B.y(), calibration_params_.f_gravity_B.z()};
+        << std::vector<double>{calibration_params_.f_grav_b.x(), calibration_params_.f_grav_b.y(), calibration_params_.f_grav_b.z()};
     out << YAML::Key << "force_bias" << YAML::Value << YAML::Flow
-        << std::vector<double>{calibration_params_.f_bias_S.x(), calibration_params_.f_bias_S.y(), calibration_params_.f_bias_S.z()};
+        << std::vector<double>{calibration_params_.f_bias_s.x(), calibration_params_.f_bias_s.y(), calibration_params_.f_bias_s.z()};
     out << YAML::Key << "torque_bias" << YAML::Value << YAML::Flow
-        << std::vector<double>{calibration_params_.t_bias_S.x(), calibration_params_.t_bias_S.y(), calibration_params_.t_bias_S.z()};
+        << std::vector<double>{calibration_params_.t_bias_s.x(), calibration_params_.t_bias_s.y(), calibration_params_.t_bias_s.z()};
 
     out << YAML::Key << "rotation_sensor_to_endeffector" << YAML::Value << YAML::BeginSeq;
     for (int i = 0; i < 3; ++i) {
