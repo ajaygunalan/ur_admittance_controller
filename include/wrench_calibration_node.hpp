@@ -45,20 +45,18 @@ struct CalibrationResult {
     double tool_mass;
 };
 
-namespace constants {
-    constexpr int NUM_POSES = 32;
-    constexpr int SAMPLES_PER_POSE = 10;
-    constexpr double GRAVITY = 9.81;
-    
-    constexpr auto TRAJECTORY_DURATION = std::chrono::seconds(3);
-    constexpr auto SAMPLE_DELAY = std::chrono::milliseconds(100);
-    constexpr auto TIMEOUT = std::chrono::seconds(5);
-    
-    inline const std::array<std::string, 6> JOINT_NAMES{{
-        "shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
-        "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"
-    }};
-}
+constexpr int NUM_POSES = 32;
+constexpr int SAMPLES_PER_POSE = 10;
+constexpr double GRAVITY = 9.81;
+
+constexpr auto TRAJECTORY_DURATION = std::chrono::seconds(3);
+constexpr auto SAMPLE_DELAY = std::chrono::milliseconds(100);
+constexpr auto TIMEOUT = std::chrono::seconds(5);
+
+inline const std::array<std::string, 6> JOINT_NAMES{{
+    "shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+    "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"
+}};
 
 CalibrationPose computeCalibrationPose(const JointConfiguration& current, int index);
 

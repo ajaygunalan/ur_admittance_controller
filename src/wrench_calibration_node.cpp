@@ -226,11 +226,9 @@ std::vector<CalibrationSample> collect_calibration_samples(rclcpp::Node::SharedP
 
 int main(int argc, char** argv) {
     using namespace ur_admittance_controller;
-    using namespace ur_admittance_controller::constants;
     
     rclcpp::init(argc, argv);
     rclcpp::Node::SharedPtr node = rclcpp::Node::make_shared("wrench_calibration_node");
-    
     RCLCPP_INFO(node->get_logger(), "Initializing calibration system...");
     
     JointConfiguration current_joints = read_current_joints(node);
