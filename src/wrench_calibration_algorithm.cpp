@@ -1,10 +1,13 @@
 // LROM algorithm implementation - Yu et al. IEEE Sensors Journal 2022
-#include "wrench_calibration_algorithm.hpp"
+#include "wrench_calibration_node.hpp"
 
 namespace ur_admittance_controller {
 
 // LROM constrained least squares (Eq. 24-34 in Yu et al.)
-Vector3d estimateGravitationalForceInBaseFrame(
+// Internal helper functions
+namespace {
+
+Eigen::Vector3d estimate_gravity(
     const std::vector<CalibrationSample>& samples)
 {
     if (samples.size() < 6) {
@@ -20,11 +23,11 @@ Vector3d estimateGravitationalForceInBaseFrame(
 
     for (size_t i = 0; i < n; ++i) {
         const size_t row_offset = 3 * i;
-        const auto& force = samples[i].F_S_S_raw.head<3>();
-        const auto& R_TB = samples[i].X_TB.rotation();
+        const auto& force = samples[i].wrench_raw.head<3>();
+        const auto& R_TB = samples[i].transform_TB.rotation();
 
         A6.block<3, 3>(row_offset, 0) = -R_TB;
-        A6.block<3, 3>(row_offset, 3) = -Matrix3d::Identity();
+        A6.block<3, 3>(row_offset, 3) = -Eigen::Matrix3d::Identity();
 
         for (int row = 0; row < 3; ++row) {
             for (int col = 0; col < 3; ++col) {
@@ -63,50 +66,50 @@ Vector3d estimateGravitationalForceInBaseFrame(
     const auto x6 = -(A6_inv * A6.transpose() * A9 * I9) * y_opt;
 
     // Ensure downward gravity (Eq. 34)
-    const Vector3d gravity = x6(2) < 0 ? x6.head<3>() : Vector3d(-x6.head<3>());
+    const Eigen::Vector3d gravity = x6(2) < 0 ? x6.head<3>() : Eigen::Vector3d(-x6.head<3>());
 
     return gravity;
 }
 
 // Procrustes alignment (Eq. 37-39)
-std::pair<Matrix3d, Vector3d> estimateSensorRotationAndForceBias(
+std::pair<Eigen::Matrix3d, Eigen::Vector3d> estimate_sensor_params(
     const std::vector<CalibrationSample>& samples,
-    const Vector3d& gravity_in_base)
+    const Eigen::Vector3d& gravity_in_base)
 {
     const size_t n = samples.size();
 
     // Compute averages (Eq. 37)
-    Vector3d force_readings_avg = Vector3d::Zero();
-    Matrix3d rotation_TB_avg = Matrix3d::Zero();
+    Eigen::Vector3d force_readings_avg = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d rotation_TB_avg = Eigen::Matrix3d::Zero();
 
     for (const auto& sample : samples) {
-        force_readings_avg += sample.F_S_S_raw.head<3>();
-        rotation_TB_avg += sample.X_TB.rotation();
+        force_readings_avg += sample.wrench_raw.head<3>();
+        rotation_TB_avg += sample.transform_TB.rotation();
     }
     force_readings_avg /= static_cast<double>(n);
     rotation_TB_avg /= static_cast<double>(n);
 
     // Build D matrix (Eq. 38)
-    Matrix3d D = Matrix3d::Zero();
+    Eigen::Matrix3d D = Eigen::Matrix3d::Zero();
     for (const auto& sample : samples) {
-        const Vector3d force_centered = sample.F_S_S_raw.head<3>() - force_readings_avg;
-        const Matrix3d rotation_centered = sample.X_TB.rotation() - rotation_TB_avg;
+        const Eigen::Vector3d force_centered = sample.wrench_raw.head<3>() - force_readings_avg;
+        const Eigen::Matrix3d rotation_centered = sample.transform_TB.rotation() - rotation_TB_avg;
         D += rotation_centered * gravity_in_base * force_centered.transpose();
     }
 
     // SVD solution for rotation
-    Eigen::JacobiSVD<Matrix3d> svd(D, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    Eigen::JacobiSVD<Eigen::Matrix3d> svd(D, Eigen::ComputeFullU | Eigen::ComputeFullV);
 
-    Matrix3d correction = Matrix3d::Identity();
+    Eigen::Matrix3d correction = Eigen::Matrix3d::Identity();
     const double det = (svd.matrixU() * svd.matrixV().transpose()).determinant();
     if (det < 0) {
         correction(2, 2) = -1;
     }
 
-    const Matrix3d R_SE = svd.matrixU() * correction * svd.matrixV().transpose();
+    const Eigen::Matrix3d R_SE = svd.matrixU() * correction * svd.matrixV().transpose();
 
     // Force bias (Eq. 39)
-    const Vector3d force_bias =
+    const Eigen::Vector3d force_bias =
         force_readings_avg - (R_SE * rotation_TB_avg * gravity_in_base);
 
     return std::make_pair(R_SE, force_bias);
@@ -114,9 +117,9 @@ std::pair<Matrix3d, Vector3d> estimateSensorRotationAndForceBias(
 
 
 // Least squares for COM and torque bias (Eq. 43-45)
-std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
+std::pair<Eigen::Vector3d, Eigen::Vector3d> estimate_com_and_torque(
     const std::vector<CalibrationSample>& samples,
-    const Vector3d& force_bias)
+    const Eigen::Vector3d& force_bias)
 {
     const size_t n = samples.size();
     const size_t rows = 3 * n;
@@ -129,19 +132,19 @@ std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
         const auto& sample = samples[i];
         const size_t row_offset = 3 * i;
 
-        const Vector3d force = sample.F_S_S_raw.head<3>();
-        const Vector3d torque = sample.F_S_S_raw.tail<3>();
+        const Eigen::Vector3d force = sample.wrench_raw.head<3>();
+        const Eigen::Vector3d torque = sample.wrench_raw.tail<3>();
 
         // Compensated force (Eq. 43)
-        const Vector3d force_compensated = -(force - force_bias);
+        const Eigen::Vector3d force_compensated = -(force - force_bias);
 
         // Skew-symmetric matrix
-        Matrix3d skew_matrix;
+        Eigen::Matrix3d skew_matrix;
         skew_matrix <<           0, -force_compensated(2),  force_compensated(1),
                        force_compensated(2),           0, -force_compensated(0),
                       -force_compensated(1),  force_compensated(0),           0;
         C.block<3, 3>(row_offset, 0) = skew_matrix;
-        C.block<3, 3>(row_offset, 3) = Matrix3d::Identity();
+        C.block<3, 3>(row_offset, 3) = Eigen::Matrix3d::Identity();
 
         b.segment<3>(row_offset) = torque;
     }
@@ -162,32 +165,33 @@ std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
     return std::make_pair(solution.head<3>(), solution.tail<3>());
 }
 
-// Tait-Bryan angles (Eq. 46-48)
-Matrix3d estimateRobotInstallationBias(const Vector3d& gravity_in_base)
-{
-    const double fbx = gravity_in_base(0);
-    const double fby = gravity_in_base(1);
-    const double fbz = gravity_in_base(2);
+} // anonymous namespace
 
-    // Compute angles (Eq. 48)
-    const double beta = std::atan2(fbx, fbz);
-    const double alpha = std::atan2(-fby * std::cos(beta), fbz);
+// ============================================================================
+// Main Calibration Pipeline
+// ============================================================================
 
-    // Build rotation matrix R_BG = Rz(0)*Ry(β)*Rx(α)
-    Matrix3d R_BG;
-    R_BG << std::cos(beta), std::sin(alpha) * std::sin(beta), std::cos(alpha) * std::sin(beta),
-            0.0, std::cos(alpha), -std::sin(alpha),
-            -std::sin(beta), std::sin(alpha) * std::cos(beta), std::cos(alpha) * std::cos(beta);
-
-    return R_BG;
-}
-
-// Extracts tool mass: mg = ||Fb||
-inline constexpr double kStandardGravity = 9.80665;  // CODATA standard [m/s²]
-
-double extractToolMass(const Vector3d& gravity_in_base)
-{
-    return gravity_in_base.norm() / kStandardGravity;
+CalibrationResult compute_calibration(const std::vector<CalibrationSample>& samples) {
+    // Step 1: Estimate gravitational force in base frame
+    auto gravity = estimate_gravity(samples);
+    
+    // Step 2: Estimate sensor rotation and force bias
+    auto [R_SE, force_bias] = estimate_sensor_params(samples, gravity);
+    
+    // Step 3: Estimate center of mass and torque bias
+    auto [com, torque_bias] = estimate_com_and_torque(samples, force_bias);
+    
+    // Step 4: Calculate tool mass
+    double tool_mass = gravity.norm() / constants::GRAVITY;
+    
+    return CalibrationResult{
+        R_SE,
+        gravity,
+        force_bias,
+        torque_bias,
+        com,
+        tool_mass
+    };
 }
 
 } // namespace ur_admittance_controller

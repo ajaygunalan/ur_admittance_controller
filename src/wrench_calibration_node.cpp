@@ -3,6 +3,12 @@
 
 namespace ur_admittance_controller {
 
+// Frame definitions (missing from header)
+namespace frames {
+    constexpr const char* ROBOT_BASE_FRAME = "base_link";
+    constexpr const char* ROBOT_TOOL_FRAME = "tool0";
+}
+
 // No local conversion helpers needed - using from header
 
 WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node"),
