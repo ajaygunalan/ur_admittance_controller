@@ -11,25 +11,23 @@
 #include <Eigen/Geometry>
 #include <Eigen/SVD>
 
-#include <tl/expected.hpp>
-
 #include "wrench_calibration_node.hpp"
 
 namespace ur_admittance_controller {
 
-Result<Force3d> estimateGravitationalForceInBaseFrame(
+Force3d estimateGravitationalForceInBaseFrame(
     const std::vector<CalibrationSample>& samples);
 
-Result<std::pair<Matrix3d, Force3d>> estimateSensorRotationAndForceBias(
+std::pair<Matrix3d, Force3d> estimateSensorRotationAndForceBias(
     const std::vector<CalibrationSample>& samples,
     const Force3d& f_gravity_B);
 
-Result<std::pair<Vector3d, Torque3d>> estimateCOMAndTorqueBias(
+std::pair<Vector3d, Torque3d> estimateCOMAndTorqueBias(
     const std::vector<CalibrationSample>& samples,
     const Force3d& f_bias_S);
 
-Result<Matrix3d> estimateRobotInstallationBias(const Force3d& f_gravity_B);
+Matrix3d estimateRobotInstallationBias(const Force3d& f_gravity_B);
 
-Result<double> extractToolMass(const Force3d& f_gravity_B);
+double extractToolMass(const Force3d& f_gravity_B);
 
 }

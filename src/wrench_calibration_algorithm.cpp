@@ -4,12 +4,11 @@
 namespace ur_admittance_controller {
 
 // LROM constrained least squares (Eq. 24-34 in Yu et al.)
-Result<Vector3d> estimateGravitationalForceInBaseFrame(
+Vector3d estimateGravitationalForceInBaseFrame(
     const std::vector<CalibrationSample>& samples)
 {
     if (samples.size() < 6) {
-        return tl::unexpected(MakeError(ErrorCode::kInvalidConfiguration,
-                                       "LROM requires at least 6 samples"));
+        throw std::runtime_error("LROM requires at least 6 samples");
     }
 
     const size_t n = samples.size();
@@ -42,8 +41,7 @@ Result<Vector3d> estimateGravitationalForceInBaseFrame(
     double cond_A6 = svd_A6.singularValues()(0) / svd_A6.singularValues()(svd_A6.singularValues().size()-1);
 
     if (cond_A6 > 1e8) {
-        return tl::unexpected(MakeError(ErrorCode::kCalibrationFailed,
-            "Calibration matrix ill-conditioned. Need more diverse poses."));
+        throw std::runtime_error("Calibration matrix ill-conditioned. Need more diverse poses.");
     }
 
     const auto A6_inv = gram_A6.inverse();
@@ -71,7 +69,7 @@ Result<Vector3d> estimateGravitationalForceInBaseFrame(
 }
 
 // Procrustes alignment (Eq. 37-39)
-Result<std::pair<Matrix3d, Vector3d>> estimateSensorRotationAndForceBias(
+std::pair<Matrix3d, Vector3d> estimateSensorRotationAndForceBias(
     const std::vector<CalibrationSample>& samples,
     const Vector3d& gravity_in_base)
 {
@@ -116,7 +114,7 @@ Result<std::pair<Matrix3d, Vector3d>> estimateSensorRotationAndForceBias(
 
 
 // Least squares for COM and torque bias (Eq. 43-45)
-Result<std::pair<Vector3d, Vector3d>> estimateCOMAndTorqueBias(
+std::pair<Vector3d, Vector3d> estimateCOMAndTorqueBias(
     const std::vector<CalibrationSample>& samples,
     const Vector3d& force_bias)
 {
@@ -156,8 +154,7 @@ Result<std::pair<Vector3d, Vector3d>> estimateCOMAndTorqueBias(
     double cond_CtC = svd_CtC.singularValues()(0) / svd_CtC.singularValues()(svd_CtC.singularValues().size()-1);
 
     if (cond_CtC > 1e8) {
-        return tl::unexpected(MakeError(ErrorCode::kCalibrationFailed,
-            "Torque calibration matrix ill-conditioned."));
+        throw std::runtime_error("Torque calibration matrix ill-conditioned.");
     }
 
     const Eigen::VectorXd solution = CtC.inverse() * Ctb;
@@ -166,7 +163,7 @@ Result<std::pair<Vector3d, Vector3d>> estimateCOMAndTorqueBias(
 }
 
 // Tait-Bryan angles (Eq. 46-48)
-Result<Matrix3d> estimateRobotInstallationBias(const Vector3d& gravity_in_base)
+Matrix3d estimateRobotInstallationBias(const Vector3d& gravity_in_base)
 {
     const double fbx = gravity_in_base(0);
     const double fby = gravity_in_base(1);
@@ -188,7 +185,7 @@ Result<Matrix3d> estimateRobotInstallationBias(const Vector3d& gravity_in_base)
 // Extracts tool mass: mg = ||Fb||
 inline constexpr double kStandardGravity = 9.80665;  // CODATA standard [m/s²]
 
-Result<double> extractToolMass(const Vector3d& gravity_in_base)
+double extractToolMass(const Vector3d& gravity_in_base)
 {
     return gravity_in_base.norm() / kStandardGravity;
 }

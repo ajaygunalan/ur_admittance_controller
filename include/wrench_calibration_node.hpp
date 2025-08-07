@@ -23,7 +23,6 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_eigen/tf2_eigen.hpp>
-#include <tl/expected.hpp>
 #include <yaml-cpp/yaml.h>
 
 namespace ur_admittance_controller {
@@ -60,30 +59,6 @@ struct CalibrationSample {
     size_t pose_index;
 };
 
-enum class ErrorCode {
-  kFileNotFound,
-  kInvalidConfiguration,
-  kKinematicsInitFailed,
-  kCalibrationFailed,
-  kIKSolverFailed,
-  kTrajectoryExecutionFailed,
-  kTimeout,
-  kCommunicationTimeout
-};
-
-struct Error {
-  ErrorCode code;
-  std::string message;
-};
-
-template<typename T>
-using Result = tl::expected<T, Error>;
-
-using Status = Result<void>;
-
-inline Error MakeError(ErrorCode code, const std::string& msg) {
-  return {code, msg};
-}
 
 namespace constants {
 
@@ -207,16 +182,16 @@ public:
 
 
     WrenchCalibrationNode();
-    Status Initialize();
-    Status ExecuteCalibrationSequence();
-    Status ComputeCalibrationParameters();
+    void Initialize();
+    void ExecuteCalibrationSequence();
+    void ComputeCalibrationParameters();
 
 private:
     void UpdateJointPositions(const JointStateMsg::ConstSharedPtr& msg);
     void CollectSamplesAtCurrentPose(std::vector<CalibrationSample>& samples, size_t pose_idx);
     void GenerateCalibrationPoses();
-    Status MoveToJointPosition(const JointAngles& target_joints);
-    Status SaveCalibrationToYaml();
+    void MoveToJointPosition(const JointAngles& target_joints);
+    void SaveCalibrationToYaml();
 
     TrajectoryClient::SharedPtr trajectory_client_;
     rclcpp::Subscription<JointStateMsg>::SharedPtr joint_state_sub_;
@@ -241,19 +216,19 @@ private:
     std::string robot_tool_frame_;
 };
 
-Result<Force3d> estimateGravitationalForceInBaseFrame(
+Force3d estimateGravitationalForceInBaseFrame(
     const std::vector<CalibrationSample>& samples);
 
-Result<std::pair<Matrix3d, Force3d>> estimateSensorRotationAndForceBias(
+std::pair<Matrix3d, Force3d> estimateSensorRotationAndForceBias(
     const std::vector<CalibrationSample>& samples,
     const Force3d& f_gravity_B);
 
-Result<std::pair<Vector3d, Torque3d>> estimateCOMAndTorqueBias(
+std::pair<Vector3d, Torque3d> estimateCOMAndTorqueBias(
     const std::vector<CalibrationSample>& samples,
     const Force3d& f_bias_S);
 
-Result<Matrix3d> estimateRobotInstallationBias(const Force3d& f_gravity_B);
+Matrix3d estimateRobotInstallationBias(const Force3d& f_gravity_B);
 
-Result<double> extractToolMass(const Force3d& f_gravity_B);
+double extractToolMass(const Force3d& f_gravity_B);
 
 }

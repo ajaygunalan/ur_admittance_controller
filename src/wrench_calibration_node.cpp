@@ -23,31 +23,21 @@ WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node")
     RCLCPP_INFO(get_logger(), "Calibration node ready");
 }
 
-Status WrenchCalibrationNode::Initialize() {
+void WrenchCalibrationNode::Initialize() {
     RCLCPP_INFO(get_logger(), "Initializing calibration system...");
 
-    if (!trajectory_client_->wait_for_action_server(constants::DEFAULT_TIMEOUT)) {
-        return tl::unexpected(MakeError(ErrorCode::kCommunicationTimeout,
-                                       "Trajectory action server not available"));
-    }
+    trajectory_client_->wait_for_action_server(constants::DEFAULT_TIMEOUT);
 
     sensor_msgs::msg::JointState joint_msg;
-    if (!rclcpp::wait_for_message(joint_msg, shared_from_this(), "/joint_states", constants::DEFAULT_TIMEOUT)) {
-        return tl::unexpected(MakeError(ErrorCode::kCommunicationTimeout,
-                                       "Joint states not available"));
-    }
+    rclcpp::wait_for_message(joint_msg, shared_from_this(), "/joint_states", constants::DEFAULT_TIMEOUT);
     UpdateJointPositions(std::make_shared<sensor_msgs::msg::JointState>(joint_msg));
 
     geometry_msgs::msg::WrenchStamped wrench_msg;
-    if (!rclcpp::wait_for_message(wrench_msg, shared_from_this(), "/netft/raw_sensor", constants::DEFAULT_TIMEOUT)) {
-        return tl::unexpected(MakeError(ErrorCode::kCommunicationTimeout,
-                                       "F/T sensor data not available"));
-    }
+    rclcpp::wait_for_message(wrench_msg, shared_from_this(), "/netft/raw_sensor", constants::DEFAULT_TIMEOUT);
 
     GenerateCalibrationPoses();
 
     RCLCPP_INFO(get_logger(), "Ready with %zu poses", calibration_poses_.size());
-    return {};
 }
 
 void WrenchCalibrationNode::GenerateCalibrationPoses() {
@@ -76,7 +66,7 @@ void WrenchCalibrationNode::UpdateJointPositions(const JointStateMsg::ConstShare
 }
 
 
-Status WrenchCalibrationNode::ExecuteCalibrationSequence() {
+void WrenchCalibrationNode::ExecuteCalibrationSequence() {
     calibration_samples_.clear();
 
     RCLCPP_INFO(get_logger(), "Starting %zu-pose calibration", calibration_poses_.size());
@@ -84,25 +74,19 @@ Status WrenchCalibrationNode::ExecuteCalibrationSequence() {
     for (size_t i = 0; i < calibration_poses_.size(); ++i) {
         RCLCPP_INFO(get_logger(), "Pose %zu/%zu", i + 1, calibration_poses_.size());
 
-        auto move_status = MoveToJointPosition(calibration_poses_[i]);
-        if (!move_status) {
-            return tl::unexpected(MakeError(ErrorCode::kTrajectoryExecutionFailed,
-                                           "Failed at pose " + std::to_string(i + 1)));
-        }
-
+        MoveToJointPosition(calibration_poses_[i]);
         CollectSamplesAtCurrentPose(calibration_samples_, i);
 
-        if (i > 0 && !MoveToJointPosition(calibration_poses_[0])) {
-            RCLCPP_WARN(get_logger(), "Failed to return home");
+        if (i > 0) {
+            MoveToJointPosition(calibration_poses_[0]);
         }
     }
 
     RCLCPP_INFO(get_logger(), "Collected %zu samples", calibration_samples_.size());
-    return {};
 }
 
 
-Status WrenchCalibrationNode::MoveToJointPosition(const JointAngles& target_joints) {
+void WrenchCalibrationNode::MoveToJointPosition(const JointAngles& target_joints) {
     control_msgs::action::FollowJointTrajectory::Goal goal;
     goal.trajectory.joint_names = joint_names_;
     goal.trajectory.points.resize(1);
@@ -110,35 +94,11 @@ Status WrenchCalibrationNode::MoveToJointPosition(const JointAngles& target_join
     goal.trajectory.points[0].time_from_start = rclcpp::Duration::from_seconds(constants::CALIBRATION_TRAJECTORY_DURATION);
 
     auto goal_future = trajectory_client_->async_send_goal(goal);
-
-    if (rclcpp::spin_until_future_complete(get_node_base_interface(), goal_future) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-        return tl::unexpected(MakeError(ErrorCode::kTimeout, "Goal acceptance timeout"));
-    }
+    rclcpp::spin_until_future_complete(get_node_base_interface(), goal_future);
 
     auto goal_handle = goal_future.get();
-    if (!goal_handle) {
-        return tl::unexpected(MakeError(ErrorCode::kTrajectoryExecutionFailed, "Goal rejected"));
-    }
-
     auto result_future = trajectory_client_->async_get_result(goal_handle);
-    if (rclcpp::spin_until_future_complete(get_node_base_interface(), result_future) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-        return tl::unexpected(MakeError(ErrorCode::kTimeout, "Execution timeout"));
-    }
-
-    auto result = result_future.get();
-    if (result.code != rclcpp_action::ResultCode::SUCCEEDED) {
-        return tl::unexpected(MakeError(ErrorCode::kTrajectoryExecutionFailed,
-                                       "Failed: " + std::to_string(static_cast<int>(result.code))));
-    }
-
-    if (result.result->error_code != control_msgs::action::FollowJointTrajectory::Result::SUCCESSFUL) {
-        return tl::unexpected(MakeError(ErrorCode::kTrajectoryExecutionFailed,
-                                       "Error: " + std::to_string(result.result->error_code)));
-    }
-
-    return {};
+    rclcpp::spin_until_future_complete(get_node_base_interface(), result_future);
 }
 
 void WrenchCalibrationNode::CollectSamplesAtCurrentPose(std::vector<CalibrationSample>& samples, size_t pose_idx) {
@@ -166,12 +126,12 @@ void WrenchCalibrationNode::CollectSamplesAtCurrentPose(std::vector<CalibrationS
 }
 
 
-Status WrenchCalibrationNode::ComputeCalibrationParameters() {
+void WrenchCalibrationNode::ComputeCalibrationParameters() {
     RCLCPP_INFO(get_logger(), "Processing %zu samples", calibration_samples_.size());
 
-    auto f_gravity_B = ur_admittance_controller::estimateGravitationalForceInBaseFrame(calibration_samples_).value();
-    auto [R_SE, f_bias_S] = ur_admittance_controller::estimateSensorRotationAndForceBias(calibration_samples_, f_gravity_B).value();
-    auto [p_SCoM_S, t_bias_S] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, f_bias_S).value();
+    auto f_gravity_B = ur_admittance_controller::estimateGravitationalForceInBaseFrame(calibration_samples_);
+    auto [R_SE, f_bias_S] = ur_admittance_controller::estimateSensorRotationAndForceBias(calibration_samples_, f_gravity_B);
+    auto [p_SCoM_S, t_bias_S] = ur_admittance_controller::estimateCOMAndTorqueBias(calibration_samples_, f_bias_S);
 
     double beta = std::atan2(f_gravity_B.x(), f_gravity_B.z());
     double alpha = std::atan2(-f_gravity_B.y() * std::cos(beta), f_gravity_B.z());
@@ -186,14 +146,13 @@ Status WrenchCalibrationNode::ComputeCalibrationParameters() {
     RCLCPP_INFO(get_logger(), "  Installation: α=%.1f°, β=%.1f°", alpha * 180/M_PI, beta * 180/M_PI);
 
     calibration_computed_ = true;
-    return SaveCalibrationToYaml();
+    SaveCalibrationToYaml();
 }
 
 
-Status WrenchCalibrationNode::SaveCalibrationToYaml() {
+void WrenchCalibrationNode::SaveCalibrationToYaml() {
     if (!calibration_computed_) {
-        return tl::unexpected(MakeError(ErrorCode::kInvalidConfiguration,
-                                       "No calibration data to save"));
+        throw std::runtime_error("No calibration data to save");
     }
 
     std::string workspace = std::getenv("ROS_WORKSPACE") ?
@@ -223,13 +182,9 @@ Status WrenchCalibrationNode::SaveCalibrationToYaml() {
     out << YAML::EndMap;
 
     std::ofstream file(config_file.string());
-    if (!file || !(file << out.c_str())) {
-        return tl::unexpected(MakeError(ErrorCode::kFileNotFound,
-                                       fmt::format("Failed to write {}", config_file.string())));
-    }
+    file << out.c_str();
 
     RCLCPP_INFO(get_logger(), "Saved to %s", config_file.c_str());
-    return {};
 }
 
 }
@@ -241,20 +196,9 @@ int main(int argc, char** argv) {
 
     auto node = std::make_shared<ur_admittance_controller::WrenchCalibrationNode>();
 
-    if (auto status = node->Initialize(); !status) {
-        RCLCPP_ERROR(node->get_logger(), "Initialization failed: %s", status.error().message.c_str());
-        return 1;
-    }
-
-    if (auto status = node->ExecuteCalibrationSequence(); !status) {
-        RCLCPP_ERROR(node->get_logger(), "Data collection failed: %s", status.error().message.c_str());
-        return 1;
-    }
-
-    if (auto status = node->ComputeCalibrationParameters(); !status) {
-        RCLCPP_ERROR(node->get_logger(), "Computation failed: %s", status.error().message.c_str());
-        return 1;
-    }
+    node->Initialize();
+    node->ExecuteCalibrationSequence();
+    node->ComputeCalibrationParameters();
 
     RCLCPP_INFO(node->get_logger(), "Calibration completed");
     return 0;
