@@ -4,7 +4,7 @@ using namespace ur_admittance_controller;
 
 namespace ur_admittance_controller {
 
-Eigen::Vector3d estimateGravitationalForceInBaseFrame(const std::vector<CalibrationSample>& samples) {
+Eigen::Vector3d WrenchCalibrationNode::estimateGravitationalForceInBaseFrame(const std::vector<CalibrationSample>& samples) {
     const size_t n = samples.size();
     const size_t rows = 3 * n;
 
@@ -50,7 +50,7 @@ Eigen::Vector3d estimateGravitationalForceInBaseFrame(const std::vector<Calibrat
     return gravity;
 }
 
-std::pair<Eigen::Matrix3d, Eigen::Vector3d> estimateSensorRotationAndForceBias(const std::vector<CalibrationSample>& samples, const Eigen::Vector3d& gravity_in_base) {
+std::pair<Eigen::Matrix3d, Eigen::Vector3d> WrenchCalibrationNode::estimateSensorRotationAndForceBias(const std::vector<CalibrationSample>& samples, const Eigen::Vector3d& gravity_in_base) {
     const size_t n = samples.size();
 
     Eigen::Vector3d force_readings_avg = Eigen::Vector3d::Zero();
@@ -86,7 +86,7 @@ std::pair<Eigen::Matrix3d, Eigen::Vector3d> estimateSensorRotationAndForceBias(c
     return std::make_pair(R_SE, force_bias);
 }
 
-std::pair<Eigen::Vector3d, Eigen::Vector3d> estimateCOMAndTorqueBias(const std::vector<CalibrationSample>& samples, const Eigen::Vector3d& force_bias) {
+std::pair<Eigen::Vector3d, Eigen::Vector3d> WrenchCalibrationNode::estimateCOMAndTorqueBias(const std::vector<CalibrationSample>& samples, const Eigen::Vector3d& force_bias) {
     const size_t n = samples.size();
     const size_t rows = 3 * n;
 
