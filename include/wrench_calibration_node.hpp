@@ -8,6 +8,7 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
+#include <optional>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -22,6 +23,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <yaml-cpp/yaml.h>
+#include <tl/expected.hpp>
 
 namespace ur_admittance_controller {
 
@@ -85,13 +87,22 @@ public:
         const Eigen::Vector3d& force_bias);
     static void save_calibration_result(const CalibrationResult& result);
     
+    // Pure helper functions
+    static inline Eigen::Matrix3d makeSkewSymmetric(const Eigen::Vector3d& v) {
+        Eigen::Matrix3d skew;
+        skew <<     0, -v(2),  v(1),
+                 v(2),     0, -v(0),
+                -v(1),  v(0),     0;
+        return skew;
+    }
+    
     // Combined logging and saving
     void log_and_save_result(const CalibrationResult& result);
     
 private:
     // Helper methods
     void executeTrajectory(const CalibrationPose& target_pose);
-    CalibrationSample collectSingleSample(size_t pose_index);
+    tl::expected<CalibrationSample, std::string> collectSingleSample(size_t pose_index);
     
     // ROS interfaces
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
@@ -100,8 +111,7 @@ private:
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     
     // Data streams
-    geometry_msgs::msg::WrenchStamped latest_wrench_;
-    bool has_wrench_ = false;
+    std::optional<geometry_msgs::msg::WrenchStamped> latest_wrench_;
 };
 
 } // namespace ur_admittance_controller

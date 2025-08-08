@@ -14,7 +14,6 @@ WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node")
         "/netft/raw_sensor", 10,
         [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) {
             latest_wrench_ = *msg;
-            has_wrench_ = true;
         });
     
     // Setup TF
@@ -39,12 +38,12 @@ JointConfiguration WrenchCalibrationNode::read_current_joints() {
     rclcpp::wait_for_message(joint_msg, shared_from_this(), "/joint_states", TIMEOUT);
     
     JointConfiguration config;
-    std::transform(JOINT_NAMES.begin(), 
-                   JOINT_NAMES.end(),
-                   config.values.begin(),
+    std::transform(JOINT_NAMES.begin(), JOINT_NAMES.end(), config.values.begin(),
                    [&joint_msg](const std::string& name) {
                        auto it = std::find(joint_msg.name.begin(), joint_msg.name.end(), name);
-                       return joint_msg.position[std::distance(joint_msg.name.begin(), it)];
+                       return it != joint_msg.name.end() 
+                           ? joint_msg.position[std::distance(joint_msg.name.begin(), it)]
+                           : 0.0;
                    });
     
     return config;
@@ -54,7 +53,7 @@ std::vector<CalibrationSample> WrenchCalibrationNode::collect_calibration_sample
     const std::vector<CalibrationPose>& poses) {
     
     // Wait for first wrench message
-    while (!has_wrench_ && rclcpp::ok()) {
+    while (!latest_wrench_.has_value() && rclcpp::ok()) {
         rclcpp::spin_some(shared_from_this());
         rclcpp::sleep_for(std::chrono::milliseconds(100));
     }
@@ -70,7 +69,7 @@ std::vector<CalibrationSample> WrenchCalibrationNode::collect_calibration_sample
         for (int sample = 0; sample < SAMPLES_PER_POSE; ++sample) {
             rclcpp::spin_some(shared_from_this());
             
-            if (has_wrench_) {
+            if (latest_wrench_.has_value()) {
                 try {
                     samples.push_back(collectSingleSample(pose_idx));
                 } catch (const tf2::TransformException& ex) {
@@ -117,21 +116,16 @@ void WrenchCalibrationNode::executeTrajectory(const CalibrationPose& target_pose
 }
 
 CalibrationSample WrenchCalibrationNode::collectSingleSample(size_t pose_index) {
-    geometry_msgs::msg::TransformStamped transform;
-    try {
-        transform = tf_buffer_->lookupTransform("base_link", "tool0", tf2::TimePointZero);
-    } catch (const tf2::TransformException& ex) {
-        RCLCPP_ERROR(get_logger(), "Transform error: %s", ex.what());
-        throw;
-    }
+    auto transform = tf_buffer_->lookupTransform("base_link", "tool0", tf2::TimePointZero);
     
     CalibrationSample sample;
+    auto& wrench = latest_wrench_.value().wrench;
     sample.wrench_raw = (Eigen::Matrix<double, 6, 1>() << 
-        latest_wrench_.wrench.force.x,  latest_wrench_.wrench.force.y,  latest_wrench_.wrench.force.z,
-        latest_wrench_.wrench.torque.x, latest_wrench_.wrench.torque.y, latest_wrench_.wrench.torque.z).finished();
+        wrench.force.x,  wrench.force.y,  wrench.force.z,
+        wrench.torque.x, wrench.torque.y, wrench.torque.z
+    ).finished();
     sample.transform_TB = tf2::transformToEigen(transform);
     sample.pose_index = pose_index;
-    
     return sample;
 }
 
