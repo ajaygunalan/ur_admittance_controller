@@ -69,16 +69,16 @@ std::vector<CalibrationSample> WrenchCalibrationNode::collect_calibration_sample
         for (int sample = 0; sample < SAMPLES_PER_POSE; ++sample) {
             rclcpp::spin_some(shared_from_this());
             
-            if (latest_wrench_.has_value()) {
-                try {
-                    samples.push_back(collectSingleSample(pose_idx));
-                } catch (const tf2::TransformException& ex) {
-                    RCLCPP_WARN(get_logger(), "Sample %d at pose %zu failed: %s", 
-                                sample+1, pose_idx+1, ex.what());
-                }
-            } else {
-                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
-                                      "No wrench data available");
+            // Use monadic chaining instead of manual if-else
+            auto result = mbind(collectSingleSample(pose_idx),
+                [&](CalibrationSample s) { 
+                    samples.push_back(s); 
+                    return tl::expected<void, std::string>{}; 
+                });
+            
+            if (!result) {
+                RCLCPP_WARN(get_logger(), "Sample %d at pose %zu failed: %s", 
+                            sample+1, pose_idx+1, result.error().c_str());
             }
             rclcpp::sleep_for(SAMPLE_DELAY);
         }
@@ -97,41 +97,52 @@ void WrenchCalibrationNode::executeTrajectory(const CalibrationPose& target_pose
     goal.trajectory.points[0].positions = {target_pose.joints.begin(), target_pose.joints.end()};
     goal.trajectory.points[0].time_from_start = rclcpp::Duration(TRAJECTORY_DURATION);
     
-    // Send goal and check acceptance
+    // Send goal
     auto goal_handle_future = trajectory_client_->async_send_goal(goal);
-    if (rclcpp::spin_until_future_complete(shared_from_this(), goal_handle_future) != 
-        rclcpp::FutureReturnCode::SUCCESS || !goal_handle_future.get()) {
-        RCLCPP_ERROR(get_logger(), "Failed to send trajectory goal");
+    auto goal_result = rclcpp::spin_until_future_complete(shared_from_this(), goal_handle_future);
+    
+    if (goal_result != rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(get_logger(), "Trajectory goal timed out");
         return;
     }
     
-    // Wait for result
+    if (!goal_handle_future.get()) {
+        RCLCPP_ERROR(get_logger(), "Trajectory goal was rejected");
+        return;
+    }
+    
+    // Wait for execution
     auto result_future = trajectory_client_->async_get_result(goal_handle_future.get());
-    if (rclcpp::spin_until_future_complete(shared_from_this(), result_future) != 
-        rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_ERROR(get_logger(), "Failed to execute trajectory");
+    auto exec_result = rclcpp::spin_until_future_complete(shared_from_this(), result_future);
+    
+    if (exec_result != rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_ERROR(get_logger(), "Trajectory execution timed out");
     }
     
     rclcpp::sleep_for(std::chrono::seconds(1));  // Let robot settle
 }
 
-CalibrationSample WrenchCalibrationNode::collectSingleSample(size_t pose_index) {
-    auto transform = tf_buffer_->lookupTransform("base_link", "tool0", tf2::TimePointZero);
+tl::expected<CalibrationSample, std::string> WrenchCalibrationNode::collectSingleSample(size_t pose_index) {
+    if (!latest_wrench_.has_value()) {
+        return tl::make_unexpected("No wrench data available");
+    }
     
-    CalibrationSample sample;
-    auto& wrench = latest_wrench_.value().wrench;
-    sample.wrench_raw = (Eigen::Matrix<double, 6, 1>() << 
-        wrench.force.x,  wrench.force.y,  wrench.force.z,
-        wrench.torque.x, wrench.torque.y, wrench.torque.z
-    ).finished();
-    sample.transform_TB = tf2::transformToEigen(transform);
-    sample.pose_index = pose_index;
-    return sample;
+    try {
+        auto transform = tf_buffer_->lookupTransform("base_link", "tool0", tf2::TimePointZero);
+        
+        CalibrationSample sample;
+        sample.wrench_raw = wrenchMsgToEigen(latest_wrench_.value().wrench);
+        sample.transform_TB = tf2::transformToEigen(transform);
+        sample.pose_index = pose_index;
+        return sample;
+    } catch (const tf2::TransformException& ex) {
+        return tl::make_unexpected(std::string("Transform error: ") + ex.what());
+    }
 }
 
 void WrenchCalibrationNode::log_and_save_result(const CalibrationResult& result) {
     RCLCPP_INFO(get_logger(), "Calibration complete:");
-    RCLCPP_INFO(get_logger(), "  Tool mass: %.3f kg", result.tool_mass);
+    RCLCPP_INFO(get_logger(), "  Tool mass: %.3f kg", result.tool_mass.value());
     RCLCPP_INFO(get_logger(), "  COM: [%.3f, %.3f, %.3f] m", 
         result.center_of_mass.x(), result.center_of_mass.y(), result.center_of_mass.z());
     RCLCPP_INFO(get_logger(), "  Force bias: [%.2f, %.2f, %.2f] N", 
@@ -141,11 +152,7 @@ void WrenchCalibrationNode::log_and_save_result(const CalibrationResult& result)
     
     save_calibration_result(result);
     
-    const char* workspace = std::getenv("ROS_WORKSPACE");
-    std::filesystem::path config_path = (workspace ? std::filesystem::path(workspace) : 
-                                         std::filesystem::path(std::getenv("HOME")) / "ros2_ws")
-                                         / "src" / "ur_admittance_controller" / "config" / "wrench_calibration.yaml";
-    
+    auto config_path = getConfigPath("wrench_calibration.yaml");
     RCLCPP_INFO(get_logger(), "Saved to %s - Calibration completed successfully", config_path.c_str());
 }
 
@@ -196,14 +203,11 @@ void WrenchCalibrationNode::save_calibration_result(const CalibrationResult& res
     config["sensor_rotation"] = rotation_vec;
     config["force_bias"] = std::vector<double>{result.force_bias.x(), result.force_bias.y(), result.force_bias.z()};
     config["torque_bias"] = std::vector<double>{result.torque_bias.x(), result.torque_bias.y(), result.torque_bias.z()};
-    config["tool_mass"] = result.tool_mass;
+    config["tool_mass"] = result.tool_mass.value();
     config["center_of_mass"] = std::vector<double>{result.center_of_mass.x(), result.center_of_mass.y(), result.center_of_mass.z()};
     config["gravity_force"] = std::vector<double>{result.gravity_force.x(), result.gravity_force.y(), result.gravity_force.z()};
     
-    const char* workspace = std::getenv("ROS_WORKSPACE");
-    std::filesystem::path path = (workspace ? std::filesystem::path(workspace) : 
-                                  std::filesystem::path(std::getenv("HOME")) / "ros2_ws")
-                                  / "src" / "ur_admittance_controller" / "config" / "wrench_calibration.yaml";
+    auto path = getConfigPath("wrench_calibration.yaml");
     
     std::filesystem::create_directories(path.parent_path());
     std::ofstream file(path);
@@ -236,18 +240,18 @@ int main(int argc, char** argv) {
     RCLCPP_INFO(node->get_logger(), "Started data collection at %zu poses", poses.size());
     std::vector<CalibrationSample> samples = node->collect_calibration_samples(poses);
     
-    // Step 4: Process data (pure algorithms)
+    // Step 4: Process data (pure algorithms with type-safe units)
     RCLCPP_INFO(node->get_logger(), "Processing %zu samples", samples.size());
     
-    Eigen::Vector3d gravity = WrenchCalibrationNode::estimateGravitationalForceInBaseFrame(samples);
+    Force gravity = WrenchCalibrationNode::estimateGravitationalForceInBaseFrame(samples);
     
     auto [R_SE, force_bias] = WrenchCalibrationNode::estimateSensorRotationAndForceBias(samples, gravity);
     
     auto [com, torque_bias] = WrenchCalibrationNode::estimateCOMAndTorqueBias(samples, force_bias);
     
-    double tool_mass = gravity.norm() / GRAVITY;
+    Mass tool_mass(gravity.norm() / GRAVITY);
     
-    // Step 5: Build result
+    // Step 5: Build result with type-safe units
     CalibrationResult result{R_SE, gravity, force_bias, torque_bias, com, tool_mass};
     
     // Step 6: Log results and save

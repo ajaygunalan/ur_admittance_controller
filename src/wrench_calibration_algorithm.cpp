@@ -4,7 +4,7 @@ using namespace ur_admittance_controller;
 
 namespace ur_admittance_controller {
 
-Eigen::Vector3d WrenchCalibrationNode::estimateGravitationalForceInBaseFrame(const std::vector<CalibrationSample>& samples) {
+Force WrenchCalibrationNode::estimateGravitationalForceInBaseFrame(const std::vector<CalibrationSample>& samples) {
     const size_t n = samples.size();
     const size_t rows = 3 * n;
 
@@ -41,12 +41,12 @@ Eigen::Vector3d WrenchCalibrationNode::estimateGravitationalForceInBaseFrame(con
     const Eigen::VectorXd y_opt = svd.matrixU().col(min_idx);
     const Eigen::VectorXd x6 = -(A6_inv * A6.transpose() * A9 * I9) * y_opt;
 
-    const Eigen::Vector3d gravity = x6(2) < 0 ? x6.head<3>() : Eigen::Vector3d(-x6.head<3>());
+    const Eigen::Vector3d gravity_vec = x6(2) < 0 ? x6.head<3>() : Eigen::Vector3d(-x6.head<3>());
 
-    return gravity;
+    return Force(gravity_vec);
 }
 
-std::pair<Eigen::Matrix3d, Eigen::Vector3d> WrenchCalibrationNode::estimateSensorRotationAndForceBias(const std::vector<CalibrationSample>& samples, const Eigen::Vector3d& gravity_in_base) {
+std::pair<Eigen::Matrix3d, Force> WrenchCalibrationNode::estimateSensorRotationAndForceBias(const std::vector<CalibrationSample>& samples, const Force& gravity_in_base) {
     const size_t n = samples.size();
 
     Eigen::Vector3d force_readings_avg = std::accumulate(
@@ -65,7 +65,7 @@ std::pair<Eigen::Matrix3d, Eigen::Vector3d> WrenchCalibrationNode::estimateSenso
     for (const CalibrationSample& sample : samples) {
         const Eigen::Vector3d force_centered = sample.wrench_raw.head<3>() - force_readings_avg;
         const Eigen::Matrix3d rotation_centered = sample.transform_TB.rotation() - rotation_TB_avg;
-        D += rotation_centered * gravity_in_base * force_centered.transpose();
+        D += rotation_centered * gravity_in_base.N * force_centered.transpose();
     }
 
     Eigen::JacobiSVD<Eigen::Matrix3d> svd(D, Eigen::ComputeFullU | Eigen::ComputeFullV);
@@ -78,13 +78,13 @@ std::pair<Eigen::Matrix3d, Eigen::Vector3d> WrenchCalibrationNode::estimateSenso
 
     const Eigen::Matrix3d R_SE = svd.matrixU() * correction * svd.matrixV().transpose();
 
-    const Eigen::Vector3d force_bias =
-        force_readings_avg - (R_SE * rotation_TB_avg * gravity_in_base);
+    const Eigen::Vector3d force_bias_vec =
+        force_readings_avg - (R_SE * rotation_TB_avg * gravity_in_base.N);
 
-    return std::make_pair(R_SE, force_bias);
+    return std::make_pair(R_SE, Force(force_bias_vec));
 }
 
-std::pair<Eigen::Vector3d, Eigen::Vector3d> WrenchCalibrationNode::estimateCOMAndTorqueBias(const std::vector<CalibrationSample>& samples, const Eigen::Vector3d& force_bias) {
+std::pair<Eigen::Vector3d, Torque> WrenchCalibrationNode::estimateCOMAndTorqueBias(const std::vector<CalibrationSample>& samples, const Force& force_bias) {
     const size_t n = samples.size();
     const size_t rows = 3 * n;
 
@@ -98,7 +98,7 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> WrenchCalibrationNode::estimateCOMAn
         const Eigen::Vector3d force = sample.wrench_raw.head<3>();
         const Eigen::Vector3d torque = sample.wrench_raw.tail<3>();
 
-        const Eigen::Vector3d force_compensated = -(force - force_bias);
+        const Eigen::Vector3d force_compensated = -(force - force_bias.N);
         
         C.block<3, 3>(row_offset, 0) = makeSkewSymmetric(force_compensated);
         C.block<3, 3>(row_offset, 3) = Eigen::Matrix3d::Identity();
@@ -108,7 +108,7 @@ std::pair<Eigen::Vector3d, Eigen::Vector3d> WrenchCalibrationNode::estimateCOMAn
 
     const Eigen::VectorXd solution = (C.transpose() * C).inverse() * (C.transpose() * b);
 
-    return std::make_pair(solution.head<3>(), solution.tail<3>());
+    return std::make_pair(solution.head<3>(), Torque(solution.tail<3>()));
 }
 
 }
