@@ -162,16 +162,16 @@ Status WrenchNode::LoadCalibrationParams() {
             fmt::format("Failed to parse YAML: {}", e.what())));
     }
 
-    auto rot_data = config["rotation_sensor_to_endeffector"].as<std::vector<std::vector<double>>>();
-
+    auto rot_data = config["sensor_rotation"].as<std::vector<double>>();
+    
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j)
-            R_SE_(i,j) = rot_data[i][j];
+            R_SE_(i,j) = rot_data[i*3 + j];
 
-    auto gravity_vec = config["gravity_in_base_frame"].as<std::vector<double>>();
+    auto gravity_vec = config["gravity_force"].as<std::vector<double>>();
     auto force_bias_vec = config["force_bias"].as<std::vector<double>>();
     auto torque_bias_vec = config["torque_bias"].as<std::vector<double>>();
-    auto com_vec = config["tool_center_of_mass"].as<std::vector<double>>();
+    auto com_vec = config["center_of_mass"].as<std::vector<double>>();
 
     f_grav_b_ = Vector3d(gravity_vec.data());
     f_bias_s_ = Vector3d(force_bias_vec.data());

@@ -69,10 +69,49 @@ ros2 run ur_admittance_controller admittance_node
 
 ### Core Components
 
-- **Init Robot**: Moves to equilibrium, saves pose to config
-- **Wrench Calibration**: Estimates gravity/bias parameters (LROM method)  
-- **Wrench Node**: Compensates F/T data for gravity and transforms to base frame
-- **Admittance Node**: Implements admittance control law, outputs joint velocities
+- Init Robot: Moves to equilibrium, saves pose to config
+- Wrench Calibration: Estimates gravity/bias parameters (LROM method)  
+- Wrench Node: Compensates F/T data for gravity and transforms to base frame
+- Admittance Node: Implements admittance control law, outputs joint velocities
+
+### Control Theory & Behavior
+
+The controller implements: `M·ẍ + D·ẋ + K·x = F`
+
+Where:
+- F = External force (from wrench_node)
+- x = Position error from equilibrium
+- ẋ = Velocity
+- ẍ = Acceleration
+
+System Behavior:
+
+1. Normal Operation (wrench_node running, F ≠ 0):
+   - Equation: M·ẍ + D·ẋ + K·x = F
+   - Behavior: Robot moves proportionally to applied force
+   - Equilibrium: Robot finds new position where K·x balances F
+
+2. When wrench_node is OFF (F = 0):
+   - Equation becomes: M·ẍ + D·ẋ + K·x = 0
+   - Behavior: Pure spring-damper system
+   - Robot always returns to equilibrium position
+
+3. Pure Admittance Mode (set K = 0):
+   - Equation: M·ẍ + D·ẋ = F
+   - Behavior: No position preference, robot drifts with force
+   - Warning: Robot won't return to any position
+
+Quick Diagnostics:
+```bash
+# Check if force data exists (is wrench_node running?)
+ros2 topic echo /netft/proc_probe_base --once
+
+# Test pure admittance (removes position control)
+ros2 param set /admittance_node admittance.stiffness '[0.0,0.0,0.0,0.0,0.0,0.0]'
+
+# View current control parameters
+ros2 param get /admittance_node admittance.stiffness
+```
 
 ### Key Files
 
