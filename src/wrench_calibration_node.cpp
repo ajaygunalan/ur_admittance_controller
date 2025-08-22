@@ -66,20 +66,30 @@ std::vector<CalibrationSample> WrenchCalibrationNode::collect_calibration_sample
         
         if (pose_idx > 0) executeTrajectory(poses[pose_idx]);
         
+        // Get transform ONCE per pose after robot moves
+        Eigen::Isometry3d pose_transform;
+        try {
+            auto transform = tf_buffer_->lookupTransform("tool0", "base_link", tf2::TimePointZero);
+            pose_transform = tf2::transformToEigen(transform);
+        } catch (const tf2::TransformException& ex) {
+            RCLCPP_ERROR(get_logger(), "Transform error at pose %zu: %s", pose_idx, ex.what());
+            continue;
+        }
+        
         for (int sample = 0; sample < SAMPLES_PER_POSE; ++sample) {
             rclcpp::spin_some(shared_from_this());
             
-            // Use monadic chaining instead of manual if-else
-            auto result = mbind(collectSingleSample(pose_idx),
-                [&](CalibrationSample s) { 
-                    samples.push_back(s); 
-                    return tl::expected<void, std::string>{}; 
-                });
-            
-            if (!result) {
-                RCLCPP_WARN(get_logger(), "Sample %d at pose %zu failed: %s", 
-                            sample+1, pose_idx+1, result.error().c_str());
+            if (!latest_wrench_.has_value()) {
+                RCLCPP_WARN(get_logger(), "No wrench data available for sample %d at pose %zu", sample+1, pose_idx+1);
+                continue;
             }
+            
+            CalibrationSample cal_sample;
+            cal_sample.wrench_raw = wrenchMsgToEigen(latest_wrench_.value().wrench);
+            cal_sample.transform_TB = pose_transform;  // Use same transform for all samples of this pose
+            cal_sample.pose_index = pose_idx;
+            samples.push_back(cal_sample);
+            
             rclcpp::sleep_for(SAMPLE_DELAY);
         }
         
@@ -122,23 +132,6 @@ void WrenchCalibrationNode::executeTrajectory(const CalibrationPose& target_pose
     rclcpp::sleep_for(std::chrono::seconds(1));  // Let robot settle
 }
 
-tl::expected<CalibrationSample, std::string> WrenchCalibrationNode::collectSingleSample(size_t pose_index) {
-    if (!latest_wrench_.has_value()) {
-        return tl::make_unexpected("No wrench data available");
-    }
-    
-    try {
-        auto transform = tf_buffer_->lookupTransform("base_link", "tool0", tf2::TimePointZero);
-        
-        CalibrationSample sample;
-        sample.wrench_raw = wrenchMsgToEigen(latest_wrench_.value().wrench);
-        sample.transform_TB = tf2::transformToEigen(transform);
-        sample.pose_index = pose_index;
-        return sample;
-    } catch (const tf2::TransformException& ex) {
-        return tl::make_unexpected(std::string("Transform error: ") + ex.what());
-    }
-}
 
 void WrenchCalibrationNode::log_and_save_result(const CalibrationResult& result) {
     RCLCPP_INFO(get_logger(), "Calibration complete:");

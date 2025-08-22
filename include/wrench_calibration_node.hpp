@@ -221,13 +221,13 @@ public:
         return base / "src" / "ur_admittance_controller" / "config" / filename;
     }
     
+public:
     // Combined logging and saving
     void log_and_save_result(const CalibrationResult& result);
     
 private:
     // Helper methods
     void executeTrajectory(const CalibrationPose& target_pose);
-    tl::expected<CalibrationSample, std::string> collectSingleSample(size_t pose_index);
     
     // ROS interfaces
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
