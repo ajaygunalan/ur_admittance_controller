@@ -65,16 +65,13 @@ std::pair<Eigen::Matrix3d, Force> WrenchCalibrationNode::estimateSensorRotationA
     for (const CalibrationSample& sample : samples) {
         const Eigen::Vector3d force_centered = sample.wrench_raw.head<3>() - force_readings_avg;
         const Eigen::Matrix3d rotation_centered = sample.transform_TB.rotation() - rotation_TB_avg;
-        D += rotation_centered * gravity_in_base.N * force_centered.transpose();
+        D += force_centered * (rotation_centered * gravity_in_base.N).transpose();
     }
 
     Eigen::JacobiSVD<Eigen::Matrix3d> svd(D, Eigen::ComputeFullU | Eigen::ComputeFullV);
 
     Eigen::Matrix3d correction = Eigen::Matrix3d::Identity();
-    const double det = (svd.matrixU() * svd.matrixV().transpose()).determinant();
-    if (det < 0) {
-        correction(2, 2) = -1;
-    }
+    correction(2, 2) = svd.matrixU().determinant() * svd.matrixV().determinant();
 
     const Eigen::Matrix3d R_SE = svd.matrixU() * correction * svd.matrixV().transpose();
 
@@ -109,6 +106,25 @@ std::pair<Eigen::Vector3d, Torque> WrenchCalibrationNode::estimateCOMAndTorqueBi
     const Eigen::VectorXd solution = (C.transpose() * C).inverse() * (C.transpose() * b);
 
     return std::make_pair(solution.head<3>(), Torque(solution.tail<3>()));
+}
+
+std::tuple<Mass, double, double> WrenchCalibrationNode::decomposeGravityVector(const Force& gravity_in_base) {
+    const Eigen::Vector3d& f = gravity_in_base.N;
+    
+    // Section 4: Decompose Gravitational Force Vector
+    // Following pseudo-code Section 4.2 (lines 179-186)
+    
+    // Tool Mass (line 180): mg = ||F_b||
+    const double mg = gravity_in_base.norm();
+    Mass tool_mass(mg / GRAVITY);
+    
+    // Installation Roll Angle (line 183): α = arctan2(-f_by, sqrt(f_bx^2 + f_bz^2))
+    const double roll = std::atan2(-f.y(), std::sqrt(f.x() * f.x() + f.z() * f.z()));
+    
+    // Installation Pitch Angle (line 186): β = arctan2(f_bx, f_bz)
+    const double pitch = std::atan2(f.x(), f.z());
+    
+    return std::make_tuple(tool_mass, roll, pitch);
 }
 
 }

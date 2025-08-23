@@ -142,6 +142,13 @@ void WrenchCalibrationNode::log_and_save_result(const CalibrationResult& result)
         result.force_bias.x(), result.force_bias.y(), result.force_bias.z());
     RCLCPP_INFO(get_logger(), "  Torque bias: [%.3f, %.3f, %.3f] Nm", 
         result.torque_bias.x(), result.torque_bias.y(), result.torque_bias.z());
+    RCLCPP_INFO(get_logger(), "  Installation angles: roll=%.1f° pitch=%.1f°", 
+        result.installation_roll * 180.0 / M_PI, result.installation_pitch * 180.0 / M_PI);
+    
+    // Verification for floor-mounted robot
+    if (std::abs(result.installation_roll) > 0.1 || std::abs(result.installation_pitch) > 0.1) {
+        RCLCPP_WARN(get_logger(), "  Warning: Installation angles are large for a floor-mounted robot!");
+    }
     
     save_calibration_result(result);
     
@@ -199,6 +206,10 @@ void WrenchCalibrationNode::save_calibration_result(const CalibrationResult& res
     config["tool_mass"] = result.tool_mass.value();
     config["center_of_mass"] = std::vector<double>{result.center_of_mass.x(), result.center_of_mass.y(), result.center_of_mass.z()};
     config["gravity_force"] = std::vector<double>{result.gravity_force.x(), result.gravity_force.y(), result.gravity_force.z()};
+    config["installation_roll_rad"] = result.installation_roll;
+    config["installation_pitch_rad"] = result.installation_pitch;
+    config["installation_roll_deg"] = result.installation_roll * 180.0 / M_PI;
+    config["installation_pitch_deg"] = result.installation_pitch * 180.0 / M_PI;
     
     auto path = getConfigPath("wrench_calibration.yaml");
     
@@ -236,16 +247,20 @@ int main(int argc, char** argv) {
     // Step 4: Process data (pure algorithms with type-safe units)
     RCLCPP_INFO(node->get_logger(), "Processing %zu samples", samples.size());
     
+    // Section 1: LROM - Estimate gravitational force
     Force gravity = WrenchCalibrationNode::estimateGravitationalForceInBaseFrame(samples);
     
+    // Section 2: Procrustes - Estimate rotation and force bias
     auto [R_SE, force_bias] = WrenchCalibrationNode::estimateSensorRotationAndForceBias(samples, gravity);
     
+    // Section 3: Estimate torque bias and center of mass
     auto [com, torque_bias] = WrenchCalibrationNode::estimateCOMAndTorqueBias(samples, force_bias);
     
-    Mass tool_mass(gravity.norm() / GRAVITY);
+    // Section 4: Decompose gravity vector into mass and installation angles
+    auto [tool_mass, roll, pitch] = WrenchCalibrationNode::decomposeGravityVector(gravity);
     
     // Step 5: Build result with type-safe units
-    CalibrationResult result{R_SE, gravity, force_bias, torque_bias, com, tool_mass};
+    CalibrationResult result{R_SE, gravity, force_bias, torque_bias, com, tool_mass, roll, pitch};
     
     // Step 6: Log results and save
     node->log_and_save_result(result);

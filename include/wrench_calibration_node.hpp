@@ -163,6 +163,8 @@ struct CalibrationResult {
     Torque torque_bias;       // Type-safe torque in Newton-meters
     Eigen::Vector3d center_of_mass;  // Position in meters
     Mass tool_mass;           // Type-safe mass in kilograms
+    double installation_roll;   // Robot base roll angle relative to gravity (radians)
+    double installation_pitch;  // Robot base pitch angle relative to gravity (radians)
 };
 
 constexpr int NUM_POSES = 32;
@@ -196,6 +198,7 @@ public:
     static std::pair<Eigen::Vector3d, Torque> estimateCOMAndTorqueBias(
         const std::vector<CalibrationSample>& samples,
         const Force& force_bias);
+    static std::tuple<Mass, double, double> decomposeGravityVector(const Force& gravity_in_base);
     static void save_calibration_result(const CalibrationResult& result);
     
     // Pure helper functions
