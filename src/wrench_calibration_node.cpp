@@ -145,7 +145,7 @@ void WrenchCalibrationNode::log_and_save_result(const CalibrationResult& result)
     // Report robot installation angles
     RCLCPP_INFO(get_logger(), "  Robot installation: roll=%.1f° pitch=%.1f°", 
         result.installation_roll * 180.0 / M_PI, result.installation_pitch * 180.0 / M_PI);
-    RCLCPP_INFO(get_logger(), "  (Typical floor-mounted: roll≈0°, pitch≈0° or ±180°)")
+    RCLCPP_INFO(get_logger(), "  (Typical floor-mounted: roll≈0°, pitch≈0° or ±180°)");
     
     save_calibration_result(result);
     
