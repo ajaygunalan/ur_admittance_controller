@@ -142,13 +142,10 @@ void WrenchCalibrationNode::log_and_save_result(const CalibrationResult& result)
         result.force_bias.x(), result.force_bias.y(), result.force_bias.z());
     RCLCPP_INFO(get_logger(), "  Torque bias: [%.3f, %.3f, %.3f] Nm", 
         result.torque_bias.x(), result.torque_bias.y(), result.torque_bias.z());
-    RCLCPP_INFO(get_logger(), "  Installation angles: roll=%.1f° pitch=%.1f°", 
+    // Report robot installation angles
+    RCLCPP_INFO(get_logger(), "  Robot installation: roll=%.1f° pitch=%.1f°", 
         result.installation_roll * 180.0 / M_PI, result.installation_pitch * 180.0 / M_PI);
-    
-    // Verification for floor-mounted robot
-    if (std::abs(result.installation_roll) > 0.1 || std::abs(result.installation_pitch) > 0.1) {
-        RCLCPP_WARN(get_logger(), "  Warning: Installation angles are large for a floor-mounted robot!");
-    }
+    RCLCPP_INFO(get_logger(), "  (Typical floor-mounted: roll≈0°, pitch≈0° or ±180°)")
     
     save_calibration_result(result);
     

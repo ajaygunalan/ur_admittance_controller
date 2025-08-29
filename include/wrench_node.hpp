@@ -186,6 +186,13 @@ private:
     rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_sensor_pub_;
     rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_probe_pub_;
     rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_probe_base_pub_;
+
+    // Filter state and parameters
+    Wrench6d lpf_state_ = Wrench6d::Zero();
+    bool first_sample_ = true;
+    static constexpr double ALPHA = 0.715;          // For fc=200Hz, ΔT=0.002s
+    static constexpr double DEADBAND_FORCE = 0.5;   // N
+    static constexpr double DEADBAND_TORQUE = 0.01; // Nm
 };
 
 }

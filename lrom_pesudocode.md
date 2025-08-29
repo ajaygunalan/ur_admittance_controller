@@ -164,26 +164,34 @@ From $\hat{\mathbf{y}}$, we directly obtain the estimates $\hat{^g_s\mathbf{P}}$
 
 ### 4. Decompose Gravitational Force Vector
 
-The estimated vector $\hat{\mathbf{F}}^b$ can be further decomposed to find the tool's scalar mass and the robot's installation angles relative to the true gravity frame.
+The estimated gravity vector $\hat{\mathbf{F}}^b$ is now decomposed to find the physical parameters: the tool's mass $(mg)$ and the robot's installation orientation angles $(\alpha, \beta)$.
 
-#### 4.1 Define Installation Model
+#### 4.1 Model the Robot's Installation Orientation
 
-The gravity vector in the base frame, $\mathbf{F}^b$, is the result of rotating the pure gravity vector $\mathbf{F}_{mg} = [0, 0, -mg]^T$ from the gravity frame {G} to the base frame {B}. This rotation $^g_b\mathbf{R}$ can be modeled using Tait-Bryan angles, primarily pitch ($\beta$) and roll ($\alpha$).
+The gravity vector in the base frame, $\hat{\mathbf{F}}^b$, is modeled by rotating the pure gravity vector, $\mathbf{F}_{mg} = [0, 0, -mg]^T$, from the true gravity frame {G} to the robot's base frame {B}. This rotation, ${}^g\mathbf{R}_b$, quantifies the robot's physical tilt (installation error) using a roll angle $(\alpha)$ and a pitch angle $(\beta)$.
 
-$$\hat{\mathbf{F}}^b = ^g_b\mathbf{R}(\alpha, \beta) \cdot \mathbf{F}_{mg} = -mg \begin{bmatrix} \cos\alpha \sin\beta \\ -\sin\alpha \\ \cos\alpha \cos\beta \end{bmatrix}$$
+$$\hat{\mathbf{F}}^b = {}^g\mathbf{R}(\alpha, \beta) \cdot \mathbf{F}_{mg} = -mg \begin{bmatrix} \cos \alpha \sin \beta \\ -\sin \alpha \\ \cos \alpha \cos \beta \end{bmatrix}$$
 
-#### 4.2 Compute Mass and Installation Angles
+#### 4.2 Solve for Mass and Installation Angles
 
-By inverting the relationship, we can solve for the physical parameters from the components of $\hat{\mathbf{F}}^b = [\hat{f}_{bx}, \hat{f}_{by}, \hat{f}_{bz}]^T$:
+The physical parameters are solved by inverting the model using the components of the estimated gravity vector
 
-- **Tool Mass ($mg$):** The magnitude of the vector is the gravitational force.
-  $$mg = \|\hat{\mathbf{F}}^b\|_2 = \sqrt{\hat{f}_{bx}^2 + \hat{f}_{by}^2 + \hat{f}_{bz}^2}$$
+$\hat{\mathbf{F}}^b = [\hat{f}_{bx}, \hat{f}_{by}, \hat{f}_{bz}]^T$.
 
-- **Installation Roll Angle ($\alpha$):**
-  $$\alpha = \arctan2(-\hat{f}_{by}, \sqrt{\hat{f}_{bx}^2 + \hat{f}_{bz}^2})$$
+- Tool Mass $(mg)$: The magnitude of the gravity vector equals the gravitational force.
 
-- **Installation Pitch Angle ($\beta$):**
-  $$\beta = \arctan2(\hat{f}_{bx}, \hat{f}_{bz})$$
+$$mg = ||\hat{\mathbf{F}}^b||_2 = \sqrt{\hat{f}_{bx}^2 + \hat{f}_{by}^2 + \hat{f}_{bz}^2}$$
+
+- Installation Pitch Angle $(\beta)$:
+
+$$\beta = \arctan 2(\hat{f}_{bx}, \hat{f}_{bz})$$
+
+- Installation Roll Angle $(\alpha)$:
+
+$$\alpha = \arctan 2(-\hat{f}_{by} \cdot \cos \beta, \hat{f}_{bz})$$
+
+
+In short, the angles α (roll) and β (pitch) describe the tilt of the entire robot relative to the true direction of gravity.
 
 ---
 
@@ -205,10 +213,4 @@ For a new measurement $(^s\mathbf{F}_{\text{meas}}, ^s\mathbf{T}_{\text{meas}})$
 
 ### Key Insights
 
-1. **Sequential Solution:** The problem is solved sequentially. The force parameters are found first, which then enables the straightforward, linear solution for the torque parameters.
-
-2. **Linearization is Key:** The LROM method cleverly linearizes the force problem by reformulating the equation and relaxing the rotation constraint, allowing it to be solved efficiently using linear algebra.
-
-3. **Standard Problems:** Once the gravity vector $\mathbf{F}^b$ is estimated, the subsequent steps reduce to well-known problems: the Procrustes problem for rotation/translation and standard least-squares for the torque parameters.
-
-4. **Complete Identification:** This complete, non-iterative process identifies all six bias parameters ($^s\mathbf{F}_0, ^s\mathbf{T}_0$), the sensor-to-tool transform ($^e_s\mathbf{R}, ^g_s\mathbf{P}$), the tool's mass ($mg$), and the robot's installation orientation ($\alpha, \beta$).
+The LROM method for force and torque sensor calibration employs a sequential solution approach that strategically leverages the structure of the underlying physics to achieve complete parameter identification through a series of well-established mathematical techniques. The method begins by cleverly linearizing the inherently nonlinear force problem through reformulation and rotation constraint relaxation, enabling efficient solution using standard linear algebra operations to first determine the force parameters. Once the crucial gravity vector $\mathbf{F}^b$ is estimated through this linearization process, the subsequent calibration steps naturally reduce to well-known computational problems: the Procrustes problem for determining rotation and translation parameters, followed by standard least-squares regression for the torque parameters. This systematic decomposition culminates in a complete, non-iterative identification process that successfully determines all critical calibration parameters including the six bias components ($^s\mathbf{F}_0, ^s\mathbf{T}_0$), the sensor-to-tool geometric transform ($^e_s\mathbf{R}, ^g_s\mathbf{P}$), the tool's physical mass ($mg$), and the robot's installation orientation angles ($\alpha, \beta$), thereby providing a comprehensive solution to the force and torque sensor calibration problem.

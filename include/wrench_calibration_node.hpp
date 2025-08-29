@@ -163,8 +163,8 @@ struct CalibrationResult {
     Torque torque_bias;       // Type-safe torque in Newton-meters
     Eigen::Vector3d center_of_mass;  // Position in meters
     Mass tool_mass;           // Type-safe mass in kilograms
-    double installation_roll;   // Robot base roll angle relative to gravity (radians)
-    double installation_pitch;  // Robot base pitch angle relative to gravity (radians)
+    double installation_roll;   // Robot tilt: roll angle (side-to-side tilt, radians)
+    double installation_pitch;  // Robot tilt: pitch angle (forward/backward tilt, radians)
 };
 
 constexpr int NUM_POSES = 32;

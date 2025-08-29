@@ -102,7 +102,15 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
         return;
     }
 
-    f_raw_s_ = SanitizeWrench(conversions::FromMsg(*msg));
+    // Step 1: Apply Low-Pass Filter (before compensation)
+    Wrench6d f_raw = conversions::FromMsg(*msg);
+    if (first_sample_) {
+        lpf_state_ = f_raw;
+        first_sample_ = false;
+    }
+    Wrench6d f_filtered = ALPHA * f_raw + (1.0 - ALPHA) * lpf_state_;
+    lpf_state_ = f_filtered;
+    f_raw_s_ = SanitizeWrench(f_filtered);
 
     try {
         X_TB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(
@@ -121,6 +129,13 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
     }
 
     ft_proc_s_ = CompensateWrench(f_raw_s_, X_TB_, calibration_params_);
+    
+    // Step 2: Apply Deadband Filter (after compensation)
+    for (int i = 0; i < 3; ++i) {
+        if (std::abs(ft_proc_s_[i]) <= DEADBAND_FORCE) ft_proc_s_[i] = 0.0;
+        if (std::abs(ft_proc_s_[i+3]) <= DEADBAND_TORQUE) ft_proc_s_[i+3] = 0.0;
+    }
+    
     wrench_probe_ = adjoint_probe_sensor_ * ft_proc_s_;
 
     Transform X_BP;

@@ -112,17 +112,17 @@ std::tuple<Mass, double, double> WrenchCalibrationNode::decomposeGravityVector(c
     const Eigen::Vector3d& f = gravity_in_base.N;
     
     // Section 4: Decompose Gravitational Force Vector
-    // Following pseudo-code Section 4.2 (lines 179-186)
+    // Following pseudo-code Section 4.2 (lines 183-191)
     
-    // Tool Mass (line 180): mg = ||F_b||
+    // Tool Mass (line 183): mg = ||F_b||
     const double mg = gravity_in_base.norm();
     Mass tool_mass(mg / GRAVITY);
     
-    // Installation Roll Angle (line 183): α = arctan2(-f_by, sqrt(f_bx^2 + f_bz^2))
-    const double roll = std::atan2(-f.y(), std::sqrt(f.x() * f.x() + f.z() * f.z()));
-    
-    // Installation Pitch Angle (line 186): β = arctan2(f_bx, f_bz)
+    // Installation Pitch Angle (line 187): β = arctan2(f_bx, f_bz)
     const double pitch = std::atan2(f.x(), f.z());
+    
+    // Installation Roll Angle (line 191): α = arctan2(-f_by * cos(β), f_bz)
+    const double roll = std::atan2(-f.y() * std::cos(pitch), f.z());
     
     return std::make_tuple(tool_mass, roll, pitch);
 }
