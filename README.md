@@ -27,11 +27,48 @@ Build controller:
 colcon build --packages-select ur_admittance_controller && source install/setup.bash
 ```
 
+Build force sensor driver (if using hardware):
+```bash
+colcon build --packages-select net_ft_driver net_ft_diagnostic_broadcaster && source install/setup.bash
+```
+
 ## Usage
+
+### Simulation
 
 Launch robot:
 ```bash
 ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
+```
+
+### Hardware
+
+**Prerequisites:**
+- [Universal_Robots_ROS2_Driver](https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver)
+- [ros2_net_ft_driver](https://github.com/gbartyzel/ros2_net_ft_driver)
+
+Launch robot and force sensor:
+```bash
+# Terminal 1: Launch UR5e driver
+ros2 launch ur_robot_driver ur_control.launch.py \
+  ur_type:=ur5e robot_ip:=<ROBOT_IP> \
+  kinematics_params_file:="$HOME/ur5e_calibration.yaml"
+
+# Terminal 2: Launch force sensor (with topic remapping)
+ros2 launch net_ft_driver net_ft_broadcaster.launch.py \
+  ip_address:=169.254.120.10 sensor_type:=ati \
+  --ros-args -r ft_data:=netft/data
+```
+
+**Note:** Generate calibration file once with:
+```bash
+ros2 launch ur_calibration calibration_correction.launch.py \
+  robot_ip:=<ROBOT_IP> target_filename:="$HOME/ur5e_calibration.yaml"
+```
+
+Test robot connection:
+```bash
+ros2 run ur_robot_driver example_move.py
 ```
 
 Initialize to equilibrium:

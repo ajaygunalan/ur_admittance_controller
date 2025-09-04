@@ -7,8 +7,9 @@ Code edits only - user handles all building and execution
 - Claude Code runs on WSL2 (no ROS2, no dependencies)
 - ROS2 only exists in Docker container
 - Files shared between WSL2 and Docker
-- Can only: read files, edit files, ask for debug output
-- Cannot: build, run commands, execute anything
+- Can only: read files, edit files, provide commands for user to run
+- Cannot: build, run ROS2 commands, execute anything requiring ROS2
+- User must run all ROS2 commands inside Docker container
 
 ## Working Process
 
