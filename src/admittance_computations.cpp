@@ -270,8 +270,8 @@ void AdmittanceNode::ComputeAdmittance() {
 
   // (Step 5) World twist command: V_cmd = dot(deltaX)_W + Kp * e_W
   // Reuse K_diag as world P gain to avoid new params (minimal change)
-  V_P_B_commanded.head<3>() = dposdot_W + K_diag.head<3>().array() * e_W.head<3>().array();
-  V_P_B_commanded.tail<3>() = drotdot_W + K_diag.tail<3>().array() * e_W.tail<3>().array();
+  V_P_B_commanded.head<3>() = dposdot_W + K_diag.head<3>().cwiseProduct(e_W.head<3>());
+  V_P_B_commanded.tail<3>() = drotdot_W + K_diag.tail<3>().cwiseProduct(e_W.tail<3>());
 
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
     "V_cmd: lin=[%.3f,%.3f,%.3f] ang=[%.3f,%.3f,%.3f]",

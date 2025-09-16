@@ -5,7 +5,7 @@
 #include <kdl_parser/kdl_parser.hpp>
 
 // Pull in shared types (Vector6d, Result, KinematicsComponents, etc.)
-#include "admittance_node_new.hpp"
+#include "admittance_node.hpp"
 
 namespace ur_admittance_controller {
 

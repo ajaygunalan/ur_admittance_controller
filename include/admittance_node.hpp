@@ -231,7 +231,7 @@ private:
   void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
   void DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
 
-  // core control pieces (implemented in *_computations_new.cpp)
+  // core control pieces (implemented in *_computations.cpp)
   Status LoadKinematics();
   void ComputeAdmittance();
   void ComputePoseError();
