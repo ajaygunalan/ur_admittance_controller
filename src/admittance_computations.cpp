@@ -1,7 +1,8 @@
-// admittance_computations.cpp — v3-fixed admittance flow (clean & concise)
+// admittance_computations.cpp — v3-fixed admittance flow (pseudocode-accurate)
 // - ODE on offset in B_des
-// - Rotation-only mapping to world (no p-hat term)
-// - Commanded pose composed explicitly; error = cmd - meas (world)
+// - Pose-offset mapping: diag(R_des, R_des)  [no coupling]
+// - Offset-rate mapping: full Ad_twist with  p̂ R  coupling  [this fixes the bug]
+// - Commanded pose composed explicitly; error = cmd − meas (world)
 // - KDL vel-IK and wrist shift unchanged
 
 #include "admittance_computations.hpp"
@@ -10,8 +11,9 @@ namespace ur_admittance_controller {
 
 // --------- File-scope state for the offset ODE & commanded pose (no header changes) ---------
 namespace {
-  Vector6d g_deltaX_Bdes = Vector6d::Zero();     // [lin; ang] in B_des axes
-  Vector6d g_deltaXdot_Bdes = Vector6d::Zero();  // [lin; ang] in B_des axes
+  // Internal ordering is [linear; angular] to match KDL::Twist (vel first, then rot).
+  Vector6d g_deltaX_Bdes    = Vector6d::Zero();  // [δp; δr] in B_des axes
+  Vector6d g_deltaXdot_Bdes = Vector6d::Zero();  // [δṗ; δṙ] in B_des axes
   Eigen::Isometry3d g_X_BP_cmd = Eigen::Isometry3d::Identity();  // commanded pose in world
 }
 
@@ -146,7 +148,7 @@ inline Result<std::vector<double>> ComputeInverseKinematicsVelocity(
 
 inline Vector6d ComputePoseError(const Eigen::Isometry3d& X_current,
                                  const Eigen::Isometry3d& X_desired) {
-  Vector6d error;
+  Vector6d error; // [pos; ori] (translation first)
   error.head<3>() = X_current.translation() - X_desired.translation();
 
   Eigen::Quaterniond q_cur(X_current.rotation());
@@ -203,7 +205,7 @@ void AdmittanceNode::GetXBPCurrent() {
   fk_pos_solver_->JntToCart(q_kdl_, X_BW3);
 }
 
-// ------------- Pose error logging (now: cmd − meas in world) -------------------------------
+// ------------- Pose error logging (cmd − meas, world) ---------------------------------------
 void AdmittanceNode::ComputePoseError() {
   // e_X_W = (X_cmd ⊖ X_meas) : "cmd − meas"
   X_BP_error = ::ur_admittance_controller::ComputePoseError(g_X_BP_cmd, X_BP_current);
@@ -215,18 +217,19 @@ void AdmittanceNode::ComputePoseError() {
     ori_err, X_BP_error(3), X_BP_error(4), X_BP_error(5));
 }
 
-// ------------- v3-fixed Admittance (core update) ------------------------------------------
+// ------------- v3-fixed Admittance (core update) --------------------------------------------
 void AdmittanceNode::ComputeAdmittance() {
   const double dt = control_period_.seconds();
   const Matrix3d R_des = X_BP_desired.rotation();
+  const Vector3d p_des = X_BP_desired.translation();
 
   // (Step 0) Re-express external wrench from PROBE axes to B_des axes (dual adjoint)
-  // X_BdesP = X_WB_des^{-1} * X_WP_current
+  // X_BdesP = X_WB_des^{-1} * X_WP_current   (we assume PROBE=P; wrench is at TCP)
   Eigen::Isometry3d X_BdesP = X_BP_desired.inverse() * X_BP_current;
   const Matrix3d R = X_BdesP.rotation();
   const Vector3d p = X_BdesP.translation();
 
-  Vector6d F_P_des; // [lin; ang] in B_des
+  Vector6d F_P_des; // [force; torque] in B_des axes
   {
     const Vector3d Fp = F_P_B.head<3>();   // incoming wrench is in PROBE axes
     const Vector3d Mp = F_P_B.tail<3>();
@@ -236,7 +239,7 @@ void AdmittanceNode::ComputeAdmittance() {
     F_P_des.tail<3>() = Md;
   }
 
-  // Optionally scale external wrench (keeps your existing knob)
+  // Optional scaling of external wrench
   F_P_des *= admittance_ratio_;
 
   // (Step 1) Admittance ODE in B_des axes on the offset state
@@ -250,11 +253,14 @@ void AdmittanceNode::ComputeAdmittance() {
   g_deltaXdot_Bdes = IntegrateVelocity(g_deltaXdot_Bdes, acc, dt);
   g_deltaX_Bdes    = IntegrateVelocity(g_deltaX_Bdes,    g_deltaXdot_Bdes, dt);
 
-  // (Step 2) Rotation-only re-expression of offset & rate to world (no p-hat coupling)
-  Vector3d dpos_W   = R_des * g_deltaX_Bdes.head<3>();
-  Vector3d drot_W   = R_des * g_deltaX_Bdes.tail<3>();
-  Vector3d dposdot_W= R_des * g_deltaXdot_Bdes.head<3>();
-  Vector3d drotdot_W= R_des * g_deltaXdot_Bdes.tail<3>();
+  // (Step 2) Convert offset & rate to world using factored adjoints
+  // Offsets: pose-adjoint (no coupling) — diag(R_des, R_des)
+  Vector3d dpos_W = R_des * g_deltaX_Bdes.head<3>();
+  Vector3d drot_W = R_des * g_deltaX_Bdes.tail<3>();
+
+  // Rates: full twist-adjoint (with coupling): [v_W; ω_W] = [[R, p̂ R],[0,R]] [v_B; ω_B]
+  Vector3d drotdot_W = R_des * g_deltaXdot_Bdes.tail<3>();                        // ω_W
+  Vector3d dposdot_W = R_des * g_deltaXdot_Bdes.head<3>() + p_des.cross(drotdot_W); // v_W
 
   // (Step 3) Compose commanded pose in world
   const double th = drot_W.norm();
@@ -268,8 +274,8 @@ void AdmittanceNode::ComputeAdmittance() {
   // (Step 4) Pose error in world (cmd − meas)
   Vector6d e_W = ::ur_admittance_controller::ComputePoseError(g_X_BP_cmd, X_BP_current);
 
-  // (Step 5) World twist command: V_cmd = dot(deltaX)_W + Kp * e_W
-  // Reuse K_diag as world P gain to avoid new params (minimal change)
+  // (Step 5) World twist command: V_cmd = δẊ_W + Kp^W * e_W
+  // Reuse K_diag as world P gain (matches current parameter set; can be split later)
   V_P_B_commanded.head<3>() = dposdot_W + K_diag.head<3>().cwiseProduct(e_W.head<3>());
   V_P_B_commanded.tail<3>() = drotdot_W + K_diag.tail<3>().cwiseProduct(e_W.tail<3>());
 

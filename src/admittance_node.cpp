@@ -1,5 +1,5 @@
 // admittance_node.cpp — subscribes /netft/proc_probe (wrench in PROBE axes)
-// Control loop order: FK → Admittance (v3) → PoseError(log) → Limits → IK
+// Control loop order: FK → Admittance (pseudocode-accurate) → PoseError(log) → Limits → IK
 
 #include "admittance_node.hpp"
 
@@ -8,7 +8,7 @@ namespace ur_admittance_controller {
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 : Node("admittance_node", options) {
   RCLCPP_INFO_ONCE(get_logger(),
-    "Initializing UR Admittance Controller (v3-fixed) — 6-DOF force-compliant control");
+    "Initializing UR Admittance Controller (v3-fixed, full twist adjoint on rates)");
 
   param_listener_ = std::make_shared<ur_admittance_controller::ParamListener>(
       get_node_parameters_interface());
@@ -75,6 +75,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 }
 
 void AdmittanceNode::SetAdmittanceGains(const Params::Admittance& p) {
+  // Parameters remain in [linear; angular] order; state/order is consistent throughout.
   M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
   K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
   D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
@@ -87,7 +88,7 @@ void AdmittanceNode::SetAdmittanceGains(const Params::Admittance& p) {
 }
 
 void AdmittanceNode::configure() {
-  // Wrench in PROBE axes (matches refactored wrench_node)
+  // Wrench in PROBE axes (matches wrench_node; we re-express to B_des inside ComputeAdmittance)
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
       "/netft/proc_probe", rclcpp::SensorDataQoS(),
       [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) {
@@ -121,7 +122,7 @@ void AdmittanceNode::configure() {
 
 void AdmittanceNode::ControlCycle() {
   GetXBPCurrent();             // FK: X_BP_current, X_BW3
-  ComputeAdmittance();         // v3-fixed core
+  ComputeAdmittance();         // core (now includes full twist adjoint on rates)
   ComputePoseError();          // diagnostics (cmd − meas)
   LimitToWorkspace();
   ComputeAndPubJointVelocities();
@@ -160,7 +161,7 @@ void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::
                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
 }
 
-}  
+}  // namespace ur_admittance_controller
 
 int main(int argc, char* argv[]) {
   rclcpp::init(argc, argv);
