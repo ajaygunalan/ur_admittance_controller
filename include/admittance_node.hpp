@@ -238,6 +238,7 @@ private:
   void ComputeAndPubJointVelocities();
   void LimitToWorkspace();
   void GetXBPCurrent();
+  void SetAdmittanceGains(const Params::Admittance& params);
 
   // ROS I/O
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;

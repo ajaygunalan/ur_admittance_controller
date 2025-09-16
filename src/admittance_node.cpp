@@ -18,31 +18,14 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
     auto result = param_listener_->update(params);
     if (result.successful) {
       params_ = param_listener_->get_params();
-      auto& p = params_.admittance;
-      M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
-      K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
-      D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
-        "Admittance: M=[%s], K=[%s], D=[%s]",
-        fmt::format("{:.1f}", fmt::join(p.mass, ", ")).c_str(),
-        fmt::format("{:.1f}", fmt::join(p.stiffness, ", ")).c_str(),
-        fmt::format("{:.1f}", fmt::join(p.damping, ", ")).c_str());
+      SetAdmittanceGains(params_.admittance);
     } else {
       RCLCPP_WARN(get_logger(), "Parameter update rejected: %s", result.reason.c_str());
     }
     return result;
   });
 
-  auto& p = params_.admittance;
-  M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
-  K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
-  D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
-
-  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
-    "Admittance: M=[%s], K=[%s], D=[%s]",
-    fmt::format("{:.1f}", fmt::join(p.mass, ", ")).c_str(),
-    fmt::format("{:.1f}", fmt::join(p.stiffness, ", ")).c_str(),
-    fmt::format("{:.1f}", fmt::join(p.damping, ", ")).c_str());
+  SetAdmittanceGains(params_.admittance);
 
   const auto joint_count = params_.joints.size();
   q_current_.resize(joint_count, 0.0);
@@ -89,6 +72,18 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   logging::LogPose(get_logger(), "Equilibrium:",
                    Vector3d(pos.data()),
                    Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]));
+}
+
+void AdmittanceNode::SetAdmittanceGains(const Params::Admittance& p) {
+  M_inverse_diag = Eigen::Map<const Eigen::VectorXd>(p.mass.data(), 6).cwiseInverse();
+  K_diag = Eigen::Map<const Eigen::VectorXd>(p.stiffness.data(), 6);
+  D_diag = Eigen::Map<const Eigen::VectorXd>(p.damping.data(), 6);
+
+  RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+    "Admittance: M=[%s], K=[%s], D=[%s]",
+    fmt::format("{:.1f}", fmt::join(p.mass, ", ")).c_str(),
+    fmt::format("{:.1f}", fmt::join(p.stiffness, ", ")).c_str(),
+    fmt::format("{:.1f}", fmt::join(p.damping, ", ")).c_str());
 }
 
 void AdmittanceNode::configure() {
