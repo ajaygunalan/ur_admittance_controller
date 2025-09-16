@@ -117,7 +117,7 @@ constexpr double WORKSPACE_Z_MAX = 1.0;
 
 constexpr double ARM_MAX_ACCELERATION = 1.0;
 
-}
+}  // namespace constants
 
 namespace conversions {
 
@@ -145,7 +145,7 @@ geometry_msgs::msg::WrenchStamped ToMsg(
     const std::string& frame_id,
     const rclcpp::Time& stamp);
 
-}
+}  // namespace conversions
 
 inline double SanitizeJointAngle(double angle) {
     return std::abs(angle) < 1e-12 ? 0.0 : std::round(angle * 10000.0) / 10000.0;
@@ -191,7 +191,7 @@ Result<KinematicsComponents> InitializeFromUrdfString(
 
 Transform KdlToEigen(const KDL::Frame& frame);
 
-}
+}  // namespace kinematics
 
 namespace logging {
 
@@ -218,7 +218,7 @@ inline void LogJoints(const Logger& logger, const char* prefix, const JointVecto
                 prefix, joints[0], joints[1], joints[2], joints[3], joints[4], joints[5]);
 }
 
-}
+}  // namespace logging
 
 class AdmittanceNode : public rclcpp::Node {
 public:
@@ -231,6 +231,7 @@ private:
   void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
   void DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
 
+  // core control pieces (implemented in *_computations_new.cpp)
   Status LoadKinematics();
   void ComputeAdmittance();
   void ComputePoseError();
@@ -238,6 +239,7 @@ private:
   void LimitToWorkspace();
   void GetXBPCurrent();
 
+  // ROS I/O
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_sub_;
@@ -248,6 +250,7 @@ private:
   std::vector<double> q_current_;
   std::vector<double> q_dot_cmd_;
 
+  // state
   Vector6d F_P_B = Vector6d::Zero();
   Vector6d V_P_B_commanded = Vector6d::Zero();
 
@@ -265,6 +268,7 @@ private:
   double arm_max_acc_;
   double admittance_ratio_;
 
+  // kinematics
   KDL::Tree kdl_tree_;
   KDL::Chain kdl_chain_;
   KDL::Frame X_W3P;
@@ -284,4 +288,4 @@ private:
   std::unordered_map<std::string, size_t> joint_name_to_index_;
 };
 
-}
+}  // namespace ur_admittance_controller
