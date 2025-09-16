@@ -4,9 +4,8 @@ namespace ur_admittance_controller {
 
 using TrajectoryAction = control_msgs::action::FollowJointTrajectory;
 
-// ============================================================================
 // Constructor - All I/O Setup
-// ============================================================================
+
 
 WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node") {
     // Setup wrench subscription
