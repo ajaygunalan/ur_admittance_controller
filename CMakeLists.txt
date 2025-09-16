@@ -27,6 +27,8 @@ find_package(rcl_interfaces REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
+find_package(tf2_kdl REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(orocos_kdl REQUIRED)
 find_package(kdl_parser REQUIRED)
@@ -47,6 +49,8 @@ set(NODE_DEPENDENCIES
   tf2
   tf2_ros
   tf2_eigen
+  tf2_kdl
+  tf2_geometry_msgs
   orocos_kdl
   urdf
   kdl_parser
@@ -105,7 +109,7 @@ target_link_libraries(wrench_calibration_node
 )
 
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
-ament_target_dependencies(wrench_node rclcpp geometry_msgs sensor_msgs std_srvs tf2 tf2_ros tf2_eigen)
+ament_target_dependencies(wrench_node rclcpp geometry_msgs sensor_msgs std_srvs tf2 tf2_ros tf2_eigen tf2_kdl tf2_geometry_msgs)
 ament_target_dependencies(init_robot rclcpp rclcpp_action control_msgs controller_manager_msgs 
   sensor_msgs trajectory_msgs rcl_interfaces orocos_kdl kdl_parser urdf)
 ament_target_dependencies(wrench_calibration_node rclcpp rclcpp_action control_msgs 

@@ -2,241 +2,198 @@
 
 namespace ur_admittance_controller {
 
-// Implementation of ToMsg function declared in header
+// Keep this lightweight conversion here (matches existing external interface)
 namespace conversions {
-    geometry_msgs::msg::WrenchStamped ToMsg(
-        const Wrench6d& wrench,
-        const std::string& frame_id,
-        const rclcpp::Time& stamp) {
-        geometry_msgs::msg::WrenchStamped msg;
-        msg.header.stamp = stamp;
-        msg.header.frame_id = frame_id;
-        msg.wrench.force.x = wrench[0];
-        msg.wrench.force.y = wrench[1];
-        msg.wrench.force.z = wrench[2];
-        msg.wrench.torque.x = wrench[3];
-        msg.wrench.torque.y = wrench[4];
-        msg.wrench.torque.z = wrench[5];
-        return msg;
-    }
+geometry_msgs::msg::WrenchStamped ToMsg(const Wrench6d& w,
+                                        const std::string& frame_id,
+                                        const rclcpp::Time& stamp) {
+  geometry_msgs::msg::WrenchStamped msg;
+  msg.header.stamp = stamp;
+  msg.header.frame_id = frame_id;
+  msg.wrench.force.x  = w[0];
+  msg.wrench.force.y  = w[1];
+  msg.wrench.force.z  = w[2];
+  msg.wrench.torque.x = w[3];
+  msg.wrench.torque.y = w[4];
+  msg.wrench.torque.z = w[5];
+  return msg;
 }
+} // namespace conversions
 
-Matrix3d CrossMatrix(const Vector3d& v) {
-    Matrix3d result;
-    result <<     0, -v.z(),  v.y(),
-              v.z(),      0, -v.x(),
-             -v.y(),  v.x(),      0;
-    return result;
-}
+// Gravity compensation (same math, concise)
+Wrench6d CompensateWrench(const Wrench6d& w_raw,
+                          const Transform& X_TB,
+                          const GravityCompensationParams& p) {
+  // g_S = R_SE * R_TB * g_B
+  const Force3d  g_S = p.R_SE * X_TB.rotation() * p.f_grav_b;
+  const Torque3d tau_g_S = p.p_CoM_s.cross(g_S);
 
-Wrench6d TransformWrench(const Wrench6d& wrench_A, const Transform& X_BA) {
-    Matrix3d R = X_BA.rotation();
-    Vector3d p = X_BA.translation();
+  Wrench6d w_g;   w_g << g_S, tau_g_S;
+  Wrench6d w_bias; w_bias << p.f_bias_s, p.t_bias_s;
 
-    Wrench6d wrench_B;
-    wrench_B.head<3>() = R * wrench_A.head<3>();
-    wrench_B.tail<3>() = R * wrench_A.tail<3>() + p.cross(wrench_B.head<3>());
-
-    return wrench_B;
-}
-
-Wrench6d CompensateWrench(
-    const Wrench6d& wrench_raw,
-    const Transform& X_TB,
-    const GravityCompensationParams& params) {
-
-  Force3d f_gravity_S = params.R_SE * X_TB.rotation() * params.f_grav_b;
-
-  Wrench6d wrench_gravity;
-  wrench_gravity.head<3>() = f_gravity_S;
-  wrench_gravity.tail<3>() = params.p_CoM_s.cross(f_gravity_S);
-
-  Wrench6d wrench_bias;
-  wrench_bias.head<3>() = params.f_bias_s;
-  wrench_bias.tail<3>() = params.t_bias_s;
-
-  return wrench_raw - wrench_gravity - wrench_bias;
-}
-
-Wrench6d TransformWrenchToBase(
-    const Wrench6d& wrench_sensor,
-    const Transform& X_BS) {
-  return TransformWrench(wrench_sensor, X_BS.inverse());
+  return w_raw - w_g - w_bias;
 }
 
 WrenchNode::WrenchNode()
-    : Node("wrench_node"),
-      tf_buffer_(std::make_unique<tf2_ros::Buffer>(get_clock())),
-      tf_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this, true)) {
+: Node("wrench_node"),
+  tf_buffer_(std::make_unique<tf2_ros::Buffer>(get_clock())),
+  tf_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this, true)) {
 
-    auto status = LoadCalibrationParams();
-    if (!status) {
-        RCLCPP_FATAL(get_logger(), "Failed to load calibration: %s - Calibration is required for safety",
-                     status.error().message.c_str());
-        std::exit(1);
-    }
+  // Calibration must exist
+  auto status = LoadCalibrationParams();
+  if (!status) {
+    RCLCPP_FATAL(get_logger(), "Failed to load calibration: %s", status.error().message.c_str());
+    std::exit(1);
+  }
 
-    SetupROSInterfaces();
+  // Start timer to resolve static SENSOR→PROBE transform once spinning
+  using namespace std::chrono_literals;
+  init_timer_ = create_wall_timer(
+      300ms, std::bind(&WrenchNode::InitStaticTransformOnce, this));
+  SetupROSInterfaces();
+  RCLCPP_INFO(get_logger(), "Wrench node initialized with calibration");
+}
 
-    ComputeSensorToProbeAdjoint();
-
-    RCLCPP_INFO(get_logger(), "Wrench node initialized with calibration");
+void WrenchNode::InitStaticTransformOnce() {
+  std::string err;
+  // Quiet check: retrieve error reason without tf2 printing warnings
+  if (!tf_buffer_->canTransform(frames::PROBE_FRAME, frames::SENSOR_FRAME,
+                                tf2::TimePointZero, &err)) {
+    RCLCPP_DEBUG(get_logger(), "Waiting for static TF SENSOR->PROBE: %s", err.c_str());
+    return;
+  }
+  T_SP_ = tf_buffer_->lookupTransform(frames::PROBE_FRAME, frames::SENSOR_FRAME,
+                                      tf2::TimePointZero);
+  sp_ready_ = true;
+  init_timer_->cancel();
+  RCLCPP_INFO(get_logger(), "Cached static SENSOR->PROBE transform");
 }
 
 void WrenchNode::SetupROSInterfaces() {
-    wrench_sub_ = create_subscription<WrenchMsg>("/netft/raw_sensor", rclcpp::SensorDataQoS(),
-        std::bind(&WrenchNode::WrenchCallback, this, std::placeholders::_1));
-    wrench_proc_sensor_pub_ = create_publisher<WrenchMsg>(
-        "/netft/proc_sensor", rclcpp::SensorDataQoS());
-    wrench_proc_probe_pub_ = create_publisher<WrenchMsg>(
-        "/netft/proc_probe", rclcpp::SensorDataQoS());
-    wrench_proc_probe_base_pub_ = create_publisher<WrenchMsg>(
-        "/netft/proc_probe_base", rclcpp::SensorDataQoS());
+  wrench_sub_ = create_subscription<WrenchMsg>("/netft/raw_sensor", rclcpp::SensorDataQoS(),
+      std::bind(&WrenchNode::WrenchCallback, this, std::placeholders::_1));
+
+  wrench_proc_sensor_pub_ = create_publisher<WrenchMsg>("/netft/proc_sensor", rclcpp::SensorDataQoS());
+  wrench_proc_probe_pub_  = create_publisher<WrenchMsg>("/netft/proc_probe",  rclcpp::SensorDataQoS());
+  // /netft/proc_probe_base removed per request.
 }
 
 void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
-    if (!tf_buffer_->canTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME,
-                                   tf2::TimePointZero)) {
-        RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
-                             "Transform %s->%s unavailable", frames::ROBOT_BASE_FRAME, frames::ROBOT_TOOL_FRAME);
-        return;
-    }
+  // Early return until static transform is ready
+  if (!sp_ready_) return;
 
-    // Step 1: Apply Low-Pass Filter (before compensation)
-    Wrench6d f_raw = conversions::FromMsg(*msg);
-    if (first_sample_) {
-        lpf_state_ = f_raw;
-        first_sample_ = false;
-    }
-    Wrench6d f_filtered = ALPHA * f_raw + (1.0 - ALPHA) * lpf_state_;
-    lpf_state_ = f_filtered;
-    f_raw_s_ = SanitizeWrench(f_filtered);
+  // 1) LPF + sanitize (SENSOR frame)
+  const Wrench6d w_raw  = conversions::FromMsg(*msg);
+  if (first_sample_) { lpf_state_ = w_raw; first_sample_ = false; }
+  const Wrench6d w_filt = ALPHA * w_raw + (1.0 - ALPHA) * lpf_state_;
+  lpf_state_ = w_filt;
+  const Wrench6d w_s    = SanitizeWrench(w_filt);
 
-    try {
-        X_TB_ = tf2::transformToEigen(tf_buffer_->lookupTransform(
-            frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME,
-            tf2::TimePointZero, std::chrono::milliseconds(50)));
-    } catch (const tf2::TransformException& ex) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
-                             "Transform lookup failed: %s", ex.what());
-        return;
-    }
+  // 2) TOOL ← BASE (dynamic) for gravity mapping; if missing, warn (throttled) and skip
+  if (!tf_buffer_->canTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero)) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
+                         "TOOL←BASE transform not available");
+    return;
+  }
+  const auto T_TB = tf_buffer_->lookupTransform(frames::ROBOT_TOOL_FRAME, frames::ROBOT_BASE_FRAME, tf2::TimePointZero);
+  X_TB_ = tf2::transformToEigen(T_TB);
 
-    if (!X_TB_.matrix().allFinite()) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
-                             "Invalid transform (NaN/Inf)");
-        return;
-    }
+  // 3) Gravity + bias compensation (still in SENSOR)
+  ft_proc_s_ = CompensateWrench(w_s, X_TB_, calibration_params_);
 
-    ft_proc_s_ = CompensateWrench(f_raw_s_, X_TB_, calibration_params_);
-    
-    // Step 2: Apply Deadband Filter (after compensation)
-    for (int i = 0; i < 3; ++i) {
-        if (std::abs(ft_proc_s_[i]) <= DEADBAND_FORCE) ft_proc_s_[i] = 0.0;
-        if (std::abs(ft_proc_s_[i+3]) <= DEADBAND_TORQUE) ft_proc_s_[i+3] = 0.0;
-    }
-    
-    wrench_probe_ = adjoint_probe_sensor_ * ft_proc_s_;
+  // 4) Deadband (concise)
+  for (int i = 0; i < 3; ++i) {
+    if (std::abs(ft_proc_s_[i])   <= DEADBAND_FORCE)  ft_proc_s_[i]   = 0.0;
+    if (std::abs(ft_proc_s_[i+3]) <= DEADBAND_TORQUE) ft_proc_s_[i+3] = 0.0;
+  }
 
-    Transform X_BP;
-    try {
-        X_BP = tf2::transformToEigen(tf_buffer_->lookupTransform(
-            frames::ROBOT_BASE_FRAME, frames::PROBE_FRAME,
-            tf2::TimePointZero, std::chrono::milliseconds(50)));
-    } catch (const tf2::TransformException& ex) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
-                             "Transform lookup failed: %s", ex.what());
-        return;
-    }
-    ft_proc_b_ = TransformWrenchToBase(wrench_probe_, X_BP);
+  // 5) Publish compensated SENSOR wrench
+  wrench_proc_sensor_pub_->publish(conversions::ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
 
-    wrench_proc_sensor_pub_->publish(
-        conversions::ToMsg(ft_proc_s_, frames::SENSOR_FRAME, msg->header.stamp));
-    wrench_proc_probe_pub_->publish(
-        conversions::ToMsg(wrench_probe_, frames::PROBE_FRAME, msg->header.stamp));
-    wrench_proc_probe_base_pub_->publish(
-        conversions::ToMsg(ft_proc_b_, frames::ROBOT_BASE_FRAME, msg->header.stamp));
+  // 6) Minimal, useful logging (throttled to 20 seconds)
+  const double fN = ft_proc_s_.head<3>().norm(), tN = ft_proc_s_.tail<3>().norm();
+  if (fN > constants::FORCE_THRESHOLD || tN > constants::TORQUE_THRESHOLD) {
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 20000,
+      "Wrench[S]: F=%.2fN [%.2f,%.2f,%.2f], T=%.2fNm [%.2f,%.2f,%.2f]",
+      fN, ft_proc_s_(0), ft_proc_s_(1), ft_proc_s_(2),
+      tN, ft_proc_s_(3), ft_proc_s_(4), ft_proc_s_(5));
+  }
+
+  // 7) SENSOR → PROBE (static): full dual‑adjoint via tf2_kdl
+  tf2::Stamped<KDL::Wrench> w_s_kdl, w_p_kdl;
+  {
+    const KDL::Vector F(ft_proc_s_(0), ft_proc_s_(1), ft_proc_s_(2));
+    const KDL::Vector M(ft_proc_s_(3), ft_proc_s_(4), ft_proc_s_(5));
+    w_s_kdl = tf2::Stamped<KDL::Wrench>(KDL::Wrench(F, M),
+                                        tf2_ros::fromMsg(msg->header.stamp),
+                                        frames::SENSOR_FRAME);
+  }
+  tf2::doTransform(w_s_kdl, w_p_kdl, T_SP_);
+
+  auto probe_msg = tf2::toMsg(w_p_kdl);
+  probe_msg.header.frame_id = frames::PROBE_FRAME;
+  wrench_proc_probe_pub_->publish(probe_msg);
 }
 
+// Calibration load (same behavior; concise checks)
 Status WrenchNode::LoadCalibrationParams() {
-    const char* workspace_env = std::getenv("ROS_WORKSPACE");
-    std::string workspace = workspace_env ? workspace_env : 
-                           std::string(std::getenv("HOME")) + "/ros2_ws";
-    auto config_path = std::filesystem::path(workspace) / "src" / "ur_admittance_controller" / "config" / "wrench_calibration.yaml";
-    
-    if (!std::filesystem::exists(config_path)) {
-        return tl::unexpected(MakeError(ErrorCode::kFileNotFound, 
-            fmt::format("Config file not found: {}", config_path.string())));
-    }
-    
-    YAML::Node config;
-    try {
-        config = YAML::LoadFile(config_path.string());
-    } catch (const YAML::Exception& e) {
-        return tl::unexpected(MakeError(ErrorCode::kInvalidConfiguration,
-            fmt::format("Failed to parse YAML: {}", e.what())));
-    }
+  const char* ws_env = std::getenv("ROS_WORKSPACE");
+  const std::string ws = ws_env ? ws_env : (std::string(std::getenv("HOME")) + "/ros2_ws");
+  const auto path = std::filesystem::path(ws) / "src" / "ur_admittance_controller" / "config" / "wrench_calibration.yaml";
 
-    auto rot_data = config["sensor_rotation"].as<std::vector<double>>();
-    
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            R_SE_(i,j) = rot_data[i*3 + j];
+  if (!std::filesystem::exists(path)) {
+    return tl::unexpected(MakeError(ErrorCode::kFileNotFound,
+           fmt::format("Config file not found: {}", path.string())));
+  }
 
-    auto gravity_vec = config["gravity_force"].as<std::vector<double>>();
-    auto force_bias_vec = config["force_bias"].as<std::vector<double>>();
-    auto torque_bias_vec = config["torque_bias"].as<std::vector<double>>();
-    auto com_vec = config["center_of_mass"].as<std::vector<double>>();
+  YAML::Node cfg;
+  try { cfg = YAML::LoadFile(path.string()); }
+  catch (const YAML::Exception& e) {
+    return tl::unexpected(MakeError(ErrorCode::kInvalidConfiguration,
+           fmt::format("YAML parse error: {}", e.what())));
+  }
 
-    f_grav_b_ = Vector3d(gravity_vec.data());
-    f_bias_s_ = Vector3d(force_bias_vec.data());
-    t_bias_s_ = Vector3d(torque_bias_vec.data());
-    p_CoM_s_ = Vector3d(com_vec.data());
+  const auto rot = cfg["sensor_rotation"].as<std::vector<double>>();
+  if (rot.size() != 9) {
+    return tl::unexpected(MakeError(ErrorCode::kInvalidConfiguration,
+           "sensor_rotation must have 9 elements"));
+  }
+  R_SE_ << rot[0], rot[1], rot[2],
+           rot[3], rot[4], rot[5],
+           rot[6], rot[7], rot[8];
 
-    calibration_params_ = {R_SE_, f_grav_b_, f_bias_s_, t_bias_s_, p_CoM_s_};
+  const auto grav  = cfg["gravity_force"].as<std::vector<double>>();
+  const auto fbias = cfg["force_bias"].as<std::vector<double>>();
+  const auto tbias = cfg["torque_bias"].as<std::vector<double>>();
+  const auto com   = cfg["center_of_mass"].as<std::vector<double>>();
+  if (grav.size()!=3 || fbias.size()!=3 || tbias.size()!=3 || com.size()!=3) {
+    return tl::unexpected(MakeError(ErrorCode::kInvalidConfiguration,
+           "gravity_force/force_bias/torque_bias/center_of_mass must be size 3"));
+  }
 
-    RCLCPP_INFO(get_logger(), "Calibration loaded");
-    return {};
+  f_grav_b_ = Vector3d(grav.data());
+  f_bias_s_ = Vector3d(fbias.data());
+  t_bias_s_ = Vector3d(tbias.data());
+  p_CoM_s_  = Vector3d(com.data());
+
+  calibration_params_ = {R_SE_, f_grav_b_, f_bias_s_, t_bias_s_, p_CoM_s_};
+  RCLCPP_INFO(get_logger(), "Calibration loaded");
+  return {};
 }
 
-void WrenchNode::ComputeSensorToProbeAdjoint() {
-    Eigen::Isometry3d X_SP;
-    try {
-        X_SP = tf2::transformToEigen(
-            tf_buffer_->lookupTransform(frames::SENSOR_FRAME, frames::PROBE_FRAME,
-                                       tf2::TimePointZero, std::chrono::seconds(5)));
-    } catch (const tf2::TransformException& ex) {
-        RCLCPP_ERROR(get_logger(), "Transform %s->%s not available after 5s. Check URDF! Error: %s",
-                     frames::SENSOR_FRAME, frames::PROBE_FRAME, ex.what());
-        return;
-    }
-
-    Eigen::Matrix3d R_PS = X_SP.rotation().transpose();
-    Eigen::Vector3d p_SP = X_SP.translation();
-
-    adjoint_probe_sensor_.setZero();
-    adjoint_probe_sensor_.block<3,3>(0,0) = R_PS;
-    adjoint_probe_sensor_.block<3,3>(3,3) = R_PS;
-    adjoint_probe_sensor_.block<3,3>(3,0) = -R_PS * CrossMatrix(p_SP);
-
-    RCLCPP_INFO(get_logger(), "Sensor to probe transform ready");
-}
-
-}  // namespace ur_admittance_controller
+} // namespace ur_admittance_controller
 
 int main(int argc, char* argv[]) {
-    rclcpp::init(argc, argv);
-
-    try {
-        auto node = std::make_shared<ur_admittance_controller::WrenchNode>();
-        RCLCPP_INFO(node->get_logger(), "Wrench compensation node started");
-        rclcpp::spin(node);
-    } catch (const std::exception& e) {
-        RCLCPP_FATAL(rclcpp::get_logger("main"), "Failed to start wrench node: %s", e.what());
-        rclcpp::shutdown();
-        return 1;
-    }
-
+  rclcpp::init(argc, argv);
+  try {
+    auto node = std::make_shared<ur_admittance_controller::WrenchNode>();
+    RCLCPP_INFO(node->get_logger(), "Wrench compensation node started");
+    rclcpp::spin(node);
+  } catch (const std::exception& e) {
+    RCLCPP_FATAL(rclcpp::get_logger("main"), "Failed to start wrench node: %s", e.what());
     rclcpp::shutdown();
-    return 0;
+    return 1;
+  }
+  rclcpp::shutdown();
+  return 0;
 }

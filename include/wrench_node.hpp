@@ -13,33 +13,33 @@
 #include <fmt/core.h>
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/wrench_stamped.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_eigen/tf2_eigen.hpp>
+#include <tf2_kdl/tf2_kdl.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <kdl/frames.hpp>
 #include <tl/expected.hpp>
 #include <yaml-cpp/yaml.h>
 
 namespace ur_admittance_controller {
 
-static constexpr size_t DOF = 6;
-
+// ---------- Common typedefs ----------
 using Vector3d = Eigen::Vector3d;
 using Matrix3d = Eigen::Matrix3d;
 using Transform = Eigen::Isometry3d;
+using Wrench6d  = Eigen::Matrix<double, 6, 1>;
+using Force3d   = Eigen::Vector3d;
+using Torque3d  = Eigen::Vector3d;
 
-using Matrix6d = Eigen::Matrix<double, 6, 6>;
-using Vector6d = Eigen::Matrix<double, 6, 1>;
-using Wrench6d = Eigen::Matrix<double, 6, 1>;
-
-using Force3d = Eigen::Vector3d;
-using Torque3d = Eigen::Vector3d;
-
+// ---------- Parameters / error plumbing ----------
 struct GravityCompensationParams {
-    Matrix3d R_SE;
-    Vector3d f_grav_b;
-    Vector3d f_bias_s;
-    Vector3d t_bias_s;
-    Vector3d p_CoM_s;
+  Matrix3d R_SE;     // rotation: {E}←{S}
+  Vector3d f_grav_b; // gravity in {B}
+  Vector3d f_bias_s; // force bias in {S}
+  Vector3d t_bias_s; // torque bias in {S}
+  Vector3d p_CoM_s;  // CoM vector in {S}
 };
 
 enum class ErrorCode {
@@ -54,145 +54,110 @@ enum class ErrorCode {
 };
 
 struct Error {
-  ErrorCode code;
+  ErrorCode code{};
   std::string message;
 };
 
 template<typename T>
 using Result = tl::expected<T, Error>;
-
 using Status = Result<void>;
 
-inline Error MakeError(ErrorCode code, const std::string& msg) {
-  return {code, msg};
-}
+inline Error MakeError(ErrorCode code, const std::string& msg) { return {code, msg}; }
 
+// ---------- Constants / frames ----------
 namespace constants {
-
-constexpr double GRAVITY = 9.81;
-
-constexpr auto DEFAULT_TIMEOUT = std::chrono::seconds(10);
-constexpr auto SERVICE_TIMEOUT = std::chrono::seconds(5);
-constexpr int CONTROL_LOOP_HZ = 100;
-constexpr int DEFAULT_QUEUE_SIZE = 10;
-
-constexpr int LOG_THROTTLE_MS = 1000;
-
-constexpr double FORCE_THRESHOLD = 0.1;
-constexpr double TORQUE_THRESHOLD = 0.1;
-
-constexpr auto SAMPLE_DELAY = std::chrono::milliseconds(100);
-
-constexpr double DEFAULT_MOVEMENT_DURATION = 12.0;
-
-constexpr double CALIBRATION_ANGLE_LARGE = M_PI / 3.0;
-constexpr double CALIBRATION_ANGLE_SMALL = M_PI / 6.0;
-
-constexpr double CALIBRATION_INDEX_OFFSET = 1.0;
-constexpr double CALIBRATION_MODULO_DIVISOR = 8.0;
-constexpr double CALIBRATION_TRAJECTORY_DURATION = 3.0;
-
-constexpr double WORKSPACE_X_MIN = -1.0;
-constexpr double WORKSPACE_X_MAX = 1.0;
-constexpr double WORKSPACE_Y_MIN = -1.0;
-constexpr double WORKSPACE_Y_MAX = 1.0;
-constexpr double WORKSPACE_Z_MIN = 0.0;
-constexpr double WORKSPACE_Z_MAX = 1.0;
-
-constexpr double ARM_MAX_ACCELERATION = 1.0;
-
+  constexpr int LOG_THROTTLE_MS = 1000;
+  constexpr double FORCE_THRESHOLD  = 0.1;  // for informative logging
+  constexpr double TORQUE_THRESHOLD = 0.1;
 }
 
 namespace frames {
-    constexpr const char* ROBOT_BASE_FRAME = "base_link";
-    constexpr const char* ROBOT_TOOL_FRAME = "tool0";
-    constexpr const char* SENSOR_FRAME = "netft_link1";
-    constexpr const char* PROBE_FRAME = "p42v_link1";
+  constexpr const char* ROBOT_BASE_FRAME = "base_link";
+  constexpr const char* ROBOT_TOOL_FRAME = "tool0";
+  constexpr const char* SENSOR_FRAME     = "netft_link1";
+  constexpr const char* PROBE_FRAME      = "p42v_link1";
 }
 
+// ---------- Conversions ----------
 namespace conversions {
-
 inline Wrench6d FromMsg(const geometry_msgs::msg::WrenchStamped& msg) {
-    return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
-                          msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
+  return (Wrench6d() << msg.wrench.force.x,  msg.wrench.force.y,  msg.wrench.force.z,
+                         msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
 }
 
-inline Wrench6d FromMsg(const geometry_msgs::msg::Wrench& wrench) {
-    return (Wrench6d() << wrench.force.x, wrench.force.y, wrench.force.z,
-                          wrench.torque.x, wrench.torque.y, wrench.torque.z).finished();
+inline Wrench6d FromMsg(const geometry_msgs::msg::Wrench& w) {
+  return (Wrench6d() << w.force.x,  w.force.y,  w.force.z,
+                         w.torque.x, w.torque.y, w.torque.z).finished();
 }
 
-inline void FillMsg(const Wrench6d& wrench, geometry_msgs::msg::WrenchStamped& msg) {
-    msg.wrench.force.x = wrench[0];
-    msg.wrench.force.y = wrench[1];
-    msg.wrench.force.z = wrench[2];
-    msg.wrench.torque.x = wrench[3];
-    msg.wrench.torque.y = wrench[4];
-    msg.wrench.torque.z = wrench[5];
+inline void FillMsg(const Wrench6d& w, geometry_msgs::msg::WrenchStamped& msg) {
+  msg.wrench.force.x  = w[0];
+  msg.wrench.force.y  = w[1];
+  msg.wrench.force.z  = w[2];
+  msg.wrench.torque.x = w[3];
+  msg.wrench.torque.y = w[4];
+  msg.wrench.torque.z = w[5];
 }
 
-geometry_msgs::msg::WrenchStamped ToMsg(
-    const Wrench6d& wrench,
-    const std::string& frame_id,
-    const rclcpp::Time& stamp);
+// Implemented in the .cpp (kept as a small helper there)
+geometry_msgs::msg::WrenchStamped ToMsg(const Wrench6d& wrench,
+                                        const std::string& frame_id,
+                                        const rclcpp::Time& stamp);
+} // namespace conversions
 
+// --------- small utility ----------
+inline Wrench6d SanitizeWrench(const Wrench6d& w) {
+  Wrench6d out;
+  out.head<3>() = w.head<3>().unaryExpr([](double v){ return std::abs(v) < 1e-6 ? 0.0 : v; });
+  out.tail<3>() = w.tail<3>().unaryExpr([](double v){ return std::abs(v) < 1e-7 ? 0.0 : v; });
+  return out;
 }
 
-inline Wrench6d SanitizeWrench(const Wrench6d& wrench) {
-    Wrench6d result;
-    result.head<3>() = wrench.head<3>().unaryExpr([](double v) {
-        return std::abs(v) < 1e-6 ? 0.0 : v;
-    });
-    result.tail<3>() = wrench.tail<3>().unaryExpr([](double v) {
-        return std::abs(v) < 1e-7 ? 0.0 : v;
-    });
-    return result;
-}
-
+// ---------- Node ----------
 class WrenchNode : public rclcpp::Node {
 public:
-    using WrenchMsg = geometry_msgs::msg::WrenchStamped;
-
-    WrenchNode();
+  using WrenchMsg = geometry_msgs::msg::WrenchStamped;
+  WrenchNode();
 
 private:
-    void WrenchCallback(const WrenchMsg::ConstSharedPtr msg);
-    Status LoadCalibrationParams();
-    void SetupROSInterfaces();
-    void ComputeSensorToProbeAdjoint();
+  void   WrenchCallback(const WrenchMsg::ConstSharedPtr msg);
+  Status LoadCalibrationParams();
+  void   SetupROSInterfaces();
+  void   InitStaticTransformOnce();
 
+  // --- state (SENSOR frame unless stated otherwise) ---
+  Wrench6d  f_raw_s_   = Wrench6d::Zero();
+  Transform X_TB_      = Transform::Identity();  // TOOL←BASE (for gravity mapping)
+  Wrench6d  ft_proc_s_ = Wrench6d::Zero();
 
-    Wrench6d f_raw_s_ = Wrench6d::Zero();
-    Transform X_TB_ = Transform::Identity();
-    Vector3d f_grav_s_ = Vector3d::Zero();
-    Wrench6d ft_proc_s_ = Wrench6d::Zero();
-    Wrench6d wrench_probe_ = Wrench6d::Zero();
-    Wrench6d ft_proc_b_ = Wrench6d::Zero();
+  // Cached static SENSOR→PROBE transform for tf2_kdl::doTransform
+  geometry_msgs::msg::TransformStamped T_SP_;
+  bool sp_ready_ = false;
+  rclcpp::TimerBase::SharedPtr init_timer_;
 
-    Eigen::Matrix<double, 6, 6> adjoint_probe_sensor_ = Eigen::Matrix<double, 6, 6>::Identity();
+  // Calibration
+  Matrix3d R_SE_   = Matrix3d::Identity();
+  Vector3d f_grav_b_ = Vector3d::Zero();
+  Vector3d f_bias_s_ = Vector3d::Zero();
+  Vector3d t_bias_s_ = Vector3d::Zero();
+  Vector3d p_CoM_s_  = Vector3d::Zero();
+  GravityCompensationParams calibration_params_;
 
-    Matrix3d R_SE_ = Matrix3d::Identity();
-    Vector3d f_grav_b_ = Vector3d::Zero();
-    Vector3d f_bias_s_ = Vector3d::Zero();
-    Vector3d t_bias_s_ = Vector3d::Zero();
-    Vector3d p_CoM_s_ = Vector3d::Zero();
+  // TF
+  std::unique_ptr<tf2_ros::Buffer>           tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
-    GravityCompensationParams calibration_params_;
+  // ROS I/O
+  rclcpp::Subscription<WrenchMsg>::SharedPtr wrench_sub_;
+  rclcpp::Publisher<WrenchMsg>::SharedPtr    wrench_proc_sensor_pub_;
+  rclcpp::Publisher<WrenchMsg>::SharedPtr    wrench_proc_probe_pub_;
 
-    std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
-    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-
-    rclcpp::Subscription<WrenchMsg>::SharedPtr wrench_sub_;
-    rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_sensor_pub_;
-    rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_probe_pub_;
-    rclcpp::Publisher<WrenchMsg>::SharedPtr wrench_proc_probe_base_pub_;
-
-    // Filter state and parameters
-    Wrench6d lpf_state_ = Wrench6d::Zero();
-    bool first_sample_ = true;
-    static constexpr double ALPHA = 0.715;          // For fc=200Hz, ΔT=0.002s
-    static constexpr double DEADBAND_FORCE = 0.5;   // N
-    static constexpr double DEADBAND_TORQUE = 0.01; // Nm
+  // Filtering
+  Wrench6d lpf_state_ = Wrench6d::Zero();
+  bool     first_sample_ = true;
+  static constexpr double ALPHA            = 0.715; // fc≈200 Hz, ΔT≈0.002 s
+  static constexpr double DEADBAND_FORCE   = 0.5;   // N
+  static constexpr double DEADBAND_TORQUE  = 0.01;  // N·m
 };
 
-}
+} 
