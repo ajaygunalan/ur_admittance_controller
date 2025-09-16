@@ -1,238 +1,149 @@
-## Admittance Control for Robot Manipulators
 
-### Problem Statement
+- **Step 0**: read the **wrench** from the robot and **convert to the ODE’s body basis** $B_{\text{des}}$ (this is new and explicit).
+- **Step 1**: run the **admittance ODE in** $B_{\text{des}}$ to get the pose offset and its rate.
+- **Step 2**: build the **factored adjoints** from the **desired pose** and use them to convert the **offset** and the **offset rate** to **world**.
+- **Step 3**: compose the **commanded pose in world**.
+- **Step 4**: compute **pose error in world** (measured → commanded).
+- **Step 5**: form the **world twist command**.
+- **Step 6 (mandatory)**: solve for **joint velocities** and **send** them to the robot.
 
-A robot manipulator needs to interact compliantly with its environment by modulating its motion in response to external forces. The admittance controller treats the robot as a virtual mass-spring-damper system that responds to external wrenches (forces and torques) by generating appropriate velocities.
-
-### Model
-
-The admittance control law models the robot's end-effector as a second-order dynamic system:
-
-$$\mathbf{M} \cdot \ddot{\mathbf{x}} + \mathbf{D} \cdot \dot{\mathbf{x}} + \mathbf{K} \cdot \mathbf{x} = \mathbf{F}_{\text{ext}}$$
-
-Where:
-- $\mathbf{M} \in \mathbb{R}^{6 \times 6}$: Virtual inertia matrix (diagonal)
-- $\mathbf{D} \in \mathbb{R}^{6 \times 6}$: Virtual damping matrix (diagonal)
-- $\mathbf{K} \in \mathbb{R}^{6 \times 6}$: Virtual stiffness matrix (diagonal)
-- $\mathbf{x} \in \mathbb{R}^6$: Pose error from equilibrium $[\Delta\mathbf{p}^T, \Delta\boldsymbol{\theta}^T]^T$
-- $\dot{\mathbf{x}} \in \mathbb{R}^6$: Cartesian velocity $[\mathbf{v}^T, \boldsymbol{\omega}^T]^T$
-- $\ddot{\mathbf{x}} \in \mathbb{R}^6$: Cartesian acceleration
-- $\mathbf{F}_{\text{ext}} \in \mathbb{R}^6$: External wrench $[\mathbf{f}^T, \boldsymbol{\tau}^T]^T$
-
-### Given
-
-- Joint positions: $\mathbf{q} \in \mathbb{R}^n$ from joint state feedback
-- External wrench: $^P\mathbf{F}_B \in \mathbb{R}^6$ measured at probe point P in base frame B
-- Desired equilibrium pose: $^B\mathbf{X}_{P,\text{des}} \in SE(3)$
-- Admittance parameters: $\mathbf{M}$, $\mathbf{D}$, $\mathbf{K}$ (diagonal matrices)
-- Robot kinematics: Forward kinematics $f_{FK}(\mathbf{q})$ and Jacobian $\mathbf{J}(\mathbf{q})$
-- Control frequency: $f_c = 100$ Hz (period $\Delta t = 0.01$ s)
-
-### To Find
-
-- Joint velocities: $\dot{\mathbf{q}} \in \mathbb{R}^n$ that realize the compliant behavior
+All quantities carry an explicit time index. Every step shows the matrices you asked to keep separate (translation first, then rotation). No code imports; just math‑style pseudocode.
 
 ---
 
-### 1. Control Loop Architecture
+## Notation & helpers (once)
 
-The admittance controller executes a control cycle at 100 Hz:
+- Pose of tool $B$ w.r.t. world $W$: $X_{WB}=(R_{WB},\,p_{WBo})$.
+- Small pose offset $\delta X=[\delta r;\, \delta p]$ (rot first, then trans).
+- Hat map for cross product:
 
-```
-for each control cycle at time t:
-    1. GetCurrentPose()        // Forward kinematics
-    2. ComputePoseError()       // Error from equilibrium  
-    3. ComputeAdmittance()      // Apply control law
-    4. LimitToWorkspace()       // Safety constraints
-    5. ComputeJointVelocities() // Inverse kinematics
-    6. PublishCommands()        // Send to robot
-```
+$\widehat{u}=\begin{bmatrix}0&-u_z&u_y\\u_z&0&-u_x\\-u_y&u_x&0\end{bmatrix}$.
 
----
+**Factored adjoints (translation → rotation):**
 
-### 2. Forward Kinematics - Get Current Pose
+- Pose‑offset re‑expression (first‑order, no coupling)
 
-#### 2.1 Compute End-Effector Pose
+$\mathrm{Ad}_{\text{pose,trans}}= \mathrm{diag}(I_3,I_3), \qquad \mathrm{Ad}_{\text{pose,rot}}(R)= \mathrm{diag}(R,R), \qquad \mathrm{Ad}_{\text{pose}}(R,p)=\mathrm{Ad}_{\text{pose,trans}}\;\mathrm{Ad}_{\text{pose,rot}}(R)=\mathrm{diag}(R,R)$.
+- Twist / rate re‑expression (full spatial adjoint)
+$\mathrm{Ad}_{\text{twist,trans}}(p)= \begin{bmatrix}I_3&0\\ \widehat{p}&I_3\end{bmatrix},\qquad \mathrm{Ad}_{\text{twist,rot}}(R)=\mathrm{diag}(R,R), \qquad \mathrm{Ad}_{\text{twist}}(R,p)=\mathrm{Ad}_{\text{twist,trans}}(p)\;\mathrm{Ad}_{\text{twist,rot}}(R)= \begin{bmatrix}R&0\\ \widehat{p}\,R&R\end{bmatrix}$.
 
-Given joint positions $\mathbf{q}$, compute the current pose of the probe point P in base frame B:
+- **Force re‑expression** (for wrenches): use the **dual** of the twist adjoint
 
-$$^B\mathbf{X}_{P,\text{curr}} = f_{FK}(\mathbf{q}) = ^B\mathbf{X}_{W3}(\mathbf{q}) \cdot ^{W3}\mathbf{X}_P$$
+$\mathrm{Ad}_{\text{force}}(R,p)=\mathrm{Ad}_{\text{twist}}(R,p)^{\top}$.
 
-Where:
-- $^B\mathbf{X}_{W3}(\mathbf{q})$: Wrist pose from forward kinematics
-- $^{W3}\mathbf{X}_P$: Fixed transform from wrist to probe point
+To re‑express a wrench $F$ from frame $A$ to frame $B$:  
+$F_B=\mathrm{Ad}_{\text{twist}}(X_{BA})^{\top} F_A$, with $X_{BA}=(R_{BA},p_{BA})$.
 
-The pose is represented as an isometry:
-$$^B\mathbf{X}_P = \begin{bmatrix} ^B\mathbf{R}_P & ^B\mathbf{p}_P \\ \mathbf{0}^T & 1 \end{bmatrix} \in SE(3)$$
+- Exponential / logarithm on $SO(3)$: $\mathrm{Exp3}(\cdot)$, $\mathrm{Log3}(\cdot)$.
+- Spatial Jacobian $J_s(q)$ (maps joint rates to **world‑expressed** tool twist at $B_o$).
 
 ---
 
-### 3. Compute Pose Error
+## Initialization (time $k=0$)
 
-#### 3.1 Position Error
+- Control period: $\Delta t$.
+- Gains: $M,B,K\in\mathbb{R}^{6\times6}$ (admittance); $K_p^W\in\mathbb{R}^{6\times6}$ (world P gain).
+- State (admittance, in $B_{\text{des}}$ axes):
 
-The position error is simply the difference:
-$$\Delta\mathbf{p} = ^B\mathbf{p}_{P,\text{curr}} - ^B\mathbf{p}_{P,\text{des}} \in \mathbb{R}^3$$
+$\delta X_{B_{\text{des}}}^{(0)}=\mathbf{0}_6,\qquad \dot{\delta X}_{B_{\text{des}}}^{(0)}=\mathbf{0}_6$.
 
-#### 3.2 Orientation Error
-
-The orientation error requires special handling on SO(3):
-
-1. Extract quaternions from rotation matrices:
-   $$\mathbf{q}_{\text{curr}} = \text{quat}(^B\mathbf{R}_{P,\text{curr}})$$
-   $$\mathbf{q}_{\text{des}} = \text{quat}(^B\mathbf{R}_{P,\text{des}})$$
-
-2. Ensure shortest rotation path:
-   $$\text{if } \mathbf{q}_{\text{curr}} \cdot \mathbf{q}_{\text{des}} < 0 \text{ then } \mathbf{q}_{\text{des}} \leftarrow -\mathbf{q}_{\text{des}}$$
-
-3. Compute error quaternion:
-   $$\mathbf{q}_{\text{err}} = \mathbf{q}_{\text{curr}} \otimes \mathbf{q}_{\text{des}}^{-1}$$
-
-4. Convert to axis-angle:
-   $$\Delta\boldsymbol{\theta} = \text{angle}(\mathbf{q}_{\text{err}}) \cdot \text{axis}(\mathbf{q}_{\text{err}}) \in \mathbb{R}^3$$
-
-#### 3.3 Combined Pose Error
-
-$$\mathbf{x}_{\text{err}} = \begin{bmatrix} \Delta\mathbf{p} \\ \Delta\boldsymbol{\theta} \end{bmatrix} \in \mathbb{R}^6$$
+- Known at $k=0$: desired pose $X_{WB,\text{des}}^{(0)}=(R_{\text{des}}^{(0)},p_{\text{des}}^{(0)})$, measured pose $X_{WB,\text{meas}}^{(0)}=(R_{\text{meas}}^{(0)},p_{\text{meas}}^{(0)})$, desired twist $V_{WB,\text{des}}^{W,(0)}$ (often $\mathbf{0}$).
 
 ---
 
-### 4. Compute Admittance
+## Per‑tick loop (compute $k\to k{+}1$)
 
-#### 4.1 Solve for Acceleration
+### **Step 0 — Acquire wrench and re‑express to $B_{\text{des}}$**
 
-Rearranging the admittance equation for acceleration:
+1. Read sensor wrench $F_S^{(k)}$ (expressed in the sensor frame $S$).
+2. Known transforms at $k$: $X_{WS}^{(k)}$ (sensor in world), $X_{WB,\text{des}}^{(k)}$ (desired tool pose).
+3. Build the transform from $S$ to $B_{\text{des}}$:
 
-$$\ddot{\mathbf{x}} = \mathbf{M}^{-1} \cdot (\mathbf{F}_{\text{ext}} - \mathbf{D} \cdot \dot{\mathbf{x}} - \mathbf{K} \cdot \mathbf{x}_{\text{err}})$$
+$X_{B_{\text{des}}S}^{(k)} = \big(X_{WB,\text{des}}^{(k)}\big)^{-1}\,X_{WS}^{(k)}$.
 
-For diagonal matrices, this simplifies element-wise:
-$$\ddot{x}_i = \frac{1}{m_i} \cdot (f_{ext,i} - d_i \cdot \dot{x}_i - k_i \cdot x_{err,i})$$
+4. **Wrench in $B_{\text{des}}$ axes** (what the ODE needs):
 
-#### 4.2 Apply Acceleration Limits
+$F_{B\!ext,\,B_{\text{des}}}^{(k)} \;=\; \mathrm{Ad}_{\text{twist}}\!\big(X_{B_{\text{des}}S}^{(k)}\big)^{\top}\; F_S^{(k)}.$
 
-To ensure safety, limit linear and angular accelerations:
-
-$$\ddot{\mathbf{x}}_{\text{limited}} = \begin{cases}
-\ddot{\mathbf{x}}_{\text{lin}} \cdot \frac{a_{\text{max,lin}}}{||\ddot{\mathbf{x}}_{\text{lin}}||} & \text{if } ||\ddot{\mathbf{x}}_{\text{lin}}|| > a_{\text{max,lin}} \\
-\ddot{\mathbf{x}}_{\text{ang}} \cdot \frac{a_{\text{max,ang}}}{||\ddot{\mathbf{x}}_{\text{ang}}||} & \text{if } ||\ddot{\mathbf{x}}_{\text{ang}}|| > a_{\text{max,ang}}
-\end{cases}$$
-
-#### 4.3 Integrate Velocity
-
-Using Euler integration with time step $\Delta t$:
-
-$$\dot{\mathbf{x}}_{t+1} = \dot{\mathbf{x}}_t + \ddot{\mathbf{x}}_{\text{limited}} \cdot \Delta t$$
-
-This gives the commanded Cartesian velocity:
-$$^P\mathbf{V}_{B,\text{cmd}} = \begin{bmatrix} \mathbf{v}_{\text{cmd}} \\ \boldsymbol{\omega}_{\text{cmd}} \end{bmatrix}$$
+(If your wrench already arrives in world or in $B_{\text{meas}}$, use the same formula with the appropriate $X$.)
 
 ---
 
-### 5. Apply Safety Constraints
+### **Step 1 — Admittance ODE (in $B_{\text{des}}$ axes)**
 
-#### 5.1 Workspace Limits
+$M\,\ddot{\delta X}_{B_{\text{des}}}^{(k)}+B\,\dot{\delta X}_{B_{\text{des}}}^{(k)}+K\,\delta X_{B_{\text{des}}}^{(k)} =F_{B\!ext,\,B_{\text{des}}}^{(k)}$.
 
-Prevent the end-effector from leaving the safe workspace:
+Semi‑implicit Euler:
 
-For each axis $i \in \{x, y, z\}$:
-$$v_{cmd,i} = \begin{cases}
-\max(0, v_{cmd,i}) & \text{if } p_i \leq p_{i,\text{min}} \\
-\min(0, v_{cmd,i}) & \text{if } p_i \geq p_{i,\text{max}} \\
-v_{cmd,i} & \text{otherwise}
-\end{cases}$$
-
-#### 5.2 Velocity Magnitude Limits
-
-Limit maximum linear and angular velocities:
-
-$$\mathbf{v}_{\text{limited}} = \begin{cases}
-\mathbf{v}_{\text{cmd}} \cdot \frac{v_{\text{max,lin}}}{||\mathbf{v}_{\text{cmd}}||} & \text{if } ||\mathbf{v}_{\text{cmd}}|| > v_{\text{max,lin}} \\
-\boldsymbol{\omega}_{\text{cmd}} \cdot \frac{v_{\text{max,ang}}}{||\boldsymbol{\omega}_{\text{cmd}}||} & \text{if } ||\boldsymbol{\omega}_{\text{cmd}}|| > v_{\text{max,ang}}
-\end{cases}$$
+$\dot{\delta X}_{B_{\text{des}}}^{(k+1)}=\dot{\delta X}_{B_{\text{des}}}^{(k)}+\ddot{\delta X}_{B_{\text{des}}}^{(k)}\,\Delta t,\qquad \delta X_{B_{\text{des}}}^{(k+1)}=\delta X_{B_{\text{des}}}^{(k)}+\dot{\delta X}_{B_{\text{des}}}^{(k+1)}\,\Delta t$.
 
 ---
 
-### 6. Inverse Kinematics - Compute Joint Velocities
+### **Step 2 — Build factored adjoints from the desired pose and convert to world**
 
-#### 6.1 Transform Velocity to Wrist Frame
+- (Optionally) roll the desired pose with the planner’s twist:
 
-Since the Jacobian is defined for the wrist (W3), transform the probe velocity:
 
-$$^{W3}\mathbf{V}_B = \text{Ad}_{P \rightarrow W3} \cdot ^P\mathbf{V}_B$$
+$X_{WB,\text{des}}^{(k+1)} = \mathrm{Exp6}\big(V_{WB,\text{des}}^{W,(k)}\,\Delta t\big)\;X_{WB,\text{des}}^{(k)}$.
 
-Where the adjoint matrix accounts for the lever arm:
-$$\text{Ad}_{P \rightarrow W3} = \begin{bmatrix} \mathbf{I} & -[\mathbf{p}_{PW3}]_\times \\ \mathbf{0} & \mathbf{I} \end{bmatrix}$$
+- Construct adjoints **from** $X_{WB,\text{des}}^{(k+1)}=(R_{\text{des}}^{(k+1)},p_{\text{des}}^{(k+1)})$:
 
-#### 6.2 Solve for Joint Velocities
+$\mathrm{Ad}_{\text{pose}}^{(k+1)}=\mathrm{diag}\big(R_{\text{des}}^{(k+1)},R_{\text{des}}^{(k+1)}\big), \qquad \mathrm{Ad}_{\text{twist}}^{(k+1)}= \begin{bmatrix} R_{\text{des}}^{(k+1)} & 0\\[2pt] \widehat{p_{\text{des}}^{(k+1)}}\,R_{\text{des}}^{(k+1)} & R_{\text{des}}^{(k+1)} \end{bmatrix}$.
 
-Using the weighted damped least squares (WDLS) method:
+- Convert **offset** and **offset rate** to **world**:
 
-$$\dot{\mathbf{q}} = \mathbf{J}^{\#}_{\lambda}(\mathbf{q}) \cdot ^{W3}\mathbf{V}_B$$
 
-Where the damped pseudo-inverse is:
-$$\mathbf{J}^{\#}_{\lambda} = \mathbf{J}^T(\mathbf{J}\mathbf{J}^T + \lambda^2 \mathbf{I})^{-1}$$
-
-With damping factor $\lambda = 0.1$ for numerical stability.
+$\delta X_W^{(k+1)}=\mathrm{Ad}_{\text{pose}}^{(k+1)}\;\delta X_{B_{\text{des}}}^{(k+1)}, \qquad \dot{\delta X}_W^{(k+1)}=\mathrm{Ad}_{\text{twist}}^{(k+1)}\;\dot{\delta X}_{B_{\text{des}}}^{(k+1)}$.
 
 ---
 
-### 7. Command Publishing
+### **Step 3 — Compose the commanded pose in world**
 
-#### 7.1 Safety Check
+$R_{WB,\text{cmd}}^{(k+1)}=\mathrm{Exp3}\big(\delta r_W^{(k+1)}\big)\;R_{WB,\text{des}}^{(k+1)},\qquad p_{WBo,\text{cmd}}^{(k+1)}=p_{WBo,\text{des}}^{(k+1)}+\delta p_W^{(k+1)}$.
 
-Before publishing, verify all joint velocities are valid:
-$$\text{if any } \dot{q}_i = \text{NaN or } |\dot{q}_i| > \dot{q}_{\text{max}} \text{ then } \dot{\mathbf{q}} \leftarrow \mathbf{0}$$
-
-#### 7.2 Publish to Velocity Controller
-
-Send the joint velocity vector $\dot{\mathbf{q}}$ to the robot's velocity controller at 100 Hz.
+Denote $X_{WB,\text{cmd}}^{(k+1)}=(R_{WB,\text{cmd}}^{(k+1)},p_{WBo,\text{cmd}}^{(k+1)})$.
 
 ---
 
-### Key Implementation Details
+### **Step 4 — Pose error in world (measured → commanded)**
 
-1. **Diagonal Matrices**: All admittance matrices (M, D, K) are diagonal for computational efficiency and decoupled behavior.
+Use measurements at $k$: $X_{WB,\text{meas}}^{(k)}=(R_{WB,\text{meas}}^{(k)},p_{WBo,\text{meas}}^{(k)})$.
 
-2. **Quaternion Handling**: The orientation error uses quaternions to avoid singularities and ensure shortest-path rotations.
-
-3. **Damped IK**: The WDLS method with λ=0.1 provides robust inverse kinematics even near singularities.
-
-4. **Safety Layers**: Multiple safety constraints (acceleration, velocity, workspace) ensure safe operation.
-
-5. **Fixed Control Rate**: The 100 Hz control loop ensures stable and predictable dynamic behavior.
+$e_{R_W}^{(k)}=\mathrm{Log3}\Big(R_{WB,\text{cmd}}^{(k+1)}\;R_{WB,\text{meas}}^{(k)\,\top}\Big),\qquad e_{p_W}^{(k)}=p_{WBo,\text{cmd}}^{(k+1)}-p_{WBo,\text{meas}}^{(k)}, \qquad e_{X_W}^{(k)}=\begin{bmatrix}e_{R_W}^{(k)}\\ e_{p_W}^{(k)}\end{bmatrix}$.
 
 ---
 
-### Parameter Tuning Guidelines
+### **Step 5 — World twist command (the task‑space command)**
 
-The admittance parameters define the robot's compliance behavior:
+$V_{WB,\text{cmd}}^{W,(k+1)}=V_{WB,\text{des}}^{W,(k)}\;+\;\dot{\delta X}_W^{(k+1)}\;+\;K_p^W\,e_{X_W}^{(k)}$.
 
-- **Mass (M)**: Higher values create more "inertia" - slower response to forces
-  - Typical: 5-20 kg for translation, 0.5-2 kg·m² for rotation
-
-- **Damping (D)**: Controls oscillation damping - higher values reduce overshoot
-  - Critical damping: $d_i = 2\sqrt{k_i \cdot m_i}$
-  - Typical: 50-500 N·s/m for translation, 5-20 N·m·s/rad for rotation
-
-- **Stiffness (K)**: Defines the "spring" pulling back to equilibrium
-  - Zero stiffness = pure admittance (no position preference)
-  - Typical: 100-1000 N/m for translation, 10-50 N·m/rad for rotation
+(This is the twist your resolved‑rates step will track.)
 
 ---
 
-### Stability Analysis
+### **Step 6 — Joint velocities (mandatory) and send to robot**
 
-The system is stable if all eigenvalues of the characteristic equation have negative real parts:
+Compute the **spatial Jacobian** at the current configuration $q^{(k)}$: $J_s(q^{(k)})\in\mathbb{R}^{6\times n}$ such that  
+$V_{WB}^{W}=J_s(q)\,\dot{q}$.
 
-$$\text{det}(\mathbf{M}s^2 + \mathbf{D}s + \mathbf{K}) = 0$$
+Solve for $\dot{q}^{(k)}$ (QP form shown; use bounds/weights as needed):
 
-For diagonal matrices, each DOF is independently stable if:
-$$d_i > 0 \text{ and } k_i \geq 0 \text{ and } m_i > 0$$
+$\dot{q}^{(k)}=\arg\min_{\dot{q}}\;\big\|J_s(q^{(k)})\,\dot{q}-V_{WB,\text{cmd}}^{W,(k+1)}\big\|^2+\lambda\|\dot{q}\|^2 \quad\text{s.t.}\quad \dot{q}_{\min}\le \dot{q}\le \dot{q}_{\max}$.
 
-The damping ratio for each DOF:
-$$\zeta_i = \frac{d_i}{2\sqrt{k_i \cdot m_i}}$$
+Send $\dot{q}^{(k)}$ to the robot actuators.
 
-Where:
-- $\zeta < 1$: Underdamped (oscillatory)
-- $\zeta = 1$: Critically damped (fastest non-oscillatory)
-- $\zeta > 1$: Overdamped (slow return)
+---
+
+### **Commit state for the next tick**
+
+Set $\delta X_{B_{\text{des}}}^{(k+1)}$, $\dot{\delta X}_{B_{\text{des}}}^{(k+1)}$, and $X_{WB,\text{des}}^{(k+1)}$ as the new state; then increment $k\leftarrow k+1$.
+
+---
+
+### Why this is consistent and easy to read
+
+- The **ODE** runs where compliance is defined: $B_{\text{des}}$.
+- **Wrench** is explicitly re‑expressed into $B_{\text{des}}$ using the proper **force adjoint** (Step 0).
+- **Offsets** and **rates** are converted to **world** with **factored adjoints** (Step 2).
+- **Composition, error, and command** are all in **world**, matching your Jacobian and your driver.
+- Time indexing is clear: inputs at $k$ → compute $X_{\text{cmd}}^{(k+1)}$, $V_{\text{cmd}}^{W,(k+1)}$ → solve $\dot{q}^{(k)}$ → send.
