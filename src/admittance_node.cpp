@@ -18,6 +18,7 @@
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <vector>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
@@ -48,16 +49,19 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       SetAdmittanceGains(params_.admittance);
 
       for (const auto& param : params) {
-        if (param.get_name() == "tracking.velocity_gain") {
-          if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
-            if (!UpdateWorldVelocityGain(param.as_double_array())) {
-              RCLCPP_WARN(get_logger(),
-                          "tracking.velocity_gain must have 6 elements; ignoring update");
-            }
-          } else {
-            RCLCPP_WARN(get_logger(),
-                        "tracking.velocity_gain must be declared as an array of doubles; ignoring update");
-          }
+        if (param.get_name() != "tracking.velocity_gain") {
+          continue;
+        }
+
+        if (param.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
+          RCLCPP_WARN(get_logger(),
+                      "tracking.velocity_gain must be declared as an array of doubles; ignoring update");
+          continue;
+        }
+
+        if (!UpdateWorldVelocityGain(param.as_double_array())) {
+          RCLCPP_WARN(get_logger(),
+                      "tracking.velocity_gain must have 6 elements; ignoring update");
         }
       }
     } else {
@@ -122,21 +126,15 @@ void AdmittanceNode::configure() {
   // Wrench topic — per README, this should be gravity-compensated and in WORLD/base.
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
       "/netft/proc_probe", rclcpp::SensorDataQoS(),
-      [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) {
-        WrenchCallback(msg);
-      });
+      std::bind(&AdmittanceNode::WrenchCallback, this, std::placeholders::_1));
 
   joint_state_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "/joint_states", 1,
-      [this](const sensor_msgs::msg::JointState::ConstSharedPtr& msg) {
-        JointStateCallback(msg);
-      });
+      std::bind(&AdmittanceNode::JointStateCallback, this, std::placeholders::_1));
 
   desired_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       "/admittance_node/desired_pose", constants::DEFAULT_QUEUE_SIZE,
-      [this](const geometry_msgs::msg::PoseStamped::ConstSharedPtr& msg) {
-        DesiredPoseCallback(msg);
-      });
+      std::bind(&AdmittanceNode::DesiredPoseCallback, this, std::placeholders::_1));
 
   velocity_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
       "/forward_velocity_controller/commands", constants::DEFAULT_QUEUE_SIZE);
@@ -148,14 +146,7 @@ void AdmittanceNode::configure() {
 
   control_timer_ = create_wall_timer(
       std::chrono::nanoseconds(control_period_.nanoseconds()),
-      [this]() {
-        if (!joint_states_received_) {
-          RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
-                                "Waiting for joint states before running control loop");
-          return;
-        }
-        ControlCycle();
-      });
+      std::bind(&AdmittanceNode::OnControlTimer, this));
 
   RCLCPP_INFO(get_logger(),
               "Configured: equilibrium=[%.3f, %.3f, %.3f], loop=%d Hz, config=%s",
@@ -209,6 +200,15 @@ bool AdmittanceNode::UpdateWorldVelocityGain(const std::vector<double>& gains) {
   }
   world_vel_P_ = Eigen::Map<const Vector6d>(gains.data());
   return true;
+}
+
+void AdmittanceNode::OnControlTimer() {
+  if (!joint_states_received_) {
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
+                          "Waiting for joint states before running control loop");
+    return;
+  }
+  ControlCycle();
 }
 
 void AdmittanceNode::ControlCycle() {

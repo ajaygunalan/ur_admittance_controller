@@ -1,7 +1,5 @@
 #include "wrench_calibration_node.hpp"
 
-using namespace ur_admittance_controller;
-
 namespace ur_admittance_controller {
 
 Force WrenchCalibrationNode::estimateGravitationalForceInBaseFrame(const std::vector<CalibrationSample>& samples) {

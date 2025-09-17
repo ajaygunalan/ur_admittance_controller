@@ -240,6 +240,7 @@ private:
   void WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
   void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
   void DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
+  void OnControlTimer();
 
   // ---- Core control pieces (implemented in *_computations.cpp) ----
   Status LoadKinematics();

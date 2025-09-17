@@ -231,7 +231,8 @@ public:
 private:
     // Helper methods
     void executeTrajectory(const CalibrationPose& target_pose);
-    
+    void OnWrench(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg);
+
     // ROS interfaces
     rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
     rclcpp_action::Client<control_msgs::action::FollowJointTrajectory>::SharedPtr trajectory_client_;

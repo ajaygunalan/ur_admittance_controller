@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <unordered_map>
 
 #include <kdl_parser/kdl_parser.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
@@ -94,18 +95,26 @@ YAML::Node build_equilibrium_config(const CartesianPose& pose) {
 std::optional<JointConfiguration> parse_joint_state(const sensor_msgs::msg::JointState& msg) {
   JointConfiguration result;
   
+  std::unordered_map<std::string, size_t> name_to_index;
+  name_to_index.reserve(msg.name.size());
+  for (size_t i = 0; i < msg.name.size(); ++i) {
+    name_to_index[msg.name[i]] = i;
+  }
+
   for (size_t i = 0; i < 6; ++i) {
-    auto it = std::find(msg.name.begin(), msg.name.end(), JOINT_NAMES[i]);
-    if (it == msg.name.end())
+    auto it = name_to_index.find(JOINT_NAMES[i]);
+    if (it == name_to_index.end()) {
       return std::nullopt;
-    
-    size_t index = std::distance(msg.name.begin(), it);
-    if (index >= msg.position.size())
+    }
+
+    const size_t index = it->second;
+    if (index >= msg.position.size()) {
       return std::nullopt;
-    
+    }
+
     result.values[i] = msg.position[index];
   }
-  
+
   return result;
 }
 

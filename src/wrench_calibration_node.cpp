@@ -11,9 +11,7 @@ WrenchCalibrationNode::WrenchCalibrationNode() : Node("wrench_calibration_node")
     // Setup wrench subscription
     wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
         "/netft/raw_sensor", 10,
-        [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) {
-            latest_wrench_ = *msg;
-        });
+        std::bind(&WrenchCalibrationNode::OnWrench, this, std::placeholders::_1));
     
     // Setup TF
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
@@ -212,6 +210,10 @@ void WrenchCalibrationNode::save_calibration_result(const CalibrationResult& res
     std::filesystem::create_directories(path.parent_path());
     std::ofstream file(path);
     file << config;
+}
+
+void WrenchCalibrationNode::OnWrench(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) {
+    latest_wrench_ = *msg;
 }
 
 
