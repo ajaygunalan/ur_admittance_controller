@@ -6,7 +6,7 @@
  * @brief ROS 2 node interface (I/O, params, timers). Math lives in *_computations.*
  *
  * External interface is unchanged (topics/params/services), but internals are
- * reorganized to follow the math pseudocode line-by-line for readability.      fileciteturn0file4
+ * reorganized to follow the math pseudocode line-by-line for readability.
  */
 
 #include <array>
@@ -243,6 +243,8 @@ private:
 
   // ---- Core control pieces (implemented in *_computations.cpp) ----
   Status LoadKinematics();
+  void LoadEquilibriumPose(const std::filesystem::path& path);
+  bool UpdateWorldVelocityGain(const std::vector<double>& gains);
   void ComputeAdmittance();     // Steps 0–5 (no FK needed)
   void GetXBPCurrent();         // FK for Step 6 (IK) & error logging
   void ComputePoseError();      // uses g_X_WB_cmd from ComputeAdmittance
@@ -260,13 +262,18 @@ private:
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_cb_handle_;
   std::vector<double> q_current_;
   std::vector<double> q_dot_cmd_;
+  rclcpp::TimerBase::SharedPtr control_timer_;
 
   // ---- Controller state & params ----
-  Vector6d F_P_B = Vector6d::Zero();          // Assumed WORLD/base wrench (see README).  fileciteturn0file5
+  Vector6d F_P_B = Vector6d::Zero();          // Assumed WORLD/base wrench (see README).
   Vector6d V_P_B_commanded = Vector6d::Zero(); // World twist command
+  Vector6d g_deltaX_Bdes = Vector6d::Zero();   // [delta p; delta r] in B_des
+  Vector6d g_deltaXdot_Bdes = Vector6d::Zero(); // [delta p_dot; delta r_dot] in B_des
+  Eigen::Isometry3d g_X_WB_cmd = Eigen::Isometry3d::Identity();   // Commanded pose in world
   Vector6d M_inverse_diag;
   Vector6d D_diag;
   Vector6d K_diag;
+  Vector6d world_vel_P_ = (Vector6d() << 4.0, 4.0, 4.0, 2.0, 2.0, 2.0).finished();
 
   Eigen::Isometry3d X_BP_current = Eigen::Isometry3d::Identity(); // world
   Eigen::Isometry3d X_BP_desired = Eigen::Isometry3d::Identity(); // world

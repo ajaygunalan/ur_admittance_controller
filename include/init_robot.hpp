@@ -65,7 +65,6 @@ namespace constants {
   
   constexpr std::chrono::seconds TRAJECTORY_DURATION{12};
   constexpr std::chrono::seconds SERVICE_TIMEOUT{5};
-  constexpr std::chrono::milliseconds POLLING_INTERVAL{10};
 }
 
 // ============================================================================

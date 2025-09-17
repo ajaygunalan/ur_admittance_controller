@@ -3,15 +3,17 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
-#include <thread>
+#include <stdexcept>
 
 #include <kdl_parser/kdl_parser.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
 #include <kdl/jntarray.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <rclcpp/wait_for_message.hpp>
 #include <control_msgs/action/follow_joint_trajectory.hpp>
 #include <urdf/model.h>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 namespace ur_admittance_controller {
 
@@ -108,11 +110,8 @@ std::optional<JointConfiguration> parse_joint_state(const sensor_msgs::msg::Join
 }
 
 fs::path get_config_path() {
-  const char* workspace = std::getenv("ROS_WORKSPACE");
-  fs::path base = workspace ? fs::path(workspace) : 
-                             fs::path(std::getenv("HOME")) / "ros2_ws";
-  
-  return base / "src" / "ur_admittance_controller" / "config" / "equilibrium.yaml";
+  const auto share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
+  return fs::path(share_dir) / "config" / "equilibrium.yaml";
 }
 
 // ============================================================================
@@ -130,22 +129,16 @@ std::string fetch_robot_description(rclcpp::Node::SharedPtr node) {
 }
 
 JointConfiguration read_current_joints(rclcpp::Node::SharedPtr node) {
-  std::optional<JointConfiguration> result;
-  
-  auto subscription = node->create_subscription<sensor_msgs::msg::JointState>(
-    "/joint_states", 1,
-    [&result](const sensor_msgs::msg::JointState::ConstSharedPtr& msg) {
-      if (!result)
-        result = parse_joint_state(*msg);
-    });
-  
-  auto start_time = node->now();
-  while (!result && (node->now() - start_time).seconds() < SERVICE_TIMEOUT.count()) {
-    rclcpp::spin_some(node);
-    std::this_thread::sleep_for(POLLING_INTERVAL);
+  sensor_msgs::msg::JointState message;
+  if (!rclcpp::wait_for_message(message, node, "/joint_states", SERVICE_TIMEOUT)) {
+    throw std::runtime_error("Timed out waiting for /joint_states");
   }
-  
-  return result.value();
+
+  auto parsed = parse_joint_state(message);
+  if (!parsed) {
+    throw std::runtime_error("Joint state message missing expected joints");
+  }
+  return *parsed;
 }
 
 void execute_trajectory(rclcpp::Node::SharedPtr node,

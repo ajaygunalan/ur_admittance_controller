@@ -9,17 +9,27 @@
  *   // add proportional correction in world and publish joint rates
  *
  * This removes the old coupling where admittance depended on current pose.
- * It keeps the external interface (topics/params) identical.                     fileciteturn0file5
+ * It keeps the external interface (topics/params) identical.
  */
 
 #include "admittance_node.hpp"
 #include "admittance_computations.hpp"
 
+#include <array>
+#include <cstdlib>
+#include <filesystem>
+#include <vector>
+#include <ament_index_cpp/get_package_share_directory.hpp>
+
 namespace ur_admittance_controller {
 
 namespace {
-// World-frame velocity gain (1/s) multiplying pose error.
-Vector6d g_world_vel_P = (Vector6d() << 4.0, 4.0, 4.0, 2.0, 2.0, 2.0).finished();
+std::filesystem::path GetEquilibriumConfigPath() {
+  const auto share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
+  return std::filesystem::path(share_dir) / "config" / "equilibrium.yaml";
+}
+
+constexpr std::array<double, 6> kDefaultVelocityGain{{4.0, 4.0, 4.0, 2.0, 2.0, 2.0}};
 }
 
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
@@ -38,14 +48,15 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
       SetAdmittanceGains(params_.admittance);
 
       for (const auto& param : params) {
-        if (param.get_name() == "tracking.velocity_gain" &&
-            param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
-          const auto& values = param.as_double_array();
-          if (values.size() == 6) {
-            g_world_vel_P = Eigen::Map<const Vector6d>(values.data());
+        if (param.get_name() == "tracking.velocity_gain") {
+          if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
+            if (!UpdateWorldVelocityGain(param.as_double_array())) {
+              RCLCPP_WARN(get_logger(),
+                          "tracking.velocity_gain must have 6 elements; ignoring update");
+            }
           } else {
             RCLCPP_WARN(get_logger(),
-                        "tracking.velocity_gain must have 6 elements; ignoring update");
+                        "tracking.velocity_gain must be declared as an array of doubles; ignoring update");
           }
         }
       }
@@ -74,46 +85,7 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   arm_max_acc_ = constants::ARM_MAX_ACCELERATION;
   admittance_ratio_ = 1.0;
 
-  // Load equilibrium (desired) pose
-  const char* workspace_env = std::getenv("ROS_WORKSPACE");
-  std::string workspace = workspace_env ? workspace_env :
-                         std::string(std::getenv("HOME")) + "/ros2_ws";
-  auto config_path = std::filesystem::path(workspace) / "src" / "ur_admittance_controller" / "config" / "equilibrium.yaml";
-
-  if (!std::filesystem::exists(config_path)) {
-    RCLCPP_FATAL(get_logger(), "Failed to load equilibrium file: %s", config_path.string().c_str());
-    std::exit(1);
-  }
-
-  YAML::Node config;
-  try {
-    config = YAML::LoadFile(config_path.string());
-  } catch (const YAML::Exception& e) {
-    RCLCPP_FATAL(get_logger(), "Failed to parse equilibrium file: %s", e.what());
-    std::exit(1);
-  }
-
-  auto eq_params = config["admittance_node"]["ros__parameters"];
-  auto pos = eq_params["equilibrium.position"].as<std::vector<double>>();
-  auto ori = eq_params["equilibrium.orientation"].as<std::vector<double>>();
-  X_BP_desired.translation() << pos[0], pos[1], pos[2];
-  X_BP_desired.linear() = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]).normalized().toRotationMatrix();
-
-  const std::vector<double> kv_default = {4.0, 4.0, 4.0, 2.0, 2.0, 2.0};
-  declare_parameter<std::vector<double>>("tracking.velocity_gain", kv_default);
-  std::vector<double> kv_user;
-  if (get_parameter("tracking.velocity_gain", kv_user)) {
-    if (kv_user.size() == 6) {
-      g_world_vel_P = Eigen::Map<const Vector6d>(kv_user.data());
-    } else {
-      RCLCPP_WARN(get_logger(),
-                  "tracking.velocity_gain must have 6 elements; using defaults");
-    }
-  }
-
-  logging::LogPose(get_logger(), "Equilibrium:",
-                   Vector3d(pos.data()),
-                   Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]));
+  RCLCPP_INFO(get_logger(), "Admittance node constructed. Call configure() before spinning.");
 }
 
 void AdmittanceNode::SetAdmittanceGains(const Params::Admittance& p) {
@@ -130,7 +102,24 @@ void AdmittanceNode::SetAdmittanceGains(const Params::Admittance& p) {
 }
 
 void AdmittanceNode::configure() {
-  // Wrench topic — per README, this should be gravity-compensated and in WORLD/base.  fileciteturn0file5
+  const auto config_path = GetEquilibriumConfigPath();
+  LoadEquilibriumPose(config_path);
+
+  const std::vector<double> kv_default{kDefaultVelocityGain.begin(), kDefaultVelocityGain.end()};
+  if (!has_parameter("tracking.velocity_gain")) {
+    declare_parameter("tracking.velocity_gain", kv_default);
+  }
+
+  std::vector<double> kv_user = kv_default;
+  get_parameter("tracking.velocity_gain", kv_user);
+  if (!UpdateWorldVelocityGain(kv_user)) {
+    RCLCPP_WARN(get_logger(),
+                "tracking.velocity_gain must have 6 elements; reverting to defaults");
+    UpdateWorldVelocityGain(kv_default);
+    set_parameter(rclcpp::Parameter("tracking.velocity_gain", kv_default));
+  }
+
+  // Wrench topic — per README, this should be gravity-compensated and in WORLD/base.
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
       "/netft/proc_probe", rclcpp::SensorDataQoS(),
       [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) {
@@ -157,9 +146,69 @@ void AdmittanceNode::configure() {
     std::exit(1);
   }
 
+  control_timer_ = create_wall_timer(
+      std::chrono::nanoseconds(control_period_.nanoseconds()),
+      [this]() {
+        if (!joint_states_received_) {
+          RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
+                                "Waiting for joint states before running control loop");
+          return;
+        }
+        ControlCycle();
+      });
+
   RCLCPP_INFO(get_logger(),
-    "Configured: equilibrium=[%.3f, %.3f, %.3f], control=100Hz",
-    X_BP_desired.translation()(0), X_BP_desired.translation()(1), X_BP_desired.translation()(2));
+              "Configured: equilibrium=[%.3f, %.3f, %.3f], loop=%d Hz, config=%s",
+              X_BP_desired.translation()(0),
+              X_BP_desired.translation()(1),
+              X_BP_desired.translation()(2),
+              constants::CONTROL_LOOP_HZ,
+              config_path.string().c_str());
+  RCLCPP_INFO(get_logger(), "Waiting for initial joint states...");
+}
+
+void AdmittanceNode::LoadEquilibriumPose(const std::filesystem::path& path) {
+  if (!std::filesystem::exists(path)) {
+    RCLCPP_FATAL(get_logger(), "Equilibrium config not found: %s", path.string().c_str());
+    std::exit(1);
+  }
+
+  YAML::Node config;
+  try {
+    config = YAML::LoadFile(path.string());
+  } catch (const YAML::Exception& e) {
+    RCLCPP_FATAL(get_logger(), "Failed to parse equilibrium file %s: %s",
+                 path.string().c_str(), e.what());
+    std::exit(1);
+  }
+
+  auto eq_params = config["admittance_node"]["ros__parameters"];
+  const auto position = eq_params["equilibrium.position"].as<std::vector<double>>();
+  const auto orientation = eq_params["equilibrium.orientation"].as<std::vector<double>>();
+
+  if (position.size() != 3 || orientation.size() != 4) {
+    RCLCPP_FATAL(get_logger(),
+                 "Equilibrium pose must contain 3 position elements and 4 orientation elements");
+    std::exit(1);
+  }
+
+  const Eigen::Vector3d pos_vec(position[0], position[1], position[2]);
+  X_BP_desired.translation() = pos_vec;
+  Eigen::Quaterniond q_des(orientation[0], orientation[1], orientation[2], orientation[3]);
+  q_des.normalize();
+  X_BP_desired.linear() = q_des.toRotationMatrix();
+
+  g_X_WB_cmd = X_BP_desired;
+
+  logging::LogPose(get_logger(), "Equilibrium:", pos_vec, q_des);
+}
+
+bool AdmittanceNode::UpdateWorldVelocityGain(const std::vector<double>& gains) {
+  if (gains.size() != 6) {
+    return false;
+  }
+  world_vel_P_ = Eigen::Map<const Vector6d>(gains.data());
+  return true;
 }
 
 void AdmittanceNode::ControlCycle() {
@@ -169,7 +218,7 @@ void AdmittanceNode::ControlCycle() {
   ComputePoseError();          // diagnostics (cmd − meas)
 
   // Add proportional world correction now that e_W is known (gain units 1/s).
-  V_P_B_commanded += g_world_vel_P.cwiseProduct(X_BP_error);
+  V_P_B_commanded += world_vel_P_.cwiseProduct(X_BP_error);
 
   LimitToWorkspace();
   ComputeAndPubJointVelocities();
@@ -222,20 +271,7 @@ int main(int argc, char* argv[]) {
   auto node = std::make_shared<ur_admittance_controller::AdmittanceNode>();
   node->configure();
 
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(node);
-
-  rclcpp::Rate loop_rate(ur_admittance_controller::constants::CONTROL_LOOP_HZ);
-  RCLCPP_INFO(node->get_logger(), "Waiting for initial joint states...");
-
-  while (rclcpp::ok()) {
-    executor.spin_some();
-    if (node->joint_states_received_) {
-      RCLCPP_INFO_ONCE(node->get_logger(), "Joint states received. Running control at 100Hz...");
-      node->ControlCycle();
-    }
-    loop_rate.sleep();
-  }
+  rclcpp::spin(node);
 
   RCLCPP_INFO(node->get_logger(), "Shutting down admittance controller...");
   rclcpp::shutdown();

@@ -1,5 +1,7 @@
 #include "wrench_node.hpp"
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
+
 namespace ur_admittance_controller {
 
 // Keep this lightweight conversion here (matches existing external interface)
@@ -141,9 +143,8 @@ void WrenchNode::WrenchCallback(const WrenchMsg::ConstSharedPtr msg) {
 
 // Calibration load (same behavior; concise checks)
 Status WrenchNode::LoadCalibrationParams() {
-  const char* ws_env = std::getenv("ROS_WORKSPACE");
-  const std::string ws = ws_env ? ws_env : (std::string(std::getenv("HOME")) + "/ros2_ws");
-  const auto path = std::filesystem::path(ws) / "src" / "ur_admittance_controller" / "config" / "wrench_calibration.yaml";
+  const auto share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
+  const auto path = std::filesystem::path(share_dir) / "config" / "wrench_calibration.yaml";
 
   if (!std::filesystem::exists(path)) {
     return tl::unexpected(MakeError(ErrorCode::kFileNotFound,

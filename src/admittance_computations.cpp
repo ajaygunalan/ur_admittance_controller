@@ -6,9 +6,9 @@
  * Key choices vs old code:
  *  - Admittance no longer depends on X_WB_current. It uses only X_WB_des and the wrench.
  *  - Wrench is assumed to arrive in WORLD/base (per README wrench_node). It is re-expressed
- *    to B_des with the force adjoint of X_BdesW.  (If your topic is in PROBE axes, convert
- *    it in wrench_node; keeping that conversion outside preserves clarity.)  fileciteturn0file5
- *  - Offset rates use FULL twist adjoint (adds p̂_des R_des ω) — the missing physics term. fileciteturn0file4
+*    to B_des with the force adjoint of X_BdesW.  (If your topic is in PROBE axes, convert
+*    it in wrench_node; keeping that conversion outside preserves clarity.)
+*  - Offset rates use FULL twist adjoint (adds p_hat_des * R_des * omega) — the missing physics term.
  */
 
 #include "admittance_computations.hpp"
@@ -21,10 +21,7 @@ Matrix6d AdTwist(const Matrix3d& R, const Vector3d& p) {
   Matrix6d Ad = Matrix6d::Zero();
   Ad.block<3,3>(0,0) = R;
   Ad.block<3,3>(0,3) = Matrix3d::Zero();
-  Ad.block<3,3>(3,0) = (Eigen::Matrix3d() <<
-      0, -p.z(),  p.y(),
-      p.z(),  0, -p.x(),
-     -p.y(), p.x(), 0).finished() * R;
+  Ad.block<3,3>(3,0) = Skew(p) * R;
   Ad.block<3,3>(3,3) = R;
   return Ad;
 }
@@ -159,7 +156,7 @@ Result<std::vector<double>> ComputeInverseKinematicsVelocity(
       X_tool_W.translation()(2) - X_wrist_W.p.z());
 
   KDL::Twist V_wrist_kdl;
-  V_wrist_kdl.vel = V_tool_kdl.vel - V_tool_kdl.rot * p_tool_wrist;  // v - ω × p
+  V_wrist_kdl.vel = V_tool_kdl.vel - V_tool_kdl.rot * p_tool_wrist;  // v - omega × p
   V_wrist_kdl.rot = V_tool_kdl.rot;
 
   KDL::JntArray v_kdl(q_current.size());
@@ -223,12 +220,6 @@ Vector6d LimitVelocityMagnitude(const Vector6d& v,
 }
 
 // ================= AdmittanceNode member definitions =======================
-// File-scope state: offset in B_des and commanded pose in world.
-namespace {
-  Vector6d g_deltaX_Bdes    = Vector6d::Zero();  // [δp; δr] in B_des
-  Vector6d g_deltaXdot_Bdes = Vector6d::Zero();  // [δṗ; δṙ] in B_des
-  Eigen::Isometry3d g_X_WB_cmd = Eigen::Isometry3d::Identity();  // commanded TCP pose in world
-}
 
 void AdmittanceNode::GetXBPCurrent() {
   RCLCPP_DEBUG_ONCE(get_logger(), "FK solver: %zu joints, %d segments",
@@ -259,8 +250,8 @@ void AdmittanceNode::ComputePoseError() {
 
 /**
  * @brief Core admittance update (Steps 0–5). NO use of X_WB_current.
- *        Uses desired pose + incoming WORLD wrench, per README's wrench node.  fileciteturn0file5
- *        Math follows your pseudocode exactly (factored adjoints).            fileciteturn0file4
+ *        Uses desired pose + incoming WORLD wrench, per README's wrench node.  fileciteturn0file5
+ *        Math follows your pseudocode exactly (factored adjoints).            fileciteturn0file4
  */
 void AdmittanceNode::ComputeAdmittance() {
   const double dt = control_period_.seconds();
@@ -269,7 +260,7 @@ void AdmittanceNode::ComputeAdmittance() {
 
   // --- Step 0: Re-express external wrench (WORLD -> B_des) using force adjoint.
   // NOTE: We assume /netft/proc_probe is already gravity-compensated & in WORLD/base.
-  // If that's not the case, convert it in the wrench node (see README).          fileciteturn0file5
+  // If that's not the case, convert it in the wrench node (see README).          fileciteturn0file5
   Vector6d F_Bdes = ExpressWrenchWorldToBdes(F_P_B /*world*/, R_des, p_des);
 
   // Optional scaling knob
@@ -307,7 +298,7 @@ void AdmittanceNode::ComputeAdmittance() {
 
   // --- Step 4: Pose error will be computed after FK (cmd − meas) in ComputePoseError().
 
-  // --- Step 5: World twist command: V_cmd = δẊ_W + K_v * e_W
+  // --- Step 5: World twist command: V_cmd = delta(Xdot)_W + K_v * e_W
   // e_W is computed after FK; store the open-loop term here and add K_v ∘ e_W later.
   Vector6d V_cmd_partial = Vector6d::Zero();
   V_cmd_partial.head<3>() = dposdot_W;

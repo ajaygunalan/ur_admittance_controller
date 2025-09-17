@@ -34,6 +34,7 @@ find_package(orocos_kdl REQUIRED)
 find_package(kdl_parser REQUIRED)
 find_package(urdf REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 # Generate parameter library
 generate_parameter_library(
   ur_admittance_controller_parameters
@@ -51,6 +52,7 @@ set(NODE_DEPENDENCIES
   tf2_eigen
   tf2_kdl
   tf2_geometry_msgs
+  ament_index_cpp
   orocos_kdl
   urdf
   kdl_parser
@@ -109,9 +111,9 @@ target_link_libraries(wrench_calibration_node
 )
 
 ament_target_dependencies(admittance_node ${NODE_DEPENDENCIES})
-ament_target_dependencies(wrench_node rclcpp geometry_msgs sensor_msgs std_srvs tf2 tf2_ros tf2_eigen tf2_kdl tf2_geometry_msgs)
+ament_target_dependencies(wrench_node rclcpp geometry_msgs sensor_msgs std_srvs tf2 tf2_ros tf2_eigen tf2_kdl tf2_geometry_msgs ament_index_cpp)
 ament_target_dependencies(init_robot rclcpp rclcpp_action control_msgs controller_manager_msgs 
-  sensor_msgs trajectory_msgs rcl_interfaces orocos_kdl kdl_parser urdf)
+  sensor_msgs trajectory_msgs rcl_interfaces orocos_kdl kdl_parser urdf ament_index_cpp)
 ament_target_dependencies(wrench_calibration_node rclcpp rclcpp_action control_msgs 
   sensor_msgs geometry_msgs tf2 tf2_ros tf2_eigen)
 

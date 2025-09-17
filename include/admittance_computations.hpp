@@ -8,7 +8,7 @@
  *   - The admittance ODE runs in B_des axes.
  *   - Wrench is re-expressed into B_des using the proper force adjoint.
  *   - Offsets are mapped to world with the pose-adjoint diag(R_des, R_des).
- *   - Offset rates are mapped to world with the full twist adjoint (with p̂ R coupling).
+ *   - Offset rates are mapped to world with the full twist adjoint (with p_hat * R coupling).
  *   - Commanded pose and world twist are composed in world.
  *
  * Vectors use [linear; angular] ordering throughout (matches KDL::Twist).
@@ -25,8 +25,16 @@ namespace ur_admittance_controller {
 
 // ---------- Small algebra helpers ----------
 
+inline Matrix3d Skew(const Vector3d& p) {
+  Matrix3d S;
+  S <<     0.0, -p.z(),  p.y(),
+        p.z(),    0.0, -p.x(),
+       -p.y(),  p.x(),    0.0;
+  return S;
+}
+
 /** @brief 6×6 twist adjoint for R, p (expresses a twist from B into W given X_WB=(R,p)).
- *  [v_W; ω_W] = Ad_twist(R,p) [v_B; ω_B] = [[R, 0], [p^ R, R]] [v_B; ω_B]
+ *  [v_W; omega_W] = Ad_twist(R,p) [v_B; omega_B] = [[R, 0], [p^ R, R]] [v_B; omega_B]
  */
 Matrix6d AdTwist(const Matrix3d& R, const Vector3d& p);
 
@@ -36,7 +44,7 @@ Matrix6d AdForce(const Matrix3d& R, const Vector3d& p);
 /** @brief Build both adjoints from the desired pose X_WB_des=(R_des,p_des). */
 struct Adjoints {
   Matrix6d Ad_pose;   // diag(R_des, R_des)
-  Matrix6d Ad_twist;  // [[R_des, 0], [p̂_des R_des, R_des]]
+  Matrix6d Ad_twist;  // [[R_des, 0], [p_hat_des * R_des, R_des]]
 };
 Adjoints BuildAdjointsFromDesired(const Matrix3d& R_des, const Vector3d& p_des);
 
