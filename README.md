@@ -96,6 +96,19 @@ Start admittance node:
 ros2 run ur_admittance_controller admittance_node
 ```
 
+### Force-Torque Topics
+
+Quick checks while the wrench pipeline is running:
+```bash
+ros2 topic echo /netft/raw_sensor --once
+ros2 topic echo /netft/proc_sensor --once
+ros2 topic echo /netft/proc_probe --once
+ros2 run ur_admittance_controller init_robot
+```
+- `/netft/raw_sensor` streams the unfiltered wrench directly from the NetFT driver (sensor frame).
+- `/netft/proc_sensor` publishes the low-pass filtered, gravity/bias compensated wrench (still in the sensor frame).
+- `/netft/proc_probe` mirrors the compensated wrench after transforming it into the probe/tool frame.
+
 ## Architecture
 
 ```

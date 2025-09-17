@@ -1,4 +1,13 @@
+
 #pragma once
+
+/**
+ * @file admittance_node.hpp
+ * @brief ROS 2 node interface (I/O, params, timers). Math lives in *_computations.*
+ *
+ * External interface is unchanged (topics/params/services), but internals are
+ * reorganized to follow the math pseudocode line-by-line for readability.      fileciteturn0file4
+ */
 
 #include <array>
 #include <chrono>
@@ -227,20 +236,21 @@ public:
   void configure();
 
 private:
+  // ---- ROS I/O callbacks ----
   void WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
   void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
   void DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
 
-  // core control pieces (implemented in *_computations.cpp)
+  // ---- Core control pieces (implemented in *_computations.cpp) ----
   Status LoadKinematics();
-  void ComputeAdmittance();
-  void ComputePoseError();
+  void ComputeAdmittance();     // Steps 0–5 (no FK needed)
+  void GetXBPCurrent();         // FK for Step 6 (IK) & error logging
+  void ComputePoseError();      // uses g_X_WB_cmd from ComputeAdmittance
   void ComputeAndPubJointVelocities();
   void LimitToWorkspace();
-  void GetXBPCurrent();
   void SetAdmittanceGains(const Params::Admittance& params);
 
-  // ROS I/O
+  // ---- ROS I/O ----
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_sub_;
@@ -251,16 +261,15 @@ private:
   std::vector<double> q_current_;
   std::vector<double> q_dot_cmd_;
 
-  // state
-  Vector6d F_P_B = Vector6d::Zero();
-  Vector6d V_P_B_commanded = Vector6d::Zero();
-
+  // ---- Controller state & params ----
+  Vector6d F_P_B = Vector6d::Zero();          // Assumed WORLD/base wrench (see README).  fileciteturn0file5
+  Vector6d V_P_B_commanded = Vector6d::Zero(); // World twist command
   Vector6d M_inverse_diag;
   Vector6d D_diag;
   Vector6d K_diag;
 
-  Eigen::Isometry3d X_BP_current = Eigen::Isometry3d::Identity();
-  Eigen::Isometry3d X_BP_desired = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3d X_BP_current = Eigen::Isometry3d::Identity(); // world
+  Eigen::Isometry3d X_BP_desired = Eigen::Isometry3d::Identity(); // world
   Vector6d X_BP_error = Vector6d::Zero();
   std_msgs::msg::Float64MultiArray velocity_msg_;
 
@@ -269,13 +278,12 @@ private:
   double arm_max_acc_;
   double admittance_ratio_;
 
-  // kinematics
+  // ---- Kinematics ----
   KDL::Tree kdl_tree_;
   KDL::Chain kdl_chain_;
   KDL::Frame X_W3P;
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_;
   std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_pos_solver_;
-
   size_t num_joints_ = 0;
   KDL::JntArray q_kdl_;
   KDL::JntArray v_kdl_;

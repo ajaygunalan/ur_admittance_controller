@@ -52,6 +52,10 @@ WrenchNode::WrenchNode()
       300ms, std::bind(&WrenchNode::InitStaticTransformOnce, this));
   SetupROSInterfaces();
   RCLCPP_INFO(get_logger(), "Wrench node initialized with calibration");
+  RCLCPP_INFO(get_logger(), "Inspect raw wrench: ros2 topic echo /netft/raw_sensor --once");
+  RCLCPP_INFO(get_logger(), "Inspect compensated sensor wrench: ros2 topic echo /netft/proc_sensor --once");
+  RCLCPP_INFO(get_logger(), "Inspect probe-frame wrench: ros2 topic echo /netft/proc_probe --once");
+  RCLCPP_INFO(get_logger(), "Initialize robot equilibrium pose: ros2 run ur_admittance_controller init_robot");
 }
 
 void WrenchNode::InitStaticTransformOnce() {

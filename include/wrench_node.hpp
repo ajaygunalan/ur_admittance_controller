@@ -156,8 +156,8 @@ private:
   Wrench6d lpf_state_ = Wrench6d::Zero();
   bool     first_sample_ = true;
   static constexpr double ALPHA            = 0.715; // fc≈200 Hz, ΔT≈0.002 s
-  static constexpr double DEADBAND_FORCE   = 0.5;   // N
-  static constexpr double DEADBAND_TORQUE  = 0.01;  // N·m
+  static constexpr double DEADBAND_FORCE   = 1.2;   // N
+  static constexpr double DEADBAND_TORQUE  = 0.02;  // N·m
 };
 
 } 

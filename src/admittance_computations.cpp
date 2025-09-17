@@ -1,23 +1,73 @@
-// admittance_computations.cpp — v3-fixed admittance flow (pseudocode-accurate)
-// - ODE on offset in B_des
-// - Pose-offset mapping: diag(R_des, R_des)  [no coupling]
-// - Offset-rate mapping: full Ad_twist with  p̂ R  coupling  [this fixes the bug]
-// - Commanded pose composed explicitly; error = cmd − meas (world)
-// - KDL vel-IK and wrist shift unchanged
+
+/**
+ * @file admittance_computations.cpp
+ * @brief Implementation of math helpers + AdmittanceNode core (pseudocode-accurate).
+ *
+ * Key choices vs old code:
+ *  - Admittance no longer depends on X_WB_current. It uses only X_WB_des and the wrench.
+ *  - Wrench is assumed to arrive in WORLD/base (per README wrench_node). It is re-expressed
+ *    to B_des with the force adjoint of X_BdesW.  (If your topic is in PROBE axes, convert
+ *    it in wrench_node; keeping that conversion outside preserves clarity.)  fileciteturn0file5
+ *  - Offset rates use FULL twist adjoint (adds p̂_des R_des ω) — the missing physics term. fileciteturn0file4
+ */
 
 #include "admittance_computations.hpp"
 
 namespace ur_admittance_controller {
 
-// --------- File-scope state for the offset ODE & commanded pose (no header changes) ---------
-namespace {
-  // Internal ordering is [linear; angular] to match KDL::Twist (vel first, then rot).
-  Vector6d g_deltaX_Bdes    = Vector6d::Zero();  // [δp; δr] in B_des axes
-  Vector6d g_deltaXdot_Bdes = Vector6d::Zero();  // [δṗ; δṙ] in B_des axes
-  Eigen::Isometry3d g_X_BP_cmd = Eigen::Isometry3d::Identity();  // commanded pose in world
+// -------- Adjoint builders ---------------------------------------------------
+
+Matrix6d AdTwist(const Matrix3d& R, const Vector3d& p) {
+  Matrix6d Ad = Matrix6d::Zero();
+  Ad.block<3,3>(0,0) = R;
+  Ad.block<3,3>(0,3) = Matrix3d::Zero();
+  Ad.block<3,3>(3,0) = (Eigen::Matrix3d() <<
+      0, -p.z(),  p.y(),
+      p.z(),  0, -p.x(),
+     -p.y(), p.x(), 0).finished() * R;
+  Ad.block<3,3>(3,3) = R;
+  return Ad;
 }
 
-// ------------- Kinematics helper (unchanged) ------------------------------------------------
+Matrix6d AdForce(const Matrix3d& R, const Vector3d& p) {
+  return AdTwist(R, p).transpose();
+}
+
+Adjoints BuildAdjointsFromDesired(const Matrix3d& R_des, const Vector3d& p_des) {
+  Adjoints A;
+  A.Ad_pose.setZero();
+  A.Ad_pose.block<3,3>(0,0) = R_des;
+  A.Ad_pose.block<3,3>(3,3) = R_des;
+  A.Ad_twist = AdTwist(R_des, p_des);
+  return A;
+}
+
+// -------- ODE helpers (unchanged math, clearer names) -----------------------
+
+Vector6d ComputeAdmittanceAcceleration(
+    const Vector6d& F_ext,
+    const Vector6d& v_state,
+    const Vector6d& x_state,
+    const Vector6d& M_inv,
+    const Vector6d& D,
+    const Vector6d& K) {
+  return M_inv.array() * (F_ext.array() - D.array()*v_state.array() - K.array()*x_state.array());
+}
+
+Vector6d LimitAcceleration(const Vector6d& a, double max_lin, double max_ang) {
+  Vector6d out = a;
+  const double ln = a.head<3>().norm();
+  if (ln > max_lin && ln > 1e-12) out.head<3>() *= (max_lin/ln);
+  const double an = a.tail<3>().norm();
+  if (an > max_ang && an > 1e-12) out.tail<3>() *= (max_ang/an);
+  return out;
+}
+
+Vector6d IntegrateVelocity(const Vector6d& v, const Vector6d& a, double dt) {
+  return v + a * dt;
+}
+
+// -------- Kinematics --------------------------------------------------------
 namespace kinematics {
 Result<KinematicsComponents> InitializeFromUrdf(const urdf::Model& urdf_model,
                                                 const std::string& base_link,
@@ -52,36 +102,9 @@ Result<KinematicsComponents> InitializeFromUrdf(const urdf::Model& urdf_model,
 }
 }  // namespace kinematics
 
-// ------------- Small helpers (unchanged) ----------------------------------------------------
-inline Vector6d ComputeAdmittanceAcceleration(const Vector6d& external_wrench,
-                                              const Vector6d& vel_state,
-                                              const Vector6d& pos_state,
-                                              const Vector6d& mass_inverse,
-                                              const Vector6d& damping,
-                                              const Vector6d& stiffness) {
-  // Element-wise: M^{-1} (F - D * v - K * x)
-  return mass_inverse.array() *
-         (external_wrench.array()
-          - damping.array()   * vel_state.array()
-          - stiffness.array() * pos_state.array());
-}
-
-inline Vector6d LimitAcceleration(const Vector6d& a, double max_lin, double max_ang) {
-  Vector6d limited = a;
-  double ln = a.head<3>().norm();
-  if (ln > max_lin && ln > 1e-12) limited.head<3>() *= (max_lin / ln);
-  double an = a.tail<3>().norm();
-  if (an > max_ang && an > 1e-12) limited.tail<3>() *= (max_ang / an);
-  return limited;
-}
-
-inline Vector6d IntegrateVelocity(const Vector6d& v, const Vector6d& a, double dt) {
-  return v + a * dt;
-}
-
-inline Result<Eigen::Isometry3d> ComputeForwardKinematics(const std::vector<double>& q_joints,
-                                                          KDL::ChainFkSolverPos_recursive* fk_solver,
-                                                          const KDL::Frame& tool_offset) {
+Result<Eigen::Isometry3d> ComputeForwardKinematics(const std::vector<double>& q_joints,
+                                                   KDL::ChainFkSolverPos_recursive* fk_solver,
+                                                   const KDL::Frame& tool_offset) {
   KDL::JntArray q_kdl(q_joints.size());
   for (size_t i = 0; i < q_joints.size(); ++i) {
     q_kdl(i) = std::atan2(std::sin(q_joints[i]), std::cos(q_joints[i]));
@@ -91,8 +114,7 @@ inline Result<Eigen::Isometry3d> ComputeForwardKinematics(const std::vector<doub
   int fk_result = fk_solver->JntToCart(q_kdl, X_base_joint);
   if (fk_result < 0) {
     return tl::unexpected(MakeError(ErrorCode::kKinematicsInitFailed,
-        fmt::format("FK failed: KDL error={}, input_joints={}, q_kdl_size={}",
-                    fk_result, q_joints.size(), q_kdl.data.size())));
+        fmt::format("FK failed: KDL error={}, input_joints={}, q_kdl_size={}", fk_result, q_joints.size(), q_kdl.data.size())));
   }
 
   KDL::Frame X_base_tool = X_base_joint * tool_offset;
@@ -107,26 +129,29 @@ inline Result<Eigen::Isometry3d> ComputeForwardKinematics(const std::vector<doub
   return result;
 }
 
-inline Result<std::vector<double>> ComputeInverseKinematicsVelocity(
-    const Vector6d& V_tool, const Eigen::Isometry3d& X_tool,
-    const KDL::Frame& X_wrist, const std::vector<double>& q_current,
+Result<std::vector<double>> ComputeInverseKinematicsVelocity(
+    const Vector6d& V_tool_W,
+    const Eigen::Isometry3d& X_tool_W,
+    const KDL::Frame& X_wrist_W,
+    const std::vector<double>& q_current,
     KDL::ChainIkSolverVel_wdls* ik_solver) {
 
   KDL::JntArray q_kdl(q_current.size());
   for (size_t i = 0; i < q_current.size(); ++i) q_kdl(i) = q_current[i];
 
+  // TCP (tool) twist in world
   KDL::Twist V_tool_kdl;
-  V_tool_kdl.vel = KDL::Vector(V_tool(0), V_tool(1), V_tool(2));
-  V_tool_kdl.rot = KDL::Vector(V_tool(3), V_tool(4), V_tool(5));
+  V_tool_kdl.vel = KDL::Vector(V_tool_W(0), V_tool_W(1), V_tool_W(2));
+  V_tool_kdl.rot = KDL::Vector(V_tool_W(3), V_tool_W(4), V_tool_W(5));
 
-  // tool (TCP) -> wrist point shift
-  KDL::Vector p_tool_wrist = KDL::Vector(
-      X_tool.translation()(0) - X_wrist.p.x(),
-      X_tool.translation()(1) - X_wrist.p.y(),
-      X_tool.translation()(2) - X_wrist.p.z());
+  // Shift twist from tool (TCP) to wrist point (world expression).
+  KDL::Vector p_tool_wrist(
+      X_tool_W.translation()(0) - X_wrist_W.p.x(),
+      X_tool_W.translation()(1) - X_wrist_W.p.y(),
+      X_tool_W.translation()(2) - X_wrist_W.p.z());
 
   KDL::Twist V_wrist_kdl;
-  V_wrist_kdl.vel = V_tool_kdl.vel - V_tool_kdl.rot * p_tool_wrist;
+  V_wrist_kdl.vel = V_tool_kdl.vel - V_tool_kdl.rot * p_tool_wrist;  // v - ω × p
   V_wrist_kdl.rot = V_tool_kdl.rot;
 
   KDL::JntArray v_kdl(q_current.size());
@@ -146,28 +171,30 @@ inline Result<std::vector<double>> ComputeInverseKinematicsVelocity(
   return joint_velocities;
 }
 
-inline Vector6d ComputePoseError(const Eigen::Isometry3d& X_current,
-                                 const Eigen::Isometry3d& X_desired) {
-  Vector6d error; // [pos; ori] (translation first)
-  error.head<3>() = X_current.translation() - X_desired.translation();
+// -------- Pose utilities ----------------------------------------------------
 
-  Eigen::Quaterniond q_cur(X_current.rotation());
-  Eigen::Quaterniond q_des(X_desired.rotation());
-  if (q_cur.dot(q_des) < 0.0) q_des.coeffs() *= -1.0;
+Vector6d ComputePoseError(const Eigen::Isometry3d& X_cmd_W,
+                          const Eigen::Isometry3d& X_meas_W) {
+  Vector6d error; // [pos; ori]
+  error.head<3>() = X_cmd_W.translation() - X_meas_W.translation();
 
-  Eigen::Quaterniond q_err = (q_cur * q_des.inverse()).normalized();
+  Eigen::Quaterniond q_cmd(X_cmd_W.rotation());
+  Eigen::Quaterniond q_meas(X_meas_W.rotation());
+  if (q_cmd.dot(q_meas) < 0.0) q_meas.coeffs() *= -1.0;
+
+  Eigen::Quaterniond q_err = (q_cmd * q_meas.inverse()).normalized();
   Eigen::AngleAxisd aa(q_err);
   error.tail<3>() = aa.axis() * aa.angle();
   return error;
 }
 
-inline std::pair<double,double> GetPoseErrorNorms(const Vector6d& e) {
+std::pair<double,double> GetPoseErrorNorms(const Vector6d& e) {
   return {e.head<3>().norm(), e.tail<3>().norm()};
 }
 
-inline Vector6d ApplyWorkspaceLimits(const Vector6d& v,
-                                     const Eigen::Vector3d& pos,
-                                     const Vector6d& limits) {
+Vector6d ApplyWorkspaceLimits(const Vector6d& v,
+                              const Eigen::Vector3d& pos,
+                              const Vector6d& limits) {
   Vector6d out = v;
   for (size_t i = 0; i < 3; ++i) {
     const double min = limits[i*2], max = limits[i*2+1];
@@ -177,8 +204,8 @@ inline Vector6d ApplyWorkspaceLimits(const Vector6d& v,
   return out;
 }
 
-inline Vector6d LimitVelocityMagnitude(const Vector6d& v,
-                                       double max_lin, double max_ang) {
+Vector6d LimitVelocityMagnitude(const Vector6d& v,
+                                double max_lin, double max_ang) {
   Vector6d out = v;
   double ln = v.head<3>().norm();
   if (ln > max_lin && ln > 1e-12) out.head<3>() *= (max_lin / ln);
@@ -187,7 +214,14 @@ inline Vector6d LimitVelocityMagnitude(const Vector6d& v,
   return out;
 }
 
-// ------------- FK to get X_BP_current (unchanged) -------------------------------------------
+// ================= AdmittanceNode member definitions =======================
+// File-scope state: offset in B_des and commanded pose in world.
+namespace {
+  Vector6d g_deltaX_Bdes    = Vector6d::Zero();  // [δp; δr] in B_des
+  Vector6d g_deltaXdot_Bdes = Vector6d::Zero();  // [δṗ; δṙ] in B_des
+  Eigen::Isometry3d g_X_WB_cmd = Eigen::Isometry3d::Identity();  // commanded TCP pose in world
+}
+
 void AdmittanceNode::GetXBPCurrent() {
   RCLCPP_DEBUG_ONCE(get_logger(), "FK solver: %zu joints, %d segments",
                     num_joints_, kdl_chain_.getNrOfSegments());
@@ -198,17 +232,15 @@ void AdmittanceNode::GetXBPCurrent() {
                           "FK failed: %s", result.error().message.c_str());
     return;  // keep last valid pose
   }
-
   X_BP_current = result.value();
 
   for (size_t i = 0; i < num_joints_; ++i) q_kdl_(i) = q_current_[i];
   fk_pos_solver_->JntToCart(q_kdl_, X_BW3);
 }
 
-// ------------- Pose error logging (cmd − meas, world) ---------------------------------------
 void AdmittanceNode::ComputePoseError() {
   // e_X_W = (X_cmd ⊖ X_meas) : "cmd − meas"
-  X_BP_error = ::ur_admittance_controller::ComputePoseError(g_X_BP_cmd, X_BP_current);
+  X_BP_error = ::ur_admittance_controller::ComputePoseError(g_X_WB_cmd, X_BP_current);
 
   auto [pos_err, ori_err] = ::ur_admittance_controller::GetPoseErrorNorms(X_BP_error);
   RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
@@ -217,35 +249,27 @@ void AdmittanceNode::ComputePoseError() {
     ori_err, X_BP_error(3), X_BP_error(4), X_BP_error(5));
 }
 
-// ------------- v3-fixed Admittance (core update) --------------------------------------------
+/**
+ * @brief Core admittance update (Steps 0–5). NO use of X_WB_current.
+ *        Uses desired pose + incoming WORLD wrench, per README's wrench node.  fileciteturn0file5
+ *        Math follows your pseudocode exactly (factored adjoints).            fileciteturn0file4
+ */
 void AdmittanceNode::ComputeAdmittance() {
   const double dt = control_period_.seconds();
   const Matrix3d R_des = X_BP_desired.rotation();
   const Vector3d p_des = X_BP_desired.translation();
 
-  // (Step 0) Re-express external wrench from PROBE axes to B_des axes (dual adjoint)
-  // X_BdesP = X_WB_des^{-1} * X_WP_current   (we assume PROBE=P; wrench is at TCP)
-  Eigen::Isometry3d X_BdesP = X_BP_desired.inverse() * X_BP_current;
-  const Matrix3d R = X_BdesP.rotation();
-  const Vector3d p = X_BdesP.translation();
+  // --- Step 0: Re-express external wrench (WORLD -> B_des) using force adjoint.
+  // NOTE: We assume /netft/proc_probe is already gravity-compensated & in WORLD/base.
+  // If that's not the case, convert it in the wrench node (see README).          fileciteturn0file5
+  Vector6d F_Bdes = ExpressWrenchWorldToBdes(F_P_B /*world*/, R_des, p_des);
 
-  Vector6d F_P_des; // [force; torque] in B_des axes
-  {
-    const Vector3d Fp = F_P_B.head<3>();   // incoming wrench is in PROBE axes
-    const Vector3d Mp = F_P_B.tail<3>();
-    const Vector3d Fd = R * Fp;
-    const Vector3d Md = R * Mp + p.cross(Fd);
-    F_P_des.head<3>() = Fd;
-    F_P_des.tail<3>() = Md;
-  }
+  // Optional scaling knob
+  F_Bdes *= admittance_ratio_;
 
-  // Optional scaling of external wrench
-  F_P_des *= admittance_ratio_;
-
-  // (Step 1) Admittance ODE in B_des axes on the offset state
+  // --- Step 1: Admittance ODE in B_des
   Vector6d acc = ComputeAdmittanceAcceleration(
-      F_P_des, g_deltaXdot_Bdes, g_deltaX_Bdes,
-      M_inverse_diag, D_diag, K_diag);
+      F_Bdes, g_deltaXdot_Bdes, g_deltaX_Bdes, M_inverse_diag, D_diag, K_diag);
 
   acc = LimitAcceleration(acc, arm_max_acc_,
                           params_.admittance.limits.max_angular_acceleration);
@@ -253,36 +277,37 @@ void AdmittanceNode::ComputeAdmittance() {
   g_deltaXdot_Bdes = IntegrateVelocity(g_deltaXdot_Bdes, acc, dt);
   g_deltaX_Bdes    = IntegrateVelocity(g_deltaX_Bdes,    g_deltaXdot_Bdes, dt);
 
-  // (Step 2) Convert offset & rate to world using factored adjoints
-  // Offsets: pose-adjoint (no coupling) — diag(R_des, R_des)
-  Vector3d dpos_W = R_des * g_deltaX_Bdes.head<3>();
-  Vector3d drot_W = R_des * g_deltaX_Bdes.tail<3>();
+  // --- Step 2: Build adjoints from desired pose and map offset & rate to WORLD.
+  const Adjoints A = BuildAdjointsFromDesired(R_des, p_des);
 
-  // Rates: full twist-adjoint (with coupling): [v_W; ω_W] = [[R, p̂ R],[0,R]] [v_B; ω_B]
-  Vector3d drotdot_W = R_des * g_deltaXdot_Bdes.tail<3>();                        // ω_W
-  Vector3d dposdot_W = R_des * g_deltaXdot_Bdes.head<3>() + p_des.cross(drotdot_W); // v_W
+  const Vector6d dX_W    = A.Ad_pose  * g_deltaX_Bdes;
+  const Vector6d dXdot_W = A.Ad_twist * g_deltaXdot_Bdes;
 
-  // (Step 3) Compose commanded pose in world
+  const Vector3d dpos_W     = dX_W.head<3>();
+  const Vector3d drot_W     = dX_W.tail<3>();
+  const Vector3d dposdot_W  = dXdot_W.head<3>();
+  const Vector3d drotdot_W  = dXdot_W.tail<3>();
+
+  // --- Step 3: Compose commanded pose in WORLD.
   const double th = drot_W.norm();
   Matrix3d R_cmd = (th < 1e-12) ? R_des
                                 : (Eigen::AngleAxisd(th, drot_W / th).toRotationMatrix() * R_des);
 
-  g_X_BP_cmd = Eigen::Isometry3d::Identity();
-  g_X_BP_cmd.linear()      = R_cmd;
-  g_X_BP_cmd.translation() = X_BP_desired.translation() + dpos_W;
+  g_X_WB_cmd = Eigen::Isometry3d::Identity();
+  g_X_WB_cmd.linear()      = R_cmd;
+  g_X_WB_cmd.translation() = p_des + dpos_W;
 
-  // (Step 4) Pose error in world (cmd − meas)
-  Vector6d e_W = ::ur_admittance_controller::ComputePoseError(g_X_BP_cmd, X_BP_current);
+  // --- Step 4: Pose error will be computed after FK (cmd − meas) in ComputePoseError().
 
-  // (Step 5) World twist command: V_cmd = δẊ_W + Kp^W * e_W
-  // Reuse K_diag as world P gain (matches current parameter set; can be split later)
-  V_P_B_commanded.head<3>() = dposdot_W + K_diag.head<3>().cwiseProduct(e_W.head<3>());
-  V_P_B_commanded.tail<3>() = drotdot_W + K_diag.tail<3>().cwiseProduct(e_W.tail<3>());
+  // --- Step 5: World twist command: V_cmd = δẊ_W + Kp^W * e_W
+  // We reuse K_diag as a world P gain to avoid changing external params.        fileciteturn0file0
+  // (e_W is computed after FK; we store the partial term here)
+  Vector6d V_cmd_partial = Vector6d::Zero();
+  V_cmd_partial.head<3>() = dposdot_W;
+  V_cmd_partial.tail<3>() = drotdot_W;
 
-  RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
-    "V_cmd: lin=[%.3f,%.3f,%.3f] ang=[%.3f,%.3f,%.3f]",
-    V_P_B_commanded(0), V_P_B_commanded(1), V_P_B_commanded(2),
-    V_P_B_commanded(3), V_P_B_commanded(4), V_P_B_commanded(5));
+  // Temporarily store partial; add P*error in ControlCycle after ComputePoseError.
+  V_P_B_commanded = V_cmd_partial;
 }
 
 void AdmittanceNode::LimitToWorkspace() {
@@ -358,4 +383,4 @@ Status AdmittanceNode::LoadKinematics() {
   return {};
 }
 
-} 
+} // namespace ur_admittance_controller

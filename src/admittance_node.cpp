@@ -1,14 +1,26 @@
-// admittance_node.cpp — subscribes /netft/proc_probe (wrench in PROBE axes)
-// Control loop order: FK → Admittance (pseudocode-accurate) → PoseError(log) → Limits → IK
+
+/**
+ * @file admittance_node.cpp
+ * @brief ROS 2 node wiring. ControlCycle order now matches math dependencies:
+ *
+ *   ComputeAdmittance();     // Steps 0–5 (no FK)
+ *   GetXBPCurrent();         // FK only for IK shift & logging
+ *   ComputePoseError();      // cmd − meas (world)
+ *   // add proportional correction in world and publish joint rates
+ *
+ * This removes the old coupling where admittance depended on current pose.
+ * It keeps the external interface (topics/params) identical.                     fileciteturn0file5
+ */
 
 #include "admittance_node.hpp"
+#include "admittance_computations.hpp"
 
 namespace ur_admittance_controller {
 
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 : Node("admittance_node", options) {
   RCLCPP_INFO_ONCE(get_logger(),
-    "Initializing UR Admittance Controller (v3-fixed, full twist adjoint on rates)");
+    "UR Admittance Controller — refactored to match pseudocode (factored adjoints, no FK in ODE).");
 
   param_listener_ = std::make_shared<ur_admittance_controller::ParamListener>(
       get_node_parameters_interface());
@@ -88,7 +100,7 @@ void AdmittanceNode::SetAdmittanceGains(const Params::Admittance& p) {
 }
 
 void AdmittanceNode::configure() {
-  // Wrench in PROBE axes (matches wrench_node; we re-express to B_des inside ComputeAdmittance)
+  // Wrench topic — per README, this should be gravity-compensated and in WORLD/base.  fileciteturn0file5
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
       "/netft/proc_probe", rclcpp::SensorDataQoS(),
       [this](const geometry_msgs::msg::WrenchStamped::ConstSharedPtr& msg) {
@@ -121,21 +133,28 @@ void AdmittanceNode::configure() {
 }
 
 void AdmittanceNode::ControlCycle() {
+  // New order: math first (purely from desired pose + wrench), then FK for IK & error.
+  ComputeAdmittance();         // Steps 0–5, independent of FK
   GetXBPCurrent();             // FK: X_BP_current, X_BW3
-  ComputeAdmittance();         // core (now includes full twist adjoint on rates)
   ComputePoseError();          // diagnostics (cmd − meas)
+
+  // Add proportional world correction now that e_W is known.
+  V_P_B_commanded.head<3>() += K_diag.head<3>().cwiseProduct(X_BP_error.head<3>());
+  V_P_B_commanded.tail<3>() += K_diag.tail<3>().cwiseProduct(X_BP_error.tail<3>());
+
   LimitToWorkspace();
   ComputeAndPubJointVelocities();
 }
 
 void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  F_P_B = SanitizeWrench(conversions::FromMsg(*msg));  // keep as PROBE axes
+  // Store the latest wrench (assumed WORLD/base).
+  F_P_B = SanitizeWrench(conversions::FromMsg(*msg));
 
   auto force_norm  = F_P_B.head<3>().norm();
   auto torque_norm = F_P_B.tail<3>().norm();
   if (force_norm > constants::FORCE_THRESHOLD || torque_norm > constants::TORQUE_THRESHOLD) {
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), constants::LOG_THROTTLE_MS,
-      "Wrench[P]: F=%.2fN [%.2f,%.2f,%.2f], T=%.2fNm [%.2f,%.2f,%.2f]",
+      "Wrench[W]: F=%.2fN [%.2f,%.2f,%.2f], T=%.2fNm [%.2f,%.2f,%.2f]",
       force_norm, F_P_B(0), F_P_B(1), F_P_B(2),
       torque_norm, F_P_B(3), F_P_B(4), F_P_B(5));
   }
