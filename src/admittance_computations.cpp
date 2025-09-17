@@ -42,6 +42,14 @@ Adjoints BuildAdjointsFromDesired(const Matrix3d& R_des, const Vector3d& p_des) 
   return A;
 }
 
+Vector6d ExpressWrenchWorldToBdes(const Vector6d& F_world,
+                                  const Matrix3d& R_des,
+                                  const Vector3d& p_des) {
+  // Spatial wrench transform: F_B = Ad_{X_WB}^T F_W.
+  // Set p_des = 0 if upstream processing already shifts the moment to the TCP origin.
+  return AdForce(R_des, p_des) * F_world;
+}
+
 // -------- ODE helpers (unchanged math, clearer names) -----------------------
 
 Vector6d ComputeAdmittanceAcceleration(
@@ -299,9 +307,8 @@ void AdmittanceNode::ComputeAdmittance() {
 
   // --- Step 4: Pose error will be computed after FK (cmd − meas) in ComputePoseError().
 
-  // --- Step 5: World twist command: V_cmd = δẊ_W + Kp^W * e_W
-  // We reuse K_diag as a world P gain to avoid changing external params.        fileciteturn0file0
-  // (e_W is computed after FK; we store the partial term here)
+  // --- Step 5: World twist command: V_cmd = δẊ_W + K_v * e_W
+  // e_W is computed after FK; store the open-loop term here and add K_v ∘ e_W later.
   Vector6d V_cmd_partial = Vector6d::Zero();
   V_cmd_partial.head<3>() = dposdot_W;
   V_cmd_partial.tail<3>() = drotdot_W;

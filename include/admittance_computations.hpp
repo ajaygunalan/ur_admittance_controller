@@ -111,19 +111,13 @@ Vector6d LimitVelocityMagnitude(
 // ---------- Wrench re-expression ----------
 
 /**
- * @brief Express an incoming wrench F_W (in WORLD/base) into B_des axes.
- * @details Uses the force adjoint of X_BdesW = X_WB_des^{-1}. This corresponds to
- *          Step 0 in the pseudocode where the wrench is transformed into the ODE's basis.
- *          If your wrench arrives in some other frame, re-express it to world in your
- *          wrench node. This keeps this controller decoupled from the current pose.
+ * @brief Express a spatial wrench from WORLD/base into B_des using the force adjoint.
+ * @details This is Step 0 of the pseudocode (F_Bdes = Ad_{X_WB_des}^T F_W). If the
+ *          upstream pipeline already keeps the torque about the TCP origin, pass p_des=0
+ *          so the moment shift vanishes and only the rotation is applied.
  */
-inline Vector6d ExpressWrenchWorldToBdes(const Vector6d& F_W,
-                                         const Matrix3d& R_des,
-                                         const Vector3d& p_des) {
-  // X_BdesW = (R_des^T, -R_des^T p_des)
-  const Matrix3d R = R_des.transpose();
-  const Vector3d p = -R * p_des;
-  return AdForce(R, p) * F_W;
-}
+Vector6d ExpressWrenchWorldToBdes(const Vector6d& F_world,
+                                  const Matrix3d& R_des,
+                                  const Vector3d& p_des);
 
 }  // namespace ur_admittance_controller

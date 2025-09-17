@@ -17,6 +17,11 @@
 
 namespace ur_admittance_controller {
 
+namespace {
+// World-frame velocity gain (1/s) multiplying pose error.
+Vector6d g_world_vel_P = (Vector6d() << 4.0, 4.0, 4.0, 2.0, 2.0, 2.0).finished();
+}
+
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
 : Node("admittance_node", options) {
   RCLCPP_INFO_ONCE(get_logger(),
@@ -31,6 +36,19 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
     if (result.successful) {
       params_ = param_listener_->get_params();
       SetAdmittanceGains(params_.admittance);
+
+      for (const auto& param : params) {
+        if (param.get_name() == "tracking.velocity_gain" &&
+            param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
+          const auto& values = param.as_double_array();
+          if (values.size() == 6) {
+            g_world_vel_P = Eigen::Map<const Vector6d>(values.data());
+          } else {
+            RCLCPP_WARN(get_logger(),
+                        "tracking.velocity_gain must have 6 elements; ignoring update");
+          }
+        }
+      }
     } else {
       RCLCPP_WARN(get_logger(), "Parameter update rejected: %s", result.reason.c_str());
     }
@@ -79,7 +97,19 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   auto pos = eq_params["equilibrium.position"].as<std::vector<double>>();
   auto ori = eq_params["equilibrium.orientation"].as<std::vector<double>>();
   X_BP_desired.translation() << pos[0], pos[1], pos[2];
-  X_BP_desired.linear() = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]).toRotationMatrix();
+  X_BP_desired.linear() = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]).normalized().toRotationMatrix();
+
+  const std::vector<double> kv_default = {4.0, 4.0, 4.0, 2.0, 2.0, 2.0};
+  declare_parameter<std::vector<double>>("tracking.velocity_gain", kv_default);
+  std::vector<double> kv_user;
+  if (get_parameter("tracking.velocity_gain", kv_user)) {
+    if (kv_user.size() == 6) {
+      g_world_vel_P = Eigen::Map<const Vector6d>(kv_user.data());
+    } else {
+      RCLCPP_WARN(get_logger(),
+                  "tracking.velocity_gain must have 6 elements; using defaults");
+    }
+  }
 
   logging::LogPose(get_logger(), "Equilibrium:",
                    Vector3d(pos.data()),
@@ -138,9 +168,8 @@ void AdmittanceNode::ControlCycle() {
   GetXBPCurrent();             // FK: X_BP_current, X_BW3
   ComputePoseError();          // diagnostics (cmd − meas)
 
-  // Add proportional world correction now that e_W is known.
-  V_P_B_commanded.head<3>() += K_diag.head<3>().cwiseProduct(X_BP_error.head<3>());
-  V_P_B_commanded.tail<3>() += K_diag.tail<3>().cwiseProduct(X_BP_error.tail<3>());
+  // Add proportional world correction now that e_W is known (gain units 1/s).
+  V_P_B_commanded += g_world_vel_P.cwiseProduct(X_BP_error);
 
   LimitToWorkspace();
   ComputeAndPubJointVelocities();
@@ -175,8 +204,13 @@ void AdmittanceNode::DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::
   X_BP_desired.translation() << msg->pose.position.x,
                                 msg->pose.position.y,
                                 msg->pose.position.z;
-  // Orientation updates could be added similarly if you stream them.
-  RCLCPP_DEBUG(get_logger(), "Desired position updated to [%.3f, %.3f, %.3f]",
+  const auto& q = msg->pose.orientation;
+  Eigen::Quaterniond q_new(q.w, q.x, q.y, q.z);
+  if (q_new.norm() > 1e-6) {
+    X_BP_desired.linear() = q_new.normalized().toRotationMatrix();
+  }
+
+  RCLCPP_DEBUG(get_logger(), "Desired pose updated. p=[%.3f, %.3f, %.3f]",
                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
 }
 
