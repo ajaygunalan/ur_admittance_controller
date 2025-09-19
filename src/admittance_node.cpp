@@ -11,7 +11,7 @@ std::filesystem::path GetEquilibriumConfigPath() {
   const auto share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
   return std::filesystem::path(share_dir) / "config" / "equilibrium.yaml";
 }
-constexpr std::array<double, 6> kDefaultVelocityGain{{4.0,4.0,4.0,2.0,2.0,2.0}};
+constexpr std::array<double, 6> kDefaultVelocityGain{{2.0,2.0,2.0,1.0,1.0,1.0}};
 } // namespace
 
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
@@ -262,7 +262,11 @@ void AdmittanceNode::ComputeAndPubJointVelocities() {
 }
 
 void AdmittanceNode::WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg) {
-  F_ext_P_ = conversions::FromMsg(*msg);
+  // NOTE:
+  // The wrench published on /netft/proc_probe follows the sensor/reaction convention
+  // (robot-on-world). The admittance ODE expects the external wrench applied TO the robot
+  // (environment-on-robot). Flip sign once at ingestion to match that convention.
+  F_ext_P_ = -conversions::FromMsg(*msg);
   const double fN = F_ext_P_.head<3>().norm();
   const double tN = F_ext_P_.tail<3>().norm();
   if (fN > constants::FORCE_THRESHOLD || tN > constants::TORQUE_THRESHOLD) {

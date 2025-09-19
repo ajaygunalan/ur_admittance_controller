@@ -9,21 +9,21 @@ ur_admittance_controller:
   admittance:
     mass:
       type: double_array
-      default_value: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+      default_value: [6.0, 6.0, 6.0, 6.0, 6.0, 6.0]
       description: Virtual inertia [X,Y,Z,Rx,Ry,Rz] in [kg,kg,kg,kg⋅m²,kg⋅m²,kg⋅m²]
       validation:
         fixed_size<>: [6]
         element_bounds<>: [0.1, 100.0]
     stiffness:
       type: double_array
-      default_value: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+      default_value: [5.0, 5.0, 5.0, 3.0, 3.0, 3.0]
       description: Position stiffness [X,Y,Z,Rx,Ry,Rz] in [N/m,N/m,N/m,Nm/rad,Nm/rad,Nm/rad]
       validation:
         fixed_size<>: [6]
         element_bounds<>: [0.0, 10000.0]
     damping:
       type: double_array
-      default_value: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+      default_value: [30.0, 30.0, 30.0, 30.0, 30.0, 30.0]
       description: Explicit damping values [X,Y,Z,Rx,Ry,Rz] in [Ns/m,Ns/m,Ns/m,Nms/rad,Nms/rad,Nms/rad]
       validation:
         fixed_size<>: [6]
@@ -31,13 +31,13 @@ ur_admittance_controller:
     limits:
       max_angular_acceleration:
         type: double
-        default_value: 2.0
+        default_value: 1.0
         description: Maximum angular acceleration in rad/s²
         validation:
           bounds<>: [0.1, 10.0]
       max_angular_velocity:
         type: double
-        default_value: 3.0
+        default_value: 1.5
         description: Maximum angular velocity in rad/s
         validation:
           bounds<>: [0.1, 10.0]
