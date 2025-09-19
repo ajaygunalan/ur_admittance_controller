@@ -1,13 +1,6 @@
-
 #pragma once
-
-/**
- * @file admittance_node.hpp
- * @brief ROS 2 node interface (I/O, params, timers). Math lives in *_computations.*
- *
- * External interface is unchanged (topics/params/services), but internals are
- * reorganized to follow the math pseudocode line-by-line for readability.
- */
+// Critical insights: Interfaces unchanged; only frames W(world), P(probe), S(sensor).
+// Wrench topic /netft/proc_probe is assumed compensated and expressed in P.
 
 #include <array>
 #include <chrono>
@@ -54,18 +47,7 @@ using Matrix6d = Eigen::Matrix<double, 6, 6>;
 using Vector6d = Eigen::Matrix<double, 6, 1>;
 using Wrench6d = Eigen::Matrix<double, 6, 1>;
 
-using Force3d = Eigen::Vector3d;
-using Torque3d = Eigen::Vector3d;
-
 using JointVector = std::array<double, DOF>;
-
-struct GravityCompensationParams {
-    Matrix3d R_SE;
-    Vector3d f_grav_b;
-    Vector3d f_bias_s;
-    Vector3d t_bias_s;
-    Vector3d p_CoM_s;
-};
 
 enum class ErrorCode {
   kFileNotFound,
@@ -93,167 +75,63 @@ inline Error MakeError(ErrorCode code, const std::string& msg) {
 }
 
 namespace constants {
-
-constexpr double GRAVITY = 9.81;
-
 constexpr auto DEFAULT_TIMEOUT = std::chrono::seconds(10);
-constexpr auto SERVICE_TIMEOUT = std::chrono::seconds(5);
 constexpr int CONTROL_LOOP_HZ = 100;
 constexpr int DEFAULT_QUEUE_SIZE = 10;
-
 constexpr int LOG_THROTTLE_MS = 1000;
-
 constexpr double FORCE_THRESHOLD = 0.1;
 constexpr double TORQUE_THRESHOLD = 0.1;
-
-constexpr auto SAMPLE_DELAY = std::chrono::milliseconds(100);
-
-constexpr double DEFAULT_MOVEMENT_DURATION = 12.0;
-
-constexpr double CALIBRATION_ANGLE_LARGE = M_PI / 3.0;
-constexpr double CALIBRATION_ANGLE_SMALL = M_PI / 6.0;
-
-constexpr double CALIBRATION_INDEX_OFFSET = 1.0;
-constexpr double CALIBRATION_MODULO_DIVISOR = 8.0;
-constexpr double CALIBRATION_TRAJECTORY_DURATION = 3.0;
-
 constexpr double WORKSPACE_X_MIN = -1.0;
-constexpr double WORKSPACE_X_MAX = 1.0;
+constexpr double WORKSPACE_X_MAX =  1.0;
 constexpr double WORKSPACE_Y_MIN = -1.0;
-constexpr double WORKSPACE_Y_MAX = 1.0;
-constexpr double WORKSPACE_Z_MIN = 0.0;
-constexpr double WORKSPACE_Z_MAX = 1.0;
-
-constexpr double ARM_MAX_ACCELERATION = 1.0;
-
+constexpr double WORKSPACE_Y_MAX =  1.0;
+constexpr double WORKSPACE_Z_MIN =  0.0;
+constexpr double WORKSPACE_Z_MAX =  1.0;
+constexpr double ARM_MAX_ACCELERATION = 1.0; // translational accel gate (m/s^2)
 }  // namespace constants
 
 namespace conversions {
-
 inline Wrench6d FromMsg(const geometry_msgs::msg::WrenchStamped& msg) {
-    return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
-                          msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
+  return (Wrench6d() << msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
+                        msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z).finished();
 }
-
-inline Wrench6d FromMsg(const geometry_msgs::msg::Wrench& wrench) {
-    return (Wrench6d() << wrench.force.x, wrench.force.y, wrench.force.z,
-                          wrench.torque.x, wrench.torque.y, wrench.torque.z).finished();
-}
-
-inline void FillMsg(const Wrench6d& wrench, geometry_msgs::msg::WrenchStamped& msg) {
-    msg.wrench.force.x = wrench[0];
-    msg.wrench.force.y = wrench[1];
-    msg.wrench.force.z = wrench[2];
-    msg.wrench.torque.x = wrench[3];
-    msg.wrench.torque.y = wrench[4];
-    msg.wrench.torque.z = wrench[5];
-}
-
-geometry_msgs::msg::WrenchStamped ToMsg(
-    const Wrench6d& wrench,
-    const std::string& frame_id,
-    const rclcpp::Time& stamp);
-
 }  // namespace conversions
 
-inline double SanitizeJointAngle(double angle) {
-    return std::abs(angle) < 1e-12 ? 0.0 : std::round(angle * 10000.0) / 10000.0;
-}
-
-inline Vector3d SanitizeForce(const Vector3d& force) {
-    return force.unaryExpr([](double v) {
-        return std::abs(v) < 1e-6 ? 0.0 : v;
-    });
-}
-
-inline Vector3d SanitizeTorque(const Vector3d& torque) {
-    return torque.unaryExpr([](double v) {
-        return std::abs(v) < 1e-7 ? 0.0 : v;
-    });
-}
-
-inline Wrench6d SanitizeWrench(const Wrench6d& wrench) {
-    Wrench6d result;
-    result.head<3>() = SanitizeForce(wrench.head<3>());
-    result.tail<3>() = SanitizeTorque(wrench.tail<3>());
-    return result;
-}
-
-namespace kinematics {
-
-struct KinematicsComponents {
-    KDL::Tree tree;
-    KDL::Chain robot_chain;
-    KDL::Frame tool_offset;
-    size_t num_joints;
-};
-
-Result<KinematicsComponents> InitializeFromUrdf(
-    const urdf::Model& urdf_model,
-    const std::string& base_link,
-    const std::string& tip_link);
-
-Result<KinematicsComponents> InitializeFromUrdfString(
-    const std::string& urdf_string,
-    const std::string& base_link,
-    const std::string& tip_link);
-
-Transform KdlToEigen(const KDL::Frame& frame);
-
-}  // namespace kinematics
+ 
 
 namespace logging {
-
-template<typename Logger>
-inline void LogVector3(const Logger& logger, const char* prefix, const Vector3d& vec) {
-    RCLCPP_INFO(logger, "%s [%.3f, %.3f, %.3f]", prefix, vec.x(), vec.y(), vec.z());
-}
-
 template<typename Logger>
 inline void LogPose(const Logger& logger, const char* prefix, const Vector3d& pos, const Eigen::Quaterniond& q) {
-    RCLCPP_INFO(logger, "%s pos=[%.3f,%.3f,%.3f], quat=[%.3f,%.3f,%.3f,%.3f]",
-                prefix, pos.x(), pos.y(), pos.z(), q.x(), q.y(), q.z(), q.w());
+  RCLCPP_INFO(logger, "%s pos=[%.3f,%.3f,%.3f], quat=[%.3f,%.3f,%.3f,%.3f]",
+              prefix, pos.x(), pos.y(), pos.z(), q.x(), q.y(), q.z(), q.w());
 }
-
-template<typename Logger>
-inline void LogWrench(const Logger& logger, const char* prefix, const Wrench6d& wrench) {
-    RCLCPP_INFO(logger, "%s F[%.2f,%.2f,%.2f]N, T[%.3f,%.3f,%.3f]Nm",
-                prefix, wrench(0), wrench(1), wrench(2), wrench(3), wrench(4), wrench(5));
-}
-
-template<typename Logger>
-inline void LogJoints(const Logger& logger, const char* prefix, const JointVector& joints) {
-    RCLCPP_INFO(logger, "%s [%.3f,%.3f,%.3f,%.3f,%.3f,%.3f]",
-                prefix, joints[0], joints[1], joints[2], joints[3], joints[4], joints[5]);
-}
-
-}  // namespace logging
+} // namespace logging
 
 class AdmittanceNode : public rclcpp::Node {
 public:
   explicit AdmittanceNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
-  void ControlCycle();
   void configure();
+  void ControlCycle();
 
 private:
-  // ---- ROS I/O callbacks ----
+  // I/O
   void WrenchCallback(const geometry_msgs::msg::WrenchStamped::ConstSharedPtr msg);
   void JointStateCallback(const sensor_msgs::msg::JointState::ConstSharedPtr msg);
   void DesiredPoseCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
   void OnControlTimer();
 
-  // ---- Core control pieces (implemented in *_computations.cpp) ----
+  // Core
   Status LoadKinematics();
   void LoadEquilibriumPose(const std::filesystem::path& path);
   bool UpdateWorldVelocityGain(const std::vector<double>& gains);
-  void ComputeAdmittance();     // Steps 0–5 (no FK needed)
-  void GetXBPCurrent();         // FK for Step 6 (IK) & error logging
-  void ComputePoseError();      // uses g_X_WB_cmd from ComputeAdmittance
+  void ComputeAdmittance();     // 0–5 (pure math: desired pose + P-wrench)
+  void GetXWPCurrent();         // FK for pose error + IK shift
+  void ComputePoseError();      // uses g_X_WP_cmd_
+  void LimitWorldCommand();     // limiter in WORLD
   void ComputeAndPubJointVelocities();
-  void LimitToWorkspace();
   void SetAdmittanceGains(const Params::Admittance& params);
 
-  // ---- ROS I/O ----
+  // ROS
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr desired_pose_sub_;
@@ -261,41 +139,43 @@ private:
   std::shared_ptr<ur_admittance_controller::ParamListener> param_listener_;
   ur_admittance_controller::Params params_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_cb_handle_;
-  std::vector<double> q_current_;
-  std::vector<double> q_dot_cmd_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
-  // ---- Controller state & params ----
-  Vector6d F_P_B = Vector6d::Zero();          // Assumed WORLD/base wrench (see README).
-  Vector6d V_P_B_commanded = Vector6d::Zero(); // World twist command
-  Vector6d g_deltaX_Bdes = Vector6d::Zero();   // [delta p; delta r] in B_des
-  Vector6d g_deltaXdot_Bdes = Vector6d::Zero(); // [delta p_dot; delta r_dot] in B_des
-  Eigen::Isometry3d g_X_WB_cmd = Eigen::Isometry3d::Identity();   // Commanded pose in world
-  Vector6d M_inverse_diag;
-  Vector6d D_diag;
-  Vector6d K_diag;
-  Vector6d world_vel_P_ = (Vector6d() << 4.0, 4.0, 4.0, 2.0, 2.0, 2.0).finished();
-
-  Eigen::Isometry3d X_BP_current = Eigen::Isometry3d::Identity(); // world
-  Eigen::Isometry3d X_BP_desired = Eigen::Isometry3d::Identity(); // world
-  Vector6d X_BP_error = Vector6d::Zero();
+  // State
+  std::vector<double> q_current_;
+  std::vector<double> q_dot_cmd_;
   std_msgs::msg::Float64MultiArray velocity_msg_;
 
-  Vector6d workspace_limits_;
-  double arm_max_vel_;
-  double arm_max_acc_;
-  double admittance_ratio_;
+  Vector6d F_ext_P_ = Vector6d::Zero();
+  Vector6d V_cmd_W_ = Vector6d::Zero();
+  Vector6d V_prev_W_ = Vector6d::Zero();
+  Vector6d deltaX_P_ = Vector6d::Zero();
+  Vector6d deltaXdot_P_ = Vector6d::Zero();
+  Eigen::Isometry3d X_WP_cmd_ = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3d X_WP_current_ = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3d X_WP_desired_ = Eigen::Isometry3d::Identity();
+  Vector6d X_WP_error_ = Vector6d::Zero();
 
-  // ---- Kinematics ----
+  Vector6d M_inv_diag_;
+  Vector6d D_diag_;
+  Vector6d K_diag_;
+  Vector6d Kp_W_ = (Vector6d() << 4.0, 4.0, 4.0, 2.0, 2.0, 2.0).finished();
+
+  Vector6d workspace_limits_;
+  double arm_max_vel_ = 1.5;
+  double arm_max_acc_ = constants::ARM_MAX_ACCELERATION;
+  double admittance_ratio_ = 1.0;
+
+  // KDL
   KDL::Tree kdl_tree_;
   KDL::Chain kdl_chain_;
-  KDL::Frame X_W3P;
+  KDL::Frame X_W3P_; // wrist_3_link -> tool
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_;
   std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_pos_solver_;
   size_t num_joints_ = 0;
   KDL::JntArray q_kdl_;
   KDL::JntArray v_kdl_;
-  KDL::Frame X_BW3;
+  KDL::Frame X_BW3_; // base->wrist (for shift)
 
 public:
   rclcpp::Duration control_period_{std::chrono::milliseconds(10)};
@@ -305,4 +185,4 @@ private:
   std::unordered_map<std::string, size_t> joint_name_to_index_;
 };
 
-}  // namespace ur_admittance_controller
+} // namespace ur_admittance_controller

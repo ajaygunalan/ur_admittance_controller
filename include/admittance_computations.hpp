@@ -1,30 +1,20 @@
-
 #pragma once
-/**
- * @file admittance_computations.hpp
- * @brief Math/kinematics utilities used by AdmittanceNode (clean, pseudocode-accurate).
- *
- * Design goals (per pseudocode):
- *   - The admittance ODE runs in B_des axes.
- *   - Wrench is re-expressed into B_des using the proper force adjoint.
- *   - Offsets are mapped to world with the pose-adjoint diag(R_des, R_des).
- *   - Offset rates are mapped to world with the full twist adjoint (with p_hat * R coupling).
- *   - Commanded pose and world twist are composed in world.
- *
- * Vectors use [linear; angular] ordering throughout (matches KDL::Twist).
- */
+// Critical insights: (i) Wrench input is already in PROBE (P). (ii) All 6D vectors use [linear; angular] ordering to match KDL::Twist. (iii) Mapping to WORLD uses adjoints built from the desired pose.
 
-#include <fmt/core.h>
-#include <fmt/format.h>
+#include <Eigen/Core>
+#include <Eigen/Geometry>
+#include <kdl/chain.hpp>
+#include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl/chainiksolvervel_wdls.hpp>
+#include <kdl/frames.hpp>
+#include <kdl/tree.hpp>
 #include <kdl_parser/kdl_parser.hpp>
 
-// Pull in shared types (Vector6d, Result, KinematicsComponents, etc.)
-#include "admittance_node.hpp"
+#include "admittance_node.hpp"  // shared types
 
 namespace ur_admittance_controller {
 
-// ---------- Small algebra helpers ----------
-
+// ------- Algebra -------
 inline Matrix3d Skew(const Vector3d& p) {
   Matrix3d S;
   S <<     0.0, -p.z(),  p.y(),
@@ -33,60 +23,47 @@ inline Matrix3d Skew(const Vector3d& p) {
   return S;
 }
 
-/** @brief 6×6 twist adjoint for R, p (expresses a twist from B into W given X_WB=(R,p)).
- *  [v_W; omega_W] = Ad_twist(R,p) [v_B; omega_B] = [[R, 0], [p^ R, R]] [v_B; omega_B]
- */
+// Twist adjoint for [linear; angular] ordering: [v_W; w_W] = [[R, p^R],[0,R]] [v_B; w_B]
 Matrix6d AdTwist(const Matrix3d& R, const Vector3d& p);
 
-/** @brief 6×6 force adjoint (dual) = Ad_twist(R,p)^T. */
-Matrix6d AdForce(const Matrix3d& R, const Vector3d& p);
-
-/** @brief Build both adjoints from the desired pose X_WB_des=(R_des,p_des). */
+// Pose-adjoint (for small pose offsets): diag(R, R); twist-adjoint above.
 struct Adjoints {
   Matrix6d Ad_pose;   // diag(R_des, R_des)
-  Matrix6d Ad_twist;  // [[R_des, 0], [p_hat_des * R_des, R_des]]
+  Matrix6d Ad_twist;  // [[R_des, p^R_des],[0, R_des]]
 };
 Adjoints BuildAdjointsFromDesired(const Matrix3d& R_des, const Vector3d& p_des);
 
-// ---------- Admittance ODE bits ----------
-
-/** @brief Element-wise:  M^{-1} (F - D v - K x)  in [linear; angular] order. */
+// ------- Admittance ODE (P-frame) -------
 Vector6d ComputeAdmittanceAcceleration(
-    const Vector6d& external_wrench,
-    const Vector6d& velocity_state,
-    const Vector6d& position_state,
-    const Vector6d& mass_inverse,
-    const Vector6d& damping,
-    const Vector6d& stiffness);
+    const Vector6d& F_ext_P,
+    const Vector6d& xdot_P,
+    const Vector6d& x_P,
+    const Vector6d& M_inv_diag,
+    const Vector6d& D_diag,
+    const Vector6d& K_diag);
 
-/** @brief Magnitude limiting per translational & rotational 3-norms. */
-Vector6d LimitAcceleration(
-    const Vector6d& acceleration,
-    double max_linear_acc,
-    double max_angular_acc);
+Vector6d IntegrateVelocity(const Vector6d& v, const Vector6d& a, double dt);
 
-/** @brief Euler step for velocity state. */
-Vector6d IntegrateVelocity(
-    const Vector6d& current_velocity,
-    const Vector6d& acceleration,
-    double dt);
-
-// ---------- Kinematics ----------
+// ------- Kinematics -------
 namespace kinematics {
-/** @brief Parse URDF and build KDL structures; also computes wrist->tool offset. */
+struct KinematicsComponents {
+    KDL::Tree tree;
+    KDL::Chain robot_chain;
+    KDL::Frame tool_offset;  // wrist_3_link -> tool (TCP)
+    size_t num_joints;
+};
+
 Result<KinematicsComponents> InitializeFromUrdf(
     const urdf::Model& urdf_model,
     const std::string& base_link,
     const std::string& tip_link);
 } // namespace kinematics
 
-/** @brief FK: base->TCP including tool offset, as Eigen::Isometry3d (world). */
 Result<Eigen::Isometry3d> ComputeForwardKinematics(
     const std::vector<double>& q_joints,
     KDL::ChainFkSolverPos_recursive* fk_solver,
     const KDL::Frame& tool_offset);
 
-/** @brief Resolved-rate IK (WDLS): tool twist at TCP -> joint rates, with shift to wrist. */
 Result<std::vector<double>> ComputeInverseKinematicsVelocity(
     const Vector6d& V_tool_W,
     const Eigen::Isometry3d& X_tool_W,
@@ -94,38 +71,21 @@ Result<std::vector<double>> ComputeInverseKinematicsVelocity(
     const std::vector<double>& q_current,
     KDL::ChainIkSolverVel_wdls* ik_solver);
 
-// ---------- Pose utilities ----------
-
-/** @brief Small pose error e = (X_cmd ⊖ X_meas) in [pos; ori] (world). */
+// ------- Pose & limits -------
 Vector6d ComputePoseError(
     const Eigen::Isometry3d& X_cmd_W,
     const Eigen::Isometry3d& X_meas_W);
 
-/** @brief Norms of pos/orient parts (for logging). */
 std::pair<double, double> GetPoseErrorNorms(const Vector6d& pose_error);
 
-/** @brief Apply planar box workspace limits using current position (world). */
 Vector6d ApplyWorkspaceLimits(
     const Vector6d& velocity_W,
     const Eigen::Vector3d& current_position_W,
     const Vector6d& workspace_limits);
 
-/** @brief Norm clamp on linear/rotational speeds. */
 Vector6d LimitVelocityMagnitude(
     const Vector6d& velocity,
     double max_linear_vel,
     double max_angular_vel);
 
-// ---------- Wrench re-expression ----------
-
-/**
- * @brief Express a spatial wrench from WORLD/base into B_des using the force adjoint.
- * @details This is Step 0 of the pseudocode (F_Bdes = Ad_{X_WB_des}^T F_W). If the
- *          upstream pipeline already keeps the torque about the TCP origin, pass p_des=0
- *          so the moment shift vanishes and only the rotation is applied.
- */
-Vector6d ExpressWrenchWorldToBdes(const Vector6d& F_world,
-                                  const Matrix3d& R_des,
-                                  const Vector3d& p_des);
-
-}  // namespace ur_admittance_controller
+} // namespace ur_admittance_controller
