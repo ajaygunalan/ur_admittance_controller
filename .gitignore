@@ -42,3 +42,6 @@ logs/
 
 # YoYo AI version control directory
 .yoyo/
+
+# Ignore Windows ADS sidecars
+*:Zone.Identifier
