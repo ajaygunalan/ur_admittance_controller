@@ -35,16 +35,17 @@ KinematicModel build_kinematic_model(const std::string& urdf_string) {
   KDL::Chain robot_chain;
   tree.getChain("base_link", "wrist_3_link", robot_chain);
   
-  KDL::Chain tool_chain;
-  tree.getChain("wrist_3_link", "p42v_link1", tool_chain);
+  // Build wrist_3_link -> probe_link chain
+  KDL::Chain probe_chain;
+  tree.getChain("wrist_3_link", "p42v_link1", probe_chain);
   
-  KDL::Frame tool_offset = KDL::Frame::Identity();
-  for (unsigned int i = 0; i < tool_chain.getNrOfSegments(); ++i)
-    tool_offset = tool_offset * tool_chain.getSegment(i).getFrameToTip();
+  KDL::Frame probe_offset = KDL::Frame::Identity();
+  for (unsigned int i = 0; i < probe_chain.getNrOfSegments(); ++i)
+    probe_offset = probe_offset * probe_chain.getSegment(i).getFrameToTip();
   
   return KinematicModel{
     robot_chain,
-    tool_offset, 
+    probe_offset, 
     robot_chain.getNrOfJoints()
   };
 }
@@ -60,13 +61,14 @@ CartesianPose compute_forward_kinematics(const KinematicModel& model,
   KDL::Frame wrist_frame;
   fk_solver.JntToCart(kdl_joints, wrist_frame);
   
-  KDL::Frame end_effector_frame = wrist_frame * model.tool_offset;
+  // Compose TCP (probe) frame using the precomputed wrist_3->probe offset
+  KDL::Frame probe_frame = wrist_frame * model.probe_offset;
   
   double qx, qy, qz, qw;
-  end_effector_frame.M.GetQuaternion(qx, qy, qz, qw);
+  probe_frame.M.GetQuaternion(qx, qy, qz, qw);
   
   return CartesianPose{
-    {end_effector_frame.p.x(), end_effector_frame.p.y(), end_effector_frame.p.z()},
+    {probe_frame.p.x(), probe_frame.p.y(), probe_frame.p.z()},
     {qw, qx, qy, qz}
   };
 }

@@ -49,24 +49,24 @@ namespace kinematics {
 struct KinematicsComponents {
     KDL::Tree tree;
     KDL::Chain robot_chain;
-    KDL::Frame tool_offset;  // wrist_3_link -> tool (TCP)
+    KDL::Frame probe_offset;  // wrist_3_link -> probe (TCP)
     size_t num_joints;
 };
 
 Result<KinematicsComponents> InitializeFromUrdf(
     const urdf::Model& urdf_model,
     const std::string& base_link,
-    const std::string& tip_link);
+    const std::string& probe_link);
 } // namespace kinematics
 
 Result<Eigen::Isometry3d> ComputeForwardKinematics(
     const std::vector<double>& q_joints,
     KDL::ChainFkSolverPos_recursive* fk_solver,
-    const KDL::Frame& tool_offset);
+    const KDL::Frame& probe_offset);
 
 Result<std::vector<double>> ComputeInverseKinematicsVelocity(
-    const Vector6d& V_tool_W,
-    const Eigen::Isometry3d& X_tool_W,
+    const Vector6d& V_probe_W,
+    const Eigen::Isometry3d& X_probe_W,
     const KDL::Frame& X_wrist_W,
     const std::vector<double>& q_current,
     KDL::ChainIkSolverVel_wdls* ik_solver);

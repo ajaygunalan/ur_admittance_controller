@@ -169,7 +169,7 @@ private:
   // KDL
   KDL::Tree kdl_tree_;
   KDL::Chain kdl_chain_;
-  KDL::Frame X_W3P_; // wrist_3_link -> tool
+  KDL::Frame X_W3P_; // wrist_3_link -> probe
   std::unique_ptr<KDL::ChainIkSolverVel_wdls> ik_vel_solver_;
   std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_pos_solver_;
   size_t num_joints_ = 0;

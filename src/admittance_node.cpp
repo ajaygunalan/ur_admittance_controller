@@ -11,7 +11,6 @@ std::filesystem::path GetEquilibriumConfigPath() {
   const auto share_dir = ament_index_cpp::get_package_share_directory("ur_admittance_controller");
   return std::filesystem::path(share_dir) / "config" / "equilibrium.yaml";
 }
-constexpr std::array<double, 6> kDefaultVelocityGain{{2.0,2.0,2.0,1.0,1.0,1.0}};
 } // namespace
 
 AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
@@ -25,11 +24,9 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
     if (result.successful) {
       params_ = param_listener_->get_params();
       SetAdmittanceGains(params_.admittance);
-      for (const auto& p : params) {
-        if (p.get_name() == "tracking.velocity_gain" &&
-            p.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
-          UpdateWorldVelocityGain(p.as_double_array());
-        }
+      {
+        const auto& kv = params_.tracking.velocity_gain;
+        UpdateWorldVelocityGain(std::vector<double>(kv.begin(), kv.end()));
       }
     } else {
       RCLCPP_WARN(get_logger(), "Parameter update rejected: %s", result.reason.c_str());
@@ -38,6 +35,10 @@ AdmittanceNode::AdmittanceNode(const rclcpp::NodeOptions& options)
   });
 
   SetAdmittanceGains(params_.admittance);
+  {
+    const auto& kv = params_.tracking.velocity_gain;
+    UpdateWorldVelocityGain(std::vector<double>(kv.begin(), kv.end()));
+  }
 
   const auto joint_count = params_.joints.size();
   q_current_.resize(joint_count, 0.0);
@@ -69,17 +70,6 @@ void AdmittanceNode::SetAdmittanceGains(const Params::Admittance& a) {
 void AdmittanceNode::configure() {
   const auto cfg_path = GetEquilibriumConfigPath();
   LoadEquilibriumPose(cfg_path);
-
-  const std::vector<double> kv_default{kDefaultVelocityGain.begin(), kDefaultVelocityGain.end()};
-  if (!has_parameter("tracking.velocity_gain")) {
-    declare_parameter("tracking.velocity_gain", kv_default);
-  }
-  std::vector<double> kv_user = kv_default;
-  get_parameter("tracking.velocity_gain", kv_user);
-  if (!UpdateWorldVelocityGain(kv_user)) {
-    UpdateWorldVelocityGain(kv_default);
-    set_parameter(rclcpp::Parameter("tracking.velocity_gain", kv_default));
-  }
 
   // Inputs
   wrench_sub_ = create_subscription<geometry_msgs::msg::WrenchStamped>(
@@ -313,13 +303,13 @@ Status AdmittanceNode::LoadKinematics() {
     return tl::unexpected(MakeError(ErrorCode::kKinematicsInitFailed, "URDF parse failed"));
   }
 
-  auto result = kinematics::InitializeFromUrdf(urdf_model, params_.base_link, params_.tip_link);
+  auto result = kinematics::InitializeFromUrdf(urdf_model, "base_link", "p42v_link1");
   if (!result) return tl::unexpected(result.error());
 
   auto& c = result.value();
   kdl_tree_  = std::move(c.tree);
   kdl_chain_ = c.robot_chain;
-  X_W3P_     = c.tool_offset;
+  X_W3P_     = c.probe_offset;
 
   fk_pos_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(kdl_chain_);
   ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_wdls>(kdl_chain_, 1e-5, 150);

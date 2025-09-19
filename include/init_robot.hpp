@@ -34,8 +34,8 @@ struct CartesianPose {
 };
 
 struct KinematicModel {
-  KDL::Chain robot_chain;
-  KDL::Frame tool_offset;
+  KDL::Chain robot_chain;   // base_link -> wrist_3_link
+  KDL::Frame probe_offset;  // wrist_3_link -> probe_link (TCP)
   size_t num_joints;
 };
 

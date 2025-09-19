@@ -41,7 +41,7 @@ Vector6d IntegrateVelocity(const Vector6d& v, const Vector6d& a, double dt) {
 namespace kinematics {
 Result<KinematicsComponents> InitializeFromUrdf(const urdf::Model& urdf_model,
                                                 const std::string& base_link,
-                                                const std::string& tip_link) {
+                                                const std::string& probe_link) {
   KinematicsComponents components;
 
   if (!kdl_parser::treeFromUrdfModel(urdf_model, components.tree)) {
@@ -54,13 +54,13 @@ Result<KinematicsComponents> InitializeFromUrdf(const urdf::Model& urdf_model,
                                     "Chain base_link→wrist_3_link not found"));
   }
 
-  KDL::Chain tool_chain;
-  if (!components.tree.getChain("wrist_3_link", tip_link, tool_chain)) {
-    components.tool_offset = KDL::Frame::Identity();
+  KDL::Chain probe_chain;
+  if (!components.tree.getChain("wrist_3_link", probe_link, probe_chain)) {
+    components.probe_offset = KDL::Frame::Identity();
   } else {
-    components.tool_offset = KDL::Frame::Identity();
-    for (unsigned int i = 0; i < tool_chain.getNrOfSegments(); ++i) {
-      components.tool_offset = components.tool_offset * tool_chain.getSegment(i).getFrameToTip();
+    components.probe_offset = KDL::Frame::Identity();
+    for (unsigned int i = 0; i < probe_chain.getNrOfSegments(); ++i) {
+      components.probe_offset = components.probe_offset * probe_chain.getSegment(i).getFrameToTip();
     }
   }
 
@@ -71,7 +71,7 @@ Result<KinematicsComponents> InitializeFromUrdf(const urdf::Model& urdf_model,
 
 Result<Eigen::Isometry3d> ComputeForwardKinematics(const std::vector<double>& q_joints,
                                                    KDL::ChainFkSolverPos_recursive* fk_solver,
-                                                   const KDL::Frame& tool_offset) {
+                                                   const KDL::Frame& probe_offset) {
   KDL::JntArray q_kdl(q_joints.size());
   for (size_t i = 0; i < q_joints.size(); ++i) {
     q_kdl(i) = std::atan2(std::sin(q_joints[i]), std::cos(q_joints[i])); // wrap to [-pi,pi]
@@ -83,21 +83,21 @@ Result<Eigen::Isometry3d> ComputeForwardKinematics(const std::vector<double>& q_
     return tl::unexpected(MakeError(ErrorCode::kKinematicsInitFailed, "KDL FK failed"));
   }
 
-  KDL::Frame X_base_tool = X_base_joint * tool_offset;
+  KDL::Frame X_base_probe = X_base_joint * probe_offset;
 
   Eigen::Isometry3d result = Eigen::Isometry3d::Identity();
-  result.translation() = Eigen::Vector3d(X_base_tool.p.x(),
-                                         X_base_tool.p.y(),
-                                         X_base_tool.p.z());
+  result.translation() = Eigen::Vector3d(X_base_probe.p.x(),
+                                         X_base_probe.p.y(),
+                                         X_base_probe.p.z());
   double x, y, z, w;
-  X_base_tool.M.GetQuaternion(x, y, z, w);
+  X_base_probe.M.GetQuaternion(x, y, z, w);
   result.linear() = Eigen::Quaterniond(w, x, y, z).toRotationMatrix();
   return result;
 }
 
 Result<std::vector<double>> ComputeInverseKinematicsVelocity(
-    const Vector6d& V_tool_W,
-    const Eigen::Isometry3d& X_tool_W,
+    const Vector6d& V_probe_W,
+    const Eigen::Isometry3d& X_probe_W,
     const KDL::Frame& X_wrist_W,
     const std::vector<double>& q_current,
     KDL::ChainIkSolverVel_wdls* ik_solver) {
@@ -105,20 +105,20 @@ Result<std::vector<double>> ComputeInverseKinematicsVelocity(
   KDL::JntArray q_kdl(q_current.size());
   for (size_t i = 0; i < q_current.size(); ++i) q_kdl(i) = q_current[i];
 
-  // TCP twist (WORLD) with [linear; angular] ordering
-  KDL::Twist V_tool_kdl;
-  V_tool_kdl.vel = KDL::Vector(V_tool_W(0), V_tool_W(1), V_tool_W(2));
-  V_tool_kdl.rot = KDL::Vector(V_tool_W(3), V_tool_W(4), V_tool_W(5));
+  // TCP (probe) twist (WORLD) with [linear; angular] ordering
+  KDL::Twist V_probe_kdl;
+  V_probe_kdl.vel = KDL::Vector(V_probe_W(0), V_probe_W(1), V_probe_W(2));
+  V_probe_kdl.rot = KDL::Vector(V_probe_W(3), V_probe_W(4), V_probe_W(5));
 
-  // Shift to wrist point (WORLD): v_wrist = v_tool - omega × p
-  KDL::Vector p_tool_wrist(
-      X_tool_W.translation()(0) - X_wrist_W.p.x(),
-      X_tool_W.translation()(1) - X_wrist_W.p.y(),
-      X_tool_W.translation()(2) - X_wrist_W.p.z());
+  // Shift to wrist point (WORLD): v_wrist = v_probe - omega × p
+  KDL::Vector p_probe_wrist(
+      X_probe_W.translation()(0) - X_wrist_W.p.x(),
+      X_probe_W.translation()(1) - X_wrist_W.p.y(),
+      X_probe_W.translation()(2) - X_wrist_W.p.z());
 
   KDL::Twist V_wrist_kdl;
-  V_wrist_kdl.vel = V_tool_kdl.vel - V_tool_kdl.rot * p_tool_wrist;
-  V_wrist_kdl.rot = V_tool_kdl.rot;
+  V_wrist_kdl.vel = V_probe_kdl.vel - V_probe_kdl.rot * p_probe_wrist;
+  V_wrist_kdl.rot = V_probe_kdl.rot;
 
   KDL::JntArray v_kdl(q_current.size());
   if (ik_solver->CartToJnt(q_kdl, V_wrist_kdl, v_kdl) < 0) {
