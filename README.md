@@ -86,6 +86,34 @@ Switch controller:
 ros2 control switch_controllers --deactivate scaled_joint_trajectory_controller --activate forward_velocity_controller
 ```
 
+### Before Switching Controllers (Important)
+Always ensure nothing is publishing to the velocity command topic before activating `forward_velocity_controller`. If a node (e.g., `admittance_node`) is still publishing, the robot may jump when the controller activates.
+
+Check publishers:
+```bash
+ros2 topic info -v /forward_velocity_controller/commands
+# Publisher count should be 0 before switching
+```
+
+If a publisher exists, identify and stop it:
+```bash
+# See the publishing node in the output above, or:
+ros2 node list | rg admittance_node
+ros2 node info /admittance_node
+
+# Find and kill lingering processes (from any terminal/session)
+pgrep -fa admittance_node
+kill <PID>        # or: kill -9 <PID> if needed
+
+# Re-check the topic has no publishers
+ros2 topic info -v /forward_velocity_controller/commands
+```
+
+Only after Publisher count is 0, activate the velocity controller:
+```bash
+ros2 control switch_controllers --deactivate scaled_joint_trajectory_controller --activate forward_velocity_controller
+```
+
 Start wrench node:
 ```bash
 ros2 run ur_admittance_controller wrench_node
