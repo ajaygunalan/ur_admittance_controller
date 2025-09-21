@@ -54,12 +54,7 @@ Network and connectivity
 - Ensure the robot and your WSL/container IPs are on the same subnet.
 - From inside the container, verify connectivity:
 - On the teach pendant, open your External Control program and press Play to allow the controller to connect back to the driver.
-- Check that topics are being published and that joint states are available:
-
-```bash
-ros2 topic list
-ros2 topic echo /joint_states -n 1
-```
+- Check that topics are being published and that joint states are available
 
 Launch robot and force sensor:
 ```bash
