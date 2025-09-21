@@ -60,7 +60,7 @@ Launch robot and force sensor:
 ```bash
 # Terminal 1: Launch UR5e driver
 ros2 launch ur_robot_driver ur_control.launch.py \
-  ur_type:=ur5e robot_ip:=<ROBOT_IP> \
+  ur_type:=ur5e robot_ip:=169.254.120.1 \
   kinematics_params_file:="$HOME/ur5e_calibration.yaml"
 
 # Terminal 2: Launch force sensor (with topic remapping)
