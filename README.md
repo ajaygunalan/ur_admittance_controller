@@ -41,11 +41,25 @@ Launch robot:
 ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
 ```
 
-### Hardware
+### Hardware Bringup (UR ROS 2 Driver)
 
 **Prerequisites:**
 - [Universal_Robots_ROS2_Driver](https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver)
 - [ros2_net_ft_driver](https://github.com/gbartyzel/ros2_net_ft_driver)
+
+
+Network and connectivity
+
+- Use a wired connection for reliability.
+- Ensure the robot and your WSL/container IPs are on the same subnet.
+- From inside the container, verify connectivity:
+- On the teach pendant, open your External Control program and press Play to allow the controller to connect back to the driver.
+- Check that topics are being published and that joint states are available:
+
+```bash
+ros2 topic list
+ros2 topic echo /joint_states -n 1
+```
 
 Launch robot and force sensor:
 ```bash
