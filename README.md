@@ -72,7 +72,7 @@ ros2 launch net_ft_driver net_ft_broadcaster.launch.py \
 **Note:** Generate calibration file once with:
 ```bash
 ros2 launch ur_calibration calibration_correction.launch.py \
-  robot_ip:=<ROBOT_IP> target_filename:="$HOME/ur5e_calibration.yaml"
+  robot_ip:=169.254.120.1 target_filename:="$HOME/ur5e_calibration.yaml"
 ```
 
 Test robot connection:
