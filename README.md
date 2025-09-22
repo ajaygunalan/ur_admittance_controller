@@ -65,6 +65,15 @@ Network and connectivity
 - Check that topics are being published and that joint states are available
 
 Launch robot and force sensor:
+
+**Note:** Generate calibration file once with:
+
+```bash
+ros2 launch ur_calibration calibration_correction.launch.py \
+  robot_ip:=169.254.120.1 target_filename:="$HOME/ur5e_calibration.yaml"
+```
+
+
 ```bash
 # Terminal 1: Launch UR5e driver
 ros2 launch ur_robot_driver ur_control.launch.py \
@@ -72,14 +81,8 @@ ros2 launch ur_robot_driver ur_control.launch.py \
   kinematics_params_file:="$HOME/ur5e_calibration.yaml"
 
 # Terminal 2: Launch force sensor (with topic remapping)
-```
-ros@asusrog:~/ros2_ws$ ros2 run netft_utils netft_node --address 169.254.120.10
-```
 
-**Note:** Generate calibration file once with:
-```bash
-ros2 launch ur_calibration calibration_correction.launch.py \
-  robot_ip:=169.254.120.1 target_filename:="$HOME/ur5e_calibration.yaml"
+```ros@asusrog:~/ros2_ws$ ros2 run netft_utils netft_node --address 169.254.120.10
 ```
 
 Test robot connection:
