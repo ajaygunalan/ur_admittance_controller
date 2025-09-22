@@ -28,7 +28,13 @@ colcon build --packages-select ur_admittance_controller && source install/setup.
 ```
 
 Build force sensor driver (if using hardware):
-```bash
+
+```
+colcon build --packages-select netft_utils netft_interfaces
+```
+
+
+```
 colcon build --packages-select net_ft_driver net_ft_diagnostic_broadcaster && source install/setup.bash
 ```
 
@@ -45,6 +51,8 @@ ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
 
 **Prerequisites:**
 - [Universal_Robots_ROS2_Driver](https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver)
+
+- [neft_utils](https://github.com/UTNuclearRoboticsPublic/netft_utils)
 - [ros2_net_ft_driver](https://github.com/gbartyzel/ros2_net_ft_driver)
 
 
@@ -64,9 +72,8 @@ ros2 launch ur_robot_driver ur_control.launch.py \
   kinematics_params_file:="$HOME/ur5e_calibration.yaml"
 
 # Terminal 2: Launch force sensor (with topic remapping)
-ros2 launch net_ft_driver net_ft_broadcaster.launch.py \
-  ip_address:=169.254.120.10 sensor_type:=ati \
-  --ros-args -r ft_data:=netft/data
+```
+ros@asusrog:~/ros2_ws$ ros2 run netft_utils netft_node --address 169.254.120.10
 ```
 
 **Note:** Generate calibration file once with:
