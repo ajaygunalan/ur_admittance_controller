@@ -9,7 +9,15 @@ sudo apt install -y ros-$ROS_DISTRO-control-msgs
 sudo apt install -y ros-$ROS_DISTRO-controller-manager-msgs
 sudo apt install -y ros-$ROS_DISTRO-controller-manager ros-$ROS_DISTRO-ros2-control ros-$ROS_DISTRO-ros2-controllers
 
+
+
+sudo apt install ros-jazzy-ur-description
+
 ```
+
+
+
+
 
 
 
