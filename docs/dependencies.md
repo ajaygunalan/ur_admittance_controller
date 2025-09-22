@@ -1,5 +1,18 @@
 # Dependencies
 
+```
+sudo apt install -y \
+  ros-$ROS_DISTRO-generate-parameter-library \
+  ros-$ROS_DISTRO-generate-parameter-library-py
+
+sudo apt install -y ros-$ROS_DISTRO-control-msgs
+sudo apt install -y ros-$ROS_DISTRO-controller-manager-msgs
+sudo apt install -y ros-$ROS_DISTRO-controller-manager ros-$ROS_DISTRO-ros2-control ros-$ROS_DISTRO-ros2-controllers
+
+```
+
+
+
 ### Core ROS2 Framework
 - [ROS2 Jazzy](https://github.com/ros2/ros2) - Base framework
 - [rclcpp](https://github.com/ros2/rclcpp) - Core C++ client library

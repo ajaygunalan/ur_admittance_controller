@@ -132,7 +132,7 @@ install(
 )
 
 install(DIRECTORY include/ DESTINATION include)
-install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(
   FILES config/wrench_calibration.yaml
   DESTINATION share/${PROJECT_NAME}/config
