@@ -34,10 +34,6 @@ colcon build --packages-select netft_utils netft_interfaces
 ```
 
 
-```
-colcon build --packages-select net_ft_driver net_ft_diagnostic_broadcaster && source install/setup.bash
-```
-
 ## Usage
 
 ### Simulation
