@@ -77,7 +77,8 @@ ros2 launch ur_robot_driver ur_control.launch.py \
 
 # Terminal 2: Launch force sensor (with topic remapping)
 
-```ros@asusrog:~/ros2_ws$ ros2 run netft_utils netft_node --address 169.254.120.10
+```
+ros2 run netft_utils netft_node --address 169.254.120.10
 ```
 
 Test robot connection:
