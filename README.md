@@ -47,7 +47,6 @@ ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
 
 **Prerequisites:**
 - [Universal_Robots_ROS2_Driver](https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver)
-
 - [neft_utils](https://github.com/UTNuclearRoboticsPublic/netft_utils)
 - [ros2_net_ft_driver](https://github.com/gbartyzel/ros2_net_ft_driver)
 
@@ -96,12 +95,9 @@ Run calibration (one-time):
 ros2 run ur_admittance_controller wrench_calibration_node
 ```
 
-Switch controller:
-```bash
-ros2 control switch_controllers --deactivate scaled_joint_trajectory_controller --activate forward_velocity_controller
-```
 
-### Before Switching Controllers (Important)
+
+#### Before Switching Controllers (Important)
 Always ensure nothing is publishing to the velocity command topic before activating `forward_velocity_controller`. If a node (e.g., `admittance_node`) is still publishing, the robot may jump when the controller activates.
 
 Check publishers:
