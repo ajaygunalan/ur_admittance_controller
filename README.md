@@ -47,8 +47,7 @@ ros2 launch ur_simulation_gz ur_sim_control.launch.py ur_type:=ur5e
 
 **Prerequisites:**
 - [Universal_Robots_ROS2_Driver](https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver)
-- [neft_utils](https://github.com/UTNuclearRoboticsPublic/netft_utils)
-- [ros2_net_ft_driver](https://github.com/gbartyzel/ros2_net_ft_driver)
+- [neft_utils](https://github.com/ajaygunalan/netft_utils)
 
 
 Network and connectivity
@@ -59,7 +58,17 @@ Network and connectivity
 - On the teach pendant, open your External Control program and press Play to allow the controller to connect back to the driver.
 - Check that topics are being published and that joint states are available
 
+
+| Device       | IP Address       | 
+|--------------|------------------|
+| F/T Sensor   | 169.254.120.10   |
+| UR5e         | 169.254.120.1    | 
+| Robo Laptop  | 169.254.120.200  | 
+
+Subnet Mask: 255.255.255.0
+
 Launch robot and force sensor:
+
 
 **Note:** Generate calibration file once with:
 
