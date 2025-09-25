@@ -67,6 +67,9 @@ Network and connectivity
 
 Subnet Mask: 255.255.255.0
 
+
+Also either have low-latecy kernel or real-time kernel to avoid reverese interface dropped [UR docs](https://docs.universal-robots.com/Universal_Robots_ROS2_Documentation/doc/ur_client_library/doc/real_time.html) and [ROS2](https://docs.ros.org/en/jazzy/Tutorials/Miscellaneous/Building-Realtime-rt_preempt-kernel-for-ROS-2.html)
+
 Launch robot and force sensor:
 
 
