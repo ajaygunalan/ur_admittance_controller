@@ -8,13 +8,13 @@ ur_admittance_controller:
   admittance:
     mass:
       type: double_array
-      default_value: [6.0, 6.0, 6.0, 6.0, 6.0, 6.0]
+      default_value: [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
       validation:
         fixed_size<>: [6]
         element_bounds<>: [0.1, 100.0]
     stiffness:
       type: double_array
-      default_value: [5.0, 5.0, 5.0, 3.0, 3.0, 3.0]
+      default_value: [2.5, 2.5, 2.5, 1.5, 1.5, 1.5]
       validation:
         fixed_size<>: [6]
         element_bounds<>: [0.0, 10000.0]

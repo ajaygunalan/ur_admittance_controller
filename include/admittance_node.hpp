@@ -162,7 +162,7 @@ private:
   Vector6d Kp_W_ = (Vector6d() << 4.0, 4.0, 4.0, 2.0, 2.0, 2.0).finished();
 
   Vector6d workspace_limits_;
-  double arm_max_vel_ = 1.5;
+  double arm_max_vel_ = 0.20;
   double arm_max_acc_ = constants::ARM_MAX_ACCELERATION;
   double admittance_ratio_ = 1.0;
 

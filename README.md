@@ -70,6 +70,14 @@ Subnet Mask: 255.255.255.0
 
 Also either have low-latecy kernel or real-time kernel to avoid reverese interface drop issue [UR docs](https://docs.universal-robots.com/Universal_Robots_ROS2_Documentation/doc/ur_client_library/doc/real_time.html) and [ROS2](https://docs.ros.org/en/jazzy/Tutorials/Miscellaneous/Building-Realtime-rt_preempt-kernel-for-ROS-2.html)
 
+
+You can check the kernel by:
+
+```
+ajay@asus-rog-streak:~$ uname -r
+6.14.0-rt3
+
+```
 Launch robot and force sensor:
 
 
@@ -80,17 +88,13 @@ ros2 launch ur_calibration calibration_correction.launch.py \
   robot_ip:=169.254.120.1 target_filename:="$HOME/ur5e_calibration.yaml"
 ```
 
-Terminal 1: Launch UR5e driver
+Launch UR5e driver
 ```bash
 ros2 launch ur_robot_driver ur_control.launch.py \
   ur_type:=ur5e robot_ip:=169.254.120.1 \
   kinematics_params_file:="$HOME/ur5e_calibration.yaml"
 ```
 
-Terminal 2: Launch force sensor (with topic remapping)
-```
-ros2 run netft_utils netft_node --address 169.254.120.10
-```
 
 Test robot connection:
 ```bash
@@ -101,6 +105,13 @@ Initialize to equilibrium:
 ```bash
 ros2 run ur_admittance_controller init_robot
 ```
+
+
+Launch force sensor
+```
+ros2 run netft_utils netft_node --address 169.254.120.10
+```
+
 
 Run calibration (one-time):
 ```bash
